@@ -67,10 +67,15 @@
   // Contexto (proyecto + secuencia) para HPStore
   // ---------------------------------------------------------------------
 
+  var currentProjectPath = "";
+  var currentSequenceName = "";
+
   function loadContext(done) {
     csInterface.evalScript("hp_getProjectPath()", function (projectPath) {
       csInterface.evalScript("hp_getActiveSequenceName()", function (sequenceName) {
-        HPStore.setContext(projectPath || "", sequenceName || "");
+        currentProjectPath = projectPath || "";
+        currentSequenceName = sequenceName || "";
+        HPStore.setContext(currentProjectPath, currentSequenceName);
         if (done) done();
       });
     });
@@ -312,6 +317,73 @@
     return el;
   }
 
+  // Genera el recurso para un marcador: arma el contexto, lo manda al puente,
+  // y al recibir el .mov lo coloca en el timeline vía ExtendScript.
+  function generateForMarker(marker, statusEl, btn) {
+    var markerKey = markerKeyFor(marker);
+    var data = HPStore.getMarkerData(markerKey);
+    var segments = HPStore.getTranscript() || [];
+    var markerTranscript = HPTranscript.sliceByRange(
+      segments,
+      marker.start,
+      marker.start + marker.duration
+    );
+
+    var payload = {
+      projectPath: currentProjectPath,
+      sequenceName: currentSequenceName,
+      objective: HPStore.getObjective(),
+      transcript: segments,
+      marker: {
+        name: marker.name || "Marcador " + (marker.index + 1),
+        start: marker.start,
+        end: marker.start + marker.duration,
+        duration: marker.duration
+      },
+      markerTranscript: markerTranscript,
+      instruction: data.instruction || "",
+      stills: data.stills || [],
+      markerSlug: markerKey
+    };
+
+    btn.disabled = true;
+    statusEl.textContent = "Generando… (puede tardar)";
+    statusEl.className = "marker-status is-busy";
+
+    fetch(BRIDGE_URL + "/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res || !res.ok) {
+          throw new Error(res && res.error ? res.error : "error desconocido");
+        }
+        statusEl.textContent = "Colocando en el timeline…";
+        var movArg = JSON.stringify(res.movPath);
+        csInterface.evalScript(
+          "hp_placeClip(" + movArg + ", " + marker.start + ")",
+          function (place) {
+            if (place === "ok") {
+              statusEl.textContent = "✓ Generado y colocado (v" + res.version + ")";
+              statusEl.className = "marker-status is-ok";
+            } else {
+              statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
+              statusEl.className = "marker-status is-error";
+            }
+            btn.disabled = false;
+          }
+        );
+      })
+      .catch(function (err) {
+        var msg = err && err.message ? err.message : String(err);
+        statusEl.textContent = "Error: " + msg + " · ¿está corriendo el puente?";
+        statusEl.className = "marker-status is-error";
+        btn.disabled = false;
+      });
+  }
+
   function createMarkerCard(marker) {
     var markerKey = markerKeyFor(marker);
 
@@ -353,6 +425,22 @@
 
     var sliceEl = createTranscriptSlice(marker);
     if (sliceEl) card.appendChild(sliceEl);
+
+    // Acción: Generar (llama al puente y coloca el .mov en el timeline).
+    var actions = document.createElement("div");
+    actions.className = "marker-actions";
+    var genBtn = document.createElement("button");
+    genBtn.type = "button";
+    genBtn.className = "btn-generate";
+    genBtn.textContent = "Generar";
+    var status = document.createElement("div");
+    status.className = "marker-status";
+    genBtn.addEventListener("click", function () {
+      generateForMarker(marker, status, genBtn);
+    });
+    actions.appendChild(genBtn);
+    card.appendChild(actions);
+    card.appendChild(status);
 
     return card;
   }

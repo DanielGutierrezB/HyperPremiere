@@ -97,3 +97,42 @@ function hp_getProjectPath() {
         return "";
     }
 }
+
+// Importa un .mov y lo coloca en la pista de video superior, en atSeconds.
+// Devuelve "ok" o "error: ...".
+function hp_placeClip(movPath, atSeconds) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return "error: no hay secuencia activa";
+
+        var f = new File(movPath);
+        if (!f.exists) return "error: no existe el archivo: " + movPath;
+
+        // Importar al root del proyecto (suppressUI = true, no como stills).
+        app.project.importFiles([movPath], true, app.project.rootItem, false);
+
+        // Localizar el projectItem recién importado por nombre; fallback al último.
+        var root = app.project.rootItem;
+        var count = root.children.numItems;
+        var baseName = f.name.replace(/\.[^\.]+$/, "");
+        var item = null;
+        for (var i = count - 1; i >= 0; i--) {
+            var ch = root.children[i];
+            if (ch && ch.name && ch.name.indexOf(baseName) === 0) { item = ch; break; }
+        }
+        if (!item && count > 0) item = root.children[count - 1];
+        if (!item) return "error: no se pudo localizar el clip importado";
+
+        // Pista de video superior (la de mayor índice).
+        var vTracks = seq.videoTracks;
+        if (!vTracks || vTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";
+        var track = vTracks[vTracks.numTracks - 1];
+
+        // Colocar en atSeconds. overwriteClip acepta el tiempo en segundos.
+        // TODO: verificar en tu Premiere si requiere Time/ticks en vez de number.
+        track.overwriteClip(item, atSeconds);
+        return "ok";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
