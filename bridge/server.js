@@ -15,6 +15,7 @@ const path = require('path');
 
 const { getProvider, stripHtmlFence } = require('./providers');
 const { buildUserPrompt } = require('./prompt/build-context');
+const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition } = require('./render/hyperframes');
 const {
   ensureOutputDir,
@@ -312,6 +313,38 @@ async function handleFeedback(req, res) {
   sendJson(res, 200, { ok: true, ...result });
 }
 
+async function handleDeriveObjective(req, res) {
+  try {
+    const body = await readJsonBody(req);
+
+    // Acepta el transcript como texto plano o como lista de segmentos.
+    const transcriptText =
+      typeof body.transcriptText === 'string' && body.transcriptText.trim()
+        ? body.transcriptText
+        : (Array.isArray(body.transcript) ? body.transcript : [])
+            .map((seg) => ((seg && seg.text) || '').trim())
+            .filter(Boolean)
+            .join(' ');
+
+    const { system, user } = buildObjectivePrompt(transcriptText);
+
+    const config = loadConfig();
+    const provider = getProvider(config.provider);
+    const rawResponse = await provider.generate({
+      systemPrompt: system,
+      userPrompt: user,
+      images: [],
+      model: config.model,
+      config,
+    });
+
+    sendJson(res, 200, { ok: true, objective: String(rawResponse || '').trim() });
+  } catch (err) {
+    const message = (err && err.message) || String(err);
+    sendJson(res, 500, { ok: false, error: message });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router + servidor
 // ---------------------------------------------------------------------------
@@ -322,6 +355,7 @@ const ROUTES = {
   'POST /config': handlePostConfig,
   'POST /generate': handleGenerate,
   'POST /feedback': handleFeedback,
+  'POST /derive-objective': handleDeriveObjective,
 };
 
 const server = http.createServer(async (req, res) => {
