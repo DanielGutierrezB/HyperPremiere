@@ -186,6 +186,76 @@ button:disabled {
   border-color: rgba(224, 138, 138, 0.35);
 }
 
+/* ── Contexto de la clase ───────────────────────────── */
+
+.class-context {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+textarea {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background-color: var(--bg-inset);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-weight: 300;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 54px;
+  user-select: text;
+  -webkit-user-select: text;
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+textarea:hover {
+  border-color: var(--hairline-strong);
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.transcript-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.transcript-row button {
+  flex: none;
+}
+
+.muted {
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Lista de marcadores ────────────────────────────── */
 
 .section-label {
@@ -270,4 +340,55 @@ button:disabled {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   margin-top: 1px;
+}
+
+/* ── Contenido por marcador (insertado por main.js) ─── */
+
+.marker-instruction {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.marker-instruction textarea {
+  font-size: 11px;
+  min-height: 44px;
+  background-color: var(--bg-inset);
+}
+
+.marker-stills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.still-thumb {
+  width: 72px;
+  height: 40px;
+  object-fit: cover;
+  display: block;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background-color: var(--bg-inset);
+  transition: border-color var(--ease);
+}
+
+.still-thumb:hover {
+  border-color: var(--accent);
+}
+
+.transcript-slice {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background-color: var(--bg-inset);
+  font-size: 11px;
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  user-select: text;
+  -webkit-user-select: text;
 }

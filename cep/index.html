@@ -27,6 +27,17 @@
       <span class="placeholder">Pulsa "Probar conexión" para leer la secuencia activa.</span>
     </div>
 
+    <div class="section-label">Contexto de la clase</div>
+    <div class="class-context">
+      <label class="field-label" for="objective">Objetivo de la clase</label>
+      <textarea id="objective" rows="3" placeholder="Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."></textarea>
+      <div class="transcript-row">
+        <button id="btn-load-transcript" type="button">Cargar transcript (JSON)</button>
+        <input type="file" id="transcript-file" accept="application/json,.json" hidden>
+        <span id="transcript-status" class="muted">Sin transcript</span>
+      </div>
+    </div>
+
     <div class="section-label">Marcadores</div>
     <div class="markers-scroll">
       <div id="markers" class="markers"></div>
@@ -34,6 +45,8 @@
   </main>
 
   <script src="js/CSInterface.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/transcript.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
