@@ -86,9 +86,10 @@
     return s.replace(/[^a-z0-9]+/g, "-");
   }
 
+  // Nombre/ID consecutivo por orden del marcador: "Marcador 1", "Marcador 2"…
+  // Es la nomenclatura que ve el editor Y la que usan los archivos generados.
   function markerKeyFor(marker) {
-    var base = marker.name || "marcador-" + marker.index;
-    return slug(base) + "@" + Math.round(marker.start);
+    return "Marcador " + (marker.index + 1);
   }
 
   // ---------------------------------------------------------------------
@@ -284,10 +285,20 @@
     fileInput.multiple = true;
     fileInput.style.display = "none";
 
+    // Botón principal: capturar el frame ACTUAL del monitor de programa.
+    var captureBtn = document.createElement("button");
+    captureBtn.type = "button";
+    captureBtn.className = "btn-add-still";
+    captureBtn.textContent = "📸 Capturar del programa";
+    captureBtn.addEventListener("click", function () {
+      captureProgramStill(markerKey, thumbs, captureBtn);
+    });
+
+    // Secundario: subir un archivo de imagen.
     var addBtn = document.createElement("button");
     addBtn.type = "button";
-    addBtn.className = "btn-add-still";
-    addBtn.textContent = "Añadir still";
+    addBtn.className = "btn-add-still-file";
+    addBtn.textContent = "…o subir archivo";
     addBtn.addEventListener("click", function () {
       fileInput.click();
     });
@@ -315,11 +326,44 @@
       fileInput.value = "";
     });
 
+    wrap.appendChild(captureBtn);
     wrap.appendChild(addBtn);
     wrap.appendChild(fileInput);
     wrap.appendChild(thumbs);
     renderStills(thumbs, markerKey);
     return wrap;
+  }
+
+  // Captura el frame actual del monitor de programa (vía host.jsx exportFramePNG),
+  // lo lee como dataURL y lo agrega como still del marcador.
+  function captureProgramStill(markerKey, thumbs, btn) {
+    var tmpPath = "/tmp/hp-still-" + (new Date().getTime()) + ".png";
+    var arg = JSON.stringify(tmpPath);
+    var prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Capturando…";
+    csInterface.evalScript("hp_captureProgramFrame(" + arg + ")", function (result) {
+      try {
+        if (result !== "ok") {
+          btn.textContent = "Error al capturar";
+          setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1800);
+          return;
+        }
+        var res = window.cep.fs.readFile(tmpPath, window.cep.encoding.Base64);
+        if (res && res.err === 0 && res.data) {
+          HPStore.addMarkerStill(markerKey, "data:image/png;base64," + res.data);
+          renderStills(thumbs, markerKey);
+          window.cep.fs.deleteFile(tmpPath);
+        } else {
+          btn.textContent = "No se pudo leer el frame";
+          setTimeout(function () { btn.textContent = prev; }, 1800);
+          return;
+        }
+      } finally {
+        btn.textContent = prev;
+        btn.disabled = false;
+      }
+    });
   }
 
   function createTranscriptSlice(marker) {
@@ -441,7 +485,9 @@
 
     var name = document.createElement("div");
     name.className = "marker-name";
-    name.textContent = marker.name || "Marcador " + (marker.index + 1);
+    // Nombre consecutivo, idéntico al de los archivos. Si el marcador tiene
+    // nombre propio en Premiere, lo mostramos como subtítulo aparte.
+    name.textContent = markerKeyFor(marker) + (marker.name ? " · " + marker.name : "");
 
     var meta = document.createElement("div");
     meta.className = "marker-meta";
@@ -581,7 +627,16 @@
       .then(function (cfg) {
         if (!cfg) return;
         if (cfg.provider) cfgProvider.value = cfg.provider;
-        cfgModel.value = cfg.model || "claude-opus-4-8";
+        var m = cfg.model || "claude-sonnet-5";
+        cfgModel.value = m;
+        // Si el modelo guardado no está entre las opciones, lo agrego para que
+        // el editor siempre vea CUÁL tiene seleccionado.
+        if (cfgModel.value !== m) {
+          var opt = document.createElement("option");
+          opt.value = m; opt.textContent = m + " (personalizado)";
+          cfgModel.appendChild(opt);
+          cfgModel.value = m;
+        }
         if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
         if (cfg.apiKey) cfgApiKey.setAttribute("placeholder", "•••• (guardada)");
         if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";

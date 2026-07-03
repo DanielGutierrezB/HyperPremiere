@@ -43,7 +43,7 @@ const {
 const SYSTEM_PROMPT_PATH = path.join(__dirname, 'prompt', 'system.md');
 const CONFIG_DIR = path.join(os.homedir(), '.hyperpremiere');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
-const DEFAULT_CONFIG = { provider: 'claude-cli', model: 'claude-opus-4-8', apiKey: '', baseUrl: '', oauthToken: '' };
+const DEFAULT_CONFIG = { provider: 'claude-cli', model: 'claude-sonnet-5', apiKey: '', baseUrl: '', oauthToken: '' };
 
 function loadConfig() {
   let stored = {};

@@ -98,6 +98,22 @@ function hp_getProjectPath() {
     }
 }
 
+// Exporta el frame actual del monitor de programa (playhead) a un PNG.
+// Devuelve "ok" si el archivo quedó escrito, o "error: ...".
+function hp_captureProgramFrame(outPath) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return "error: no hay secuencia activa";
+        var pos = seq.getPlayerPosition(); // Time del playhead
+        // exportFramePNG(tiempoEnTicks, rutaDestino)
+        seq.exportFramePNG(pos.ticks, outPath);
+        var f = new File(outPath);
+        return f.exists ? "ok" : "error: no se generó el frame";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // ¿Está libre la pista en el rango [start, start+dur)? (sin clips que solapen)
 function hp_trackIsFree(track, start, end) {
     try {

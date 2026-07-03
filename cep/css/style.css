@@ -504,3 +504,16 @@ textarea:focus {
   gap: 10px;
   margin-top: 6px;
 }
+
+/* still: botón secundario (subir archivo) */
+.btn-add-still-file {
+  font-family: inherit;
+  font-size: 11px;
+  color: #8b97a8;
+  background: transparent;
+  border: 0;
+  padding: 4px 2px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.btn-add-still-file:hover { color: #60a5fa; }

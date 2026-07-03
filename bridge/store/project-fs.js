@@ -37,7 +37,8 @@ function ensureOutputDir(projectPath, sequenceName) {
  * Nombre base de los archivos de un marcador: "<slug>" o "<slug>-vN" si version > 1.
  */
 function baseName(markerSlug, version) {
-  return version > 1 ? `${markerSlug}-v${version}` : markerSlug;
+  // Siempre con versión explícita: "Marcador 1 v1", "Marcador 1 v2", …
+  return `${markerSlug} v${version || 1}`;
 }
 
 /**
@@ -89,15 +90,11 @@ function nextVersion(baseDir, markerSlug) {
     return 1;
   }
   let max = 0;
-  const versioned = new RegExp(`^${escapeRegExp(markerSlug)}-v(\\d+)\\.`);
-  const plain = new RegExp(`^${escapeRegExp(markerSlug)}\\.`);
+  // Coincide con "Marcador 1 v3.mov" / ".html" / ".meta.json" / "-stills".
+  const versioned = new RegExp(`^${escapeRegExp(markerSlug)} v(\\d+)[.\\-]`);
   for (const name of entries) {
     const m = name.match(versioned);
-    if (m) {
-      max = Math.max(max, parseInt(m[1], 10));
-    } else if (plain.test(name)) {
-      max = Math.max(max, 1);
-    }
+    if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return max + 1;
 }

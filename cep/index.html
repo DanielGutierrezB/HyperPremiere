@@ -55,14 +55,13 @@
         </select>
 
         <label class="field-label" for="cfg-model">Modelo</label>
-        <input type="text" id="cfg-model" list="model-suggestions" placeholder="Elegí o escribí un modelo">
-        <datalist id="model-suggestions">
-          <option value="claude-opus-4-8"></option>
-          <option value="claude-sonnet-5"></option>
-          <option value="claude-fable-5"></option>
-          <option value="claude-haiku-4-5-20251001"></option>
-          <option value="qwen3-coder:30b"></option>
-        </datalist>
+        <select id="cfg-model">
+          <option value="claude-sonnet-5">Sonnet 5 — rápido (recomendado)</option>
+          <option value="claude-opus-4-8">Opus 4.8 — máxima calidad (lento)</option>
+          <option value="claude-fable-5">Fable 5</option>
+          <option value="claude-haiku-4-5-20251001">Haiku 4.5 — el más rápido</option>
+          <option value="qwen3-coder:30b">Ollama local — qwen3-coder:30b</option>
+        </select>
 
         <div id="claude-login-row" class="config-actions">
           <button id="btn-login-claude" type="button">Iniciar sesión en Claude</button>
