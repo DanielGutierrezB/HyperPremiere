@@ -29,6 +29,17 @@ const {
   saveStills,
 } = require('./store/project-fs');
 
+// CEP corre Node con un PATH mínimo (apps de GUI en macOS no heredan el shell).
+// Prepend de las rutas donde viven claude, ffmpeg, node y demás, para que los
+// spawn (claude, hyperframes→ffmpeg) los encuentren dentro de Premiere.
+(function ensurePath() {
+  const extra = ['/opt/homebrew/bin', path.join(os.homedir(), '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  const current = (process.env.PATH || '').split(':').filter(Boolean);
+  const merged = [];
+  for (const p of extra.concat(current)) if (p && merged.indexOf(p) === -1) merged.push(p);
+  process.env.PATH = merged.join(':');
+})();
+
 const SYSTEM_PROMPT_PATH = path.join(__dirname, 'prompt', 'system.md');
 const CONFIG_DIR = path.join(os.homedir(), '.hyperpremiere');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
