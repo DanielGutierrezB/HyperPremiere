@@ -290,8 +290,12 @@
     captureBtn.type = "button";
     captureBtn.className = "btn-add-still";
     captureBtn.textContent = "📸 Capturar del programa";
+
+    var stillStatus = document.createElement("div");
+    stillStatus.className = "still-status";
+
     captureBtn.addEventListener("click", function () {
-      captureProgramStill(markerKey, thumbs, captureBtn);
+      captureProgramStill(markerKey, thumbs, captureBtn, stillStatus);
     });
 
     // Secundario: subir un archivo de imagen.
@@ -329,40 +333,46 @@
     wrap.appendChild(captureBtn);
     wrap.appendChild(addBtn);
     wrap.appendChild(fileInput);
+    wrap.appendChild(stillStatus);
     wrap.appendChild(thumbs);
     renderStills(thumbs, markerKey);
     return wrap;
   }
 
-  // Captura el frame actual del monitor de programa (vía host.jsx exportFramePNG),
-  // lo lee como dataURL y lo agrega como still del marcador.
-  function captureProgramStill(markerKey, thumbs, btn) {
+  // Captura el frame actual del monitor de programa (host.jsx exportFramePNG),
+  // lo lee con Node (engine.readStill) y lo agrega como still del marcador.
+  function captureProgramStill(markerKey, thumbs, btn, statusEl) {
     var tmpPath = "/tmp/hp-still-" + (new Date().getTime()) + ".png";
     var arg = JSON.stringify(tmpPath);
     var prev = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Capturando…";
+    if (statusEl) { statusEl.textContent = ""; statusEl.className = "still-status"; }
+
+    function fail(msg) {
+      if (statusEl) { statusEl.textContent = msg; statusEl.className = "still-status is-error"; }
+      btn.textContent = prev;
+      btn.disabled = false;
+    }
+
     csInterface.evalScript("hp_captureProgramFrame(" + arg + ")", function (result) {
-      try {
-        if (result !== "ok") {
-          btn.textContent = "Error al capturar";
-          setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1800);
-          return;
-        }
-        var res = window.cep.fs.readFile(tmpPath, window.cep.encoding.Base64);
-        if (res && res.err === 0 && res.data) {
-          HPStore.addMarkerStill(markerKey, "data:image/png;base64," + res.data);
-          renderStills(thumbs, markerKey);
-          window.cep.fs.deleteFile(tmpPath);
-        } else {
-          btn.textContent = "No se pudo leer el frame";
-          setTimeout(function () { btn.textContent = prev; }, 1800);
-          return;
-        }
-      } finally {
-        btn.textContent = prev;
-        btn.disabled = false;
+      if (result !== "ok") {
+        fail("No se pudo capturar: " + (result || "sin secuencia/monitor"));
+        return;
       }
+      hpCall("readStill", tmpPath)
+        .then(function (res) {
+          if (res && res.ok && res.dataUrl) {
+            HPStore.addMarkerStill(markerKey, res.dataUrl);
+            renderStills(thumbs, markerKey);
+            if (statusEl) statusEl.textContent = "";
+            btn.textContent = prev;
+            btn.disabled = false;
+          } else {
+            fail("No se pudo leer el frame: " + ((res && res.error) || ""));
+          }
+        })
+        .catch(function (e) { fail((e && e.message) || "error leyendo el frame"); });
     });
   }
 

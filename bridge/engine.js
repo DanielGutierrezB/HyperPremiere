@@ -185,6 +185,22 @@ function loginClaude() {
 
 const REPO_ROOT = path.join(__dirname, '..');
 
+// Lee un PNG (el frame capturado por host.jsx) y lo devuelve como dataURL.
+// Borra el archivo temporal después. Lo hace Node (fiable), no la API de CEP.
+function readStill(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { ok: false, error: 'no existe el archivo: ' + filePath };
+    }
+    const b64 = fs.readFileSync(filePath).toString('base64');
+    try { fs.unlinkSync(filePath); } catch (e) {}
+    if (!b64) return { ok: false, error: 'el frame quedó vacío' };
+    return { ok: true, dataUrl: 'data:image/png;base64,' + b64 };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
 function getVersion() {
   try {
     return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'version.json'), 'utf8')).version || '0.0.0';
@@ -222,4 +238,5 @@ module.exports = {
   loginClaude,
   getVersion,
   selfUpdate,
+  readStill,
 };
