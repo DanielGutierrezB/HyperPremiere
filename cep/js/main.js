@@ -2,6 +2,7 @@
   "use strict";
 
   var DEBOUNCE_MS = 300;
+  var BRIDGE_URL = "http://127.0.0.1:7867";
 
   var csInterface = new CSInterface();
 
@@ -116,6 +117,37 @@
       segments.length + " segmentos · " + formatTime(transcriptDuration(segments)) + " total";
   }
 
+  // Deriva el objetivo de la clase llamando al puente (/derive-objective).
+  // El resultado llena #objective pero queda editable por el editor.
+  function deriveObjectiveFromTranscript(segments) {
+    if (objectiveInput) {
+      objectiveInput.setAttribute("placeholder", "Derivando objetivo del transcript…");
+    }
+    fetch(BRIDGE_URL + "/derive-objective", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript: segments })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.ok && data.objective) {
+          objectiveInput.value = data.objective;
+          HPStore.setObjective(data.objective);
+        }
+      })
+      .catch(function () {
+        // Silencioso: el editor puede escribir el objetivo a mano si el puente no está.
+      })
+      .then(function () {
+        if (objectiveInput) {
+          objectiveInput.setAttribute(
+            "placeholder",
+            "Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."
+          );
+        }
+      });
+  }
+
   function onTranscriptFileChosen() {
     var file = transcriptFileInput.files && transcriptFileInput.files[0];
     if (!file) return;
@@ -129,6 +161,11 @@
       }
       HPStore.setTranscript(res.segments);
       updateTranscriptStatus();
+      // La IA deriva el objetivo de la clase desde el transcript.
+      // Solo si el objetivo está vacío (no pisar lo que el editor haya escrito).
+      if (!HPStore.getObjective() || !HPStore.getObjective().trim()) {
+        deriveObjectiveFromTranscript(res.segments);
+      }
     };
     reader.onerror = function () {
       transcriptStatus.textContent = "No se pudo leer el archivo.";
