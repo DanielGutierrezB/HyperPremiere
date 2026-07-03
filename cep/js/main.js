@@ -547,8 +547,63 @@
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Configuración del modelo (proveedor / modelo / token / baseUrl)
+  // ---------------------------------------------------------------------
+
+  var cfgProvider = document.getElementById("cfg-provider");
+  var cfgModel = document.getElementById("cfg-model");
+  var cfgApiKey = document.getElementById("cfg-apikey");
+  var cfgBaseUrl = document.getElementById("cfg-baseurl");
+  var btnSaveConfig = document.getElementById("btn-save-config");
+  var configStatus = document.getElementById("config-status");
+
+  function loadConfig() {
+    fetch(BRIDGE_URL + "/config")
+      .then(function (r) { return r.json(); })
+      .then(function (cfg) {
+        if (!cfg) return;
+        if (cfg.provider) cfgProvider.value = cfg.provider;
+        if (cfg.model) cfgModel.value = cfg.model;
+        if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
+        // apiKey viene enmascarada: no la mostramos, dejamos placeholder.
+        if (cfg.apiKey) cfgApiKey.setAttribute("placeholder", "•••• (guardada)");
+      })
+      .catch(function () {
+        if (configStatus) configStatus.textContent = "Puente no disponible";
+      });
+  }
+
+  function saveConfig() {
+    var body = {
+      provider: cfgProvider.value,
+      model: cfgModel.value.trim()
+    };
+    // Solo mandar apiKey/baseUrl si el usuario escribió algo (no pisar con vacío).
+    if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
+    if (cfgBaseUrl.value.trim()) body.baseUrl = cfgBaseUrl.value.trim();
+
+    configStatus.textContent = "Guardando…";
+    fetch(BRIDGE_URL + "/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        configStatus.textContent = "✓ Guardado";
+        cfgApiKey.value = "";
+      })
+      .catch(function () {
+        configStatus.textContent = "Error al guardar (¿puente corriendo?)";
+      });
+  }
+
+  if (btnSaveConfig) btnSaveConfig.addEventListener("click", saveConfig);
+
   btnTestConnection.addEventListener("click", onTestConnection);
   btnLoadMarkers.addEventListener("click", onLoadMarkers);
+  loadConfig();
 
   // Arranque: fijar contexto y rehidratar objetivo + estado del transcript.
   loadContext(function () {

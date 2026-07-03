@@ -42,6 +42,33 @@
     <div class="markers-scroll">
       <div id="markers" class="markers"></div>
     </div>
+
+    <details class="config-section">
+      <summary>Configuración del modelo</summary>
+      <div class="config-body">
+        <label class="field-label" for="cfg-provider">Proveedor</label>
+        <select id="cfg-provider">
+          <option value="claude-cli">Claude (CLI / suscripción)</option>
+          <option value="claude-api">Claude (API key)</option>
+          <option value="openai-compat">API compatible (OpenAI)</option>
+          <option value="ollama">Local (Ollama)</option>
+        </select>
+
+        <label class="field-label" for="cfg-model">Modelo</label>
+        <input type="text" id="cfg-model" placeholder="p.ej. claude-opus-4-8, claude-fable-5, qwen3-coder:30b">
+
+        <label class="field-label" for="cfg-apikey">Token / API key</label>
+        <input type="password" id="cfg-apikey" placeholder="Solo para API key / compatible">
+
+        <label class="field-label" for="cfg-baseurl">Base URL</label>
+        <input type="text" id="cfg-baseurl" placeholder="Solo API compatible / Ollama (opcional)">
+
+        <div class="config-actions">
+          <button id="btn-save-config" type="button" class="btn-primary">Guardar</button>
+          <span id="config-status" class="muted"></span>
+        </div>
+      </div>
+    </details>
   </main>
 
   <script src="js/CSInterface.js"></script>
