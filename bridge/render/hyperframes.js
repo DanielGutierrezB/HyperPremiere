@@ -63,20 +63,19 @@ async function renderComposition({ html, outMovPath, durationSec }) {
   // Limpiar ghost files antes de que hyperframes escanee el dir.
   removeGhostFiles(workDir);
 
-  // TODO: verificar contra la API real de hyperframes si --format prores4444
-  // ya implica alpha o si existe un flag explícito (p.ej. --alpha).
+  // hyperframes 0.7.x: --format mov => MOV con transparencia (alpha real, ProRes 4444).
+  // La duración NO es un flag: se declara en data-duration del #stage dentro del HTML
+  // (el prompt de sistema instruye al modelo a fijarla según la duración del marcador).
   const args = [
     'hyperframes',
     'render',
     workDir,
     '-c', path.basename(htmlPath),
     '-o', outMovPath,
-    '--format', 'prores4444',
+    '--format', 'mov',
+    '--quality', 'high',
   ];
-  if (durationSec) {
-    // TODO: confirmar el flag de duración en la API de hyperframes (-d / --duration).
-    args.push('--duration', String(durationSec));
-  }
+  void durationSec; // informativo; la duración vive en el HTML.
 
   await new Promise((resolve, reject) => {
     const child = spawn('npx', args, {
