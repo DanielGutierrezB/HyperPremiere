@@ -667,6 +667,41 @@
 
   if (btnSaveConfig) btnSaveConfig.addEventListener("click", saveConfig);
 
+  // Actualización: muestra la versión y, al tocar, hace git pull y recarga.
+  var btnUpdate = document.getElementById("btn-update");
+  var versionLabel = document.getElementById("version-label");
+  hpCall("getVersion").then(function (v) {
+    if (versionLabel && v) versionLabel.textContent = "v" + v;
+  }).catch(function () {});
+  if (btnUpdate) {
+    btnUpdate.addEventListener("click", function () {
+      btnUpdate.disabled = true;
+      var icon = btnUpdate.querySelector(".update-icon");
+      if (icon) icon.classList.add("spinning");
+      hpCall("selfUpdate")
+        .then(function (res) {
+          if (res && res.ok) {
+            if (versionLabel) versionLabel.textContent = "v" + res.version;
+            if (res.changed) {
+              btnUpdate.title = "Actualizado a v" + res.version + " — recargando…";
+              setTimeout(function () { window.location.reload(); }, 700);
+            } else {
+              btnUpdate.title = "Ya estás en la última (v" + res.version + ")";
+              if (icon) icon.classList.remove("spinning");
+              btnUpdate.disabled = false;
+            }
+          } else {
+            throw new Error((res && res.error) || "error");
+          }
+        })
+        .catch(function (e) {
+          btnUpdate.title = "Error al actualizar: " + ((e && e.message) || "");
+          if (icon) icon.classList.remove("spinning");
+          btnUpdate.disabled = false;
+        });
+    });
+  }
+
   // Iniciar sesión en Claude: el puente corre `claude setup-token`, abre el
   // navegador y guarda el token solo. No hay que pegar nada a mano.
   var btnLoginClaude = document.getElementById("btn-login-claude");

@@ -183,6 +183,36 @@ function loginClaude() {
   });
 }
 
+const REPO_ROOT = path.join(__dirname, '..');
+
+function getVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'version.json'), 'utf8')).version || '0.0.0';
+  } catch (e) { return '0.0.0'; }
+}
+
+// Actualiza el plugin: git pull --ff-only de la última versión publicada.
+// Devuelve { ok, version, changed, log }. Tras esto, el panel se recarga.
+function selfUpdate() {
+  const { spawn } = require('child_process');
+  return new Promise((resolve, reject) => {
+    const before = getVersion();
+    const child = spawn('git', ['-C', REPO_ROOT, 'pull', '--ff-only', 'origin', 'main'],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('update: timeout')); }, 60000);
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { err += c; });
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error('no se pudo ejecutar git: ' + e.message)); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error((err.trim() || out.trim() || 'git pull falló').slice(0, 300)));
+      const after = getVersion();
+      resolve({ ok: true, version: after, changed: after !== before || !/Already up to date/i.test(out), log: (out + err).trim().slice(0, 300) });
+    });
+  });
+}
+
 module.exports = {
   generate: (body) => runGeneration(body, 'generate'),
   feedback: (body) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen'),
@@ -190,4 +220,6 @@ module.exports = {
   getConfig,
   setConfig: saveConfig,
   loginClaude,
+  getVersion,
+  selfUpdate,
 };
