@@ -146,6 +146,17 @@ El puente normaliza todos a una interfaz interna `generateComposition(context) �
   superior libre) y manejo de colisiones.
 - **Versionado de feedback:** sufijo de versión vs. sobrescritura (default propuesto: versión + meta).
 
+## 10.b Requisito: Apple Silicon nativo (M-series)
+
+Todo el stack debe correr **arm64 nativo**, sin Rosetta/Intel:
+- Node y ffmpeg del sistema ya son arm64 (verificado en la máquina de Daniel, M3 Max).
+- El puente debe instalar dependencias en arm64 (hyperframes, Puppeteer/Chromium arm64).
+- El panel CEP corre en el motor CEF de Premiere (ya nativo en Premiere 2026 Apple Silicon).
+- No empaquetar ni depender de binarios x86_64.
+
+*(Nota fuera de alcance: el aviso de macOS "Support Ending for Intel-based Apps" que vio Daniel
+proviene de **AEJuice** (`file_downloader`), un plugin de terceros — no de HyperPremiere.)*
+
 ## 11. Criterios de éxito (v1)
 
 - Instalable como ZXP en tu Premiere 2026 y visible como panel.
