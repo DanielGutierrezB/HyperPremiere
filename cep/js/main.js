@@ -317,9 +317,23 @@
     return el;
   }
 
-  // Genera el recurso para un marcador: arma el contexto, lo manda al puente,
-  // y al recibir el .mov lo coloca en el timeline vía ExtendScript.
-  function generateForMarker(marker, statusEl, btn) {
+  // Recuerda el htmlPath de la última generación por marcador (para ajustes).
+  var htmlPathByMarker = {};
+
+  // Lee un archivo local usando la API de CEP (para pasar el HTML previo).
+  function readLocalFile(path) {
+    try {
+      if (window.cep && window.cep.fs && path) {
+        var r = window.cep.fs.readFile(path);
+        if (r && r.err === 0) return r.data;
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  // Genera / regenera / ajusta el recurso de un marcador.
+  // mode: "generate" | "regen" | "adjust". adjustment: texto (solo adjust).
+  function runGenerationForMarker(marker, statusEl, buttons, mode, adjustment) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
     var segments = HPStore.getTranscript() || [];
@@ -343,14 +357,23 @@
       markerTranscript: markerTranscript,
       instruction: data.instruction || "",
       stills: data.stills || [],
-      markerSlug: markerKey
+      markerSlug: markerKey,
+      mode: mode
     };
 
-    btn.disabled = true;
-    statusEl.textContent = "Generando… (puede tardar)";
+    if (mode === "adjust") {
+      payload.adjustment = adjustment || "";
+      payload.previousHtml = readLocalFile(htmlPathByMarker[markerKey]);
+    }
+
+    var endpoint = mode === "generate" ? "/generate" : "/feedback";
+    var verb = mode === "regen" ? "Regenerando" : mode === "adjust" ? "Ajustando" : "Generando";
+
+    setButtonsDisabled(buttons, true);
+    statusEl.textContent = verb + "… (puede tardar)";
     statusEl.className = "marker-status is-busy";
 
-    fetch(BRIDGE_URL + "/generate", {
+    fetch(BRIDGE_URL + endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -360,19 +383,20 @@
         if (!res || !res.ok) {
           throw new Error(res && res.error ? res.error : "error desconocido");
         }
+        if (res.htmlPath) htmlPathByMarker[markerKey] = res.htmlPath;
         statusEl.textContent = "Colocando en el timeline…";
         var movArg = JSON.stringify(res.movPath);
         csInterface.evalScript(
           "hp_placeClip(" + movArg + ", " + marker.start + ")",
           function (place) {
             if (place === "ok") {
-              statusEl.textContent = "✓ Generado y colocado (v" + res.version + ")";
+              statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")";
               statusEl.className = "marker-status is-ok";
             } else {
               statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
               statusEl.className = "marker-status is-error";
             }
-            btn.disabled = false;
+            setButtonsDisabled(buttons, false);
           }
         );
       })
@@ -380,8 +404,12 @@
         var msg = err && err.message ? err.message : String(err);
         statusEl.textContent = "Error: " + msg + " · ¿está corriendo el puente?";
         statusEl.className = "marker-status is-error";
-        btn.disabled = false;
+        setButtonsDisabled(buttons, false);
       });
+  }
+
+  function setButtonsDisabled(buttons, disabled) {
+    for (var i = 0; i < buttons.length; i++) buttons[i].disabled = disabled;
   }
 
   function createMarkerCard(marker) {
@@ -426,19 +454,45 @@
     var sliceEl = createTranscriptSlice(marker);
     if (sliceEl) card.appendChild(sliceEl);
 
-    // Acción: Generar (llama al puente y coloca el .mov en el timeline).
+    // Acciones: Generar / Regenerar / Ajustar (llaman al puente y colocan el .mov).
     var actions = document.createElement("div");
     actions.className = "marker-actions";
+
     var genBtn = document.createElement("button");
     genBtn.type = "button";
     genBtn.className = "btn-generate";
     genBtn.textContent = "Generar";
+
+    var regenBtn = document.createElement("button");
+    regenBtn.type = "button";
+    regenBtn.className = "btn-secondary";
+    regenBtn.textContent = "Regenerar";
+
+    var adjustBtn = document.createElement("button");
+    adjustBtn.type = "button";
+    adjustBtn.className = "btn-secondary";
+    adjustBtn.textContent = "Ajustar";
+
     var status = document.createElement("div");
     status.className = "marker-status";
+
+    var buttons = [genBtn, regenBtn, adjustBtn];
+
     genBtn.addEventListener("click", function () {
-      generateForMarker(marker, status, genBtn);
+      runGenerationForMarker(marker, status, buttons, "generate");
     });
+    regenBtn.addEventListener("click", function () {
+      runGenerationForMarker(marker, status, buttons, "regen");
+    });
+    adjustBtn.addEventListener("click", function () {
+      var adjustment = window.prompt("¿Qué ajuste querés? (ej. 'más lento', 'que el título aparezca al final')");
+      if (adjustment === null) return; // canceló
+      runGenerationForMarker(marker, status, buttons, "adjust", adjustment);
+    });
+
     actions.appendChild(genBtn);
+    actions.appendChild(regenBtn);
+    actions.appendChild(adjustBtn);
     card.appendChild(actions);
     card.appendChild(status);
 
