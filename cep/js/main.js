@@ -564,7 +564,7 @@
       .then(function (cfg) {
         if (!cfg) return;
         if (cfg.provider) cfgProvider.value = cfg.provider;
-        if (cfg.model) cfgModel.value = cfg.model;
+        cfgModel.value = cfg.model || "claude-opus-4-8";
         if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
         // apiKey viene enmascarada: no la mostramos, dejamos placeholder.
         if (cfg.apiKey) cfgApiKey.setAttribute("placeholder", "•••• (guardada)");

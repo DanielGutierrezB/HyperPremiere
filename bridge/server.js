@@ -288,9 +288,14 @@ async function handlePostConfig(req, res) {
   const next = { ...current };
   for (const key of Object.keys(DEFAULT_CONFIG)) {
     if (body[key] !== undefined && body[key] !== null) {
-      next[key] = String(body[key]);
+      const val = String(body[key]);
+      // provider y model son obligatorios: no permitir que un vacío los pise.
+      if ((key === 'model' || key === 'provider') && !val.trim()) continue;
+      next[key] = val;
     }
   }
+  // Red de seguridad: si el modelo quedó vacío, usar el default.
+  if (!next.model || !String(next.model).trim()) next.model = DEFAULT_CONFIG.model;
   // Una apiKey enmascarada reenviada por el panel no debe pisar la real.
   if (typeof next.apiKey === 'string' && next.apiKey.startsWith('••••')) {
     next.apiKey = current.apiKey;
