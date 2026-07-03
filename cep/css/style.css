@@ -1,4 +1,23 @@
-/* HyperPremiere — estilo oscuro sobrio, acorde a la UI de Premiere. */
+/* HyperPremiere — dark editorial. Profundidad por tono, hairlines 1px, un solo acento. */
+
+:root {
+  --bg-base: #0e1116;
+  --bg-panel: #12161d;
+  --bg-surface: #1a1f28;
+  --bg-surface-hover: #1f2530;
+  --bg-inset: #10141a;
+  --text-primary: #e8e6df;
+  --text-secondary: #8b97a8;
+  --text-muted: #5c6675;
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+  --accent: #60a5fa;
+  --accent-dim: rgba(96, 165, 250, 0.12);
+  --accent-glow: rgba(96, 165, 250, 0.25);
+  --error: #e08a8a;
+  --radius: 2px;
+  --ease: 150ms ease-out;
+}
 
 * {
   margin: 0;
@@ -12,100 +31,194 @@ body {
 }
 
 body {
-  background-color: #1e1e1e;
-  color: #d6d6d6;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  min-width: 320px;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-weight: 300;
   font-size: 13px;
   line-height: 1.5;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* ── Header ─────────────────────────────────────────── */
+
 .panel-header {
+  flex: none;
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid #333333;
-  background-color: #232323;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .panel-header h1 {
   font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #f0f0f0;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.panel-header .subtitle {
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
 }
 
 .panel-header .version {
-  font-size: 11px;
-  color: #8a8a8a;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding-top: 3px;
 }
 
-.panel-body {
-  flex: 1;
+/* ── Barra de acciones ──────────────────────────────── */
+
+.actions {
+  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  overflow-y: auto;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--hairline);
 }
 
 button {
   appearance: none;
-  border: 1px solid #4a4a4a;
-  border-radius: 0;
-  background-color: #2d2d2d;
-  color: #e0e0e0;
-  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background-color: transparent;
+  color: var(--text-primary);
   font-family: inherit;
-  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  padding: 7px 12px;
   cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--ease), border-color var(--ease), color var(--ease), box-shadow var(--ease);
 }
 
 button:hover {
-  background-color: #383838;
-  border-color: #5a5a5a;
+  background-color: var(--bg-surface);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 button:active {
-  background-color: #444444;
+  background-color: var(--bg-surface-hover);
+}
+
+button:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
+  pointer-events: none;
 }
 
+.btn-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+  background-color: var(--accent-dim);
+}
+
+.btn-primary:hover {
+  background-color: rgba(96, 165, 250, 0.2);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* ── Cuerpo ─────────────────────────────────────────── */
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 0;
+  gap: 12px;
+}
+
+/* ── Salida de estado ───────────────────────────────── */
+
 .output {
-  border: 1px solid #333333;
-  background-color: #181818;
+  flex: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background-color: var(--bg-inset);
   padding: 10px 12px;
-  min-height: 80px;
+  min-height: 58px;
   font-family: "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
-  color: #c8c8c8;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
+  transition: border-color var(--ease), color var(--ease);
 }
 
 .output .placeholder {
-  color: #6f6f6f;
+  color: var(--text-muted);
   font-family: inherit;
 }
 
 .output.is-error {
-  color: #e08a8a;
-  border-color: #5a3535;
+  color: var(--error);
+  border-color: rgba(224, 138, 138, 0.35);
 }
 
-.actions {
-  display: flex;
-  gap: 8px;
+/* ── Lista de marcadores ────────────────────────────── */
+
+.section-label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.markers-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -16px;
+  padding: 0 16px 14px;
+}
+
+.markers-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.markers-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.12);
+  border: 2px solid var(--bg-base);
+  border-radius: 4px;
+}
+
+.markers-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
 .markers {
@@ -115,28 +228,46 @@ button:disabled {
 }
 
 .marker-card {
-  background-color: #2a2a2a;
-  border: 1px solid #3a3a3a;
-  padding: 8px 12px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  border-radius: var(--radius);
+  padding: 9px 12px;
   cursor: pointer;
+  transition: background-color var(--ease), border-color var(--ease);
 }
 
 .marker-card:hover {
-  background-color: #333333;
-  border-color: #4a4a4a;
+  background-color: var(--bg-surface-hover);
+  border-color: var(--hairline-strong);
+  border-left-color: var(--accent);
 }
 
 .marker-card.is-selected {
-  border-color: #3f7de0;
-  background-color: #30363f;
+  background-color: var(--bg-surface-hover);
+  border-color: var(--hairline-strong);
+  border-left-color: var(--accent);
+  box-shadow: inset 0 0 0 0 transparent, 0 0 10px rgba(96, 165, 250, 0.08);
 }
 
 .marker-card .marker-name {
-  font-weight: 600;
-  color: #f0f0f0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marker-card.is-selected .marker-name {
+  color: var(--accent);
 }
 
 .marker-card .marker-meta {
   font-size: 11px;
-  color: #9a9a9a;
+  font-weight: 300;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
 }

@@ -3,23 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <title>HyperPremiere</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <header class="panel-header">
-    <h1>HyperPremiere</h1>
-    <span class="version">v0.1.0 — Fase 1</span>
+    <div class="header-title">
+      <h1>HyperPremiere</h1>
+      <p class="subtitle">Marcadores de secuencia</p>
+    </div>
+    <span class="version">v0.1.0</span>
   </header>
 
+  <div class="actions">
+    <button id="btn-test-connection" type="button">Probar conexión</button>
+    <button id="btn-load-markers" type="button" class="btn-primary">Cargar marcadores</button>
+  </div>
+
   <main class="panel-body">
-    <div class="actions">
-      <button id="btn-test-connection" type="button">Probar conexión</button>
-      <button id="btn-load-markers" type="button">Cargar marcadores</button>
-    </div>
     <div id="output" class="output" aria-live="polite">
       <span class="placeholder">Pulsa "Probar conexión" para leer la secuencia activa.</span>
     </div>
-    <div id="markers" class="markers"></div>
+
+    <div class="section-label">Marcadores</div>
+    <div class="markers-scroll">
+      <div id="markers" class="markers"></div>
+    </div>
   </main>
 
   <script src="js/CSInterface.js"></script>
