@@ -345,6 +345,41 @@ async function handleDeriveObjective(req, res) {
   }
 }
 
+// Inicia sesión en Claude corriendo `claude setup-token`. Abre el navegador para
+// que el usuario autorice; captura el token sk-ant-oat... y lo guarda en config.
+// Así el usuario no tiene que pegar ningún token a mano.
+async function handleLoginClaude(req, res) {
+  try {
+    const { spawn } = require('child_process');
+    const token = await new Promise((resolve, reject) => {
+      const child = spawn('claude', ['setup-token'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error('login: timeout (5 min). ¿Completaste la autorización en el navegador?'));
+      }, 300_000);
+      child.stdout.on('data', (c) => { out += c; });
+      child.stderr.on('data', (c) => { err += c; });
+      child.on('error', (e) => { clearTimeout(timer); reject(new Error('no se pudo ejecutar claude: ' + e.message)); });
+      child.on('close', () => {
+        clearTimeout(timer);
+        const m = (out + '\n' + err).match(/sk-ant-oat[0-9]+-[A-Za-z0-9_-]+/);
+        if (m) resolve(m[0]);
+        else reject(new Error('login: no se encontró el token en la salida. ' + (err.trim() || out.trim()).slice(0, 300)));
+      });
+    });
+
+    const config = loadConfig();
+    config.oauthToken = token;
+    config.provider = 'claude-cli';
+    saveConfig(config);
+    sendJson(res, 200, { ok: true, provider: 'claude-cli' });
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: (err && err.message) || String(err) });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router + servidor
 // ---------------------------------------------------------------------------
@@ -356,6 +391,7 @@ const ROUTES = {
   'POST /generate': handleGenerate,
   'POST /feedback': handleFeedback,
   'POST /derive-objective': handleDeriveObjective,
+  'POST /login-claude': handleLoginClaude,
 };
 
 const server = http.createServer(async (req, res) => {

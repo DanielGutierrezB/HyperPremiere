@@ -54,31 +54,40 @@ async function renderComposition({ html, outMovPath, durationSec }) {
   }
 
   // Directorio temporal propio para esta render (cwd del CLI).
+  // hyperframes espera un PROYECTO: index.html + hyperframes.json en la raíz.
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperpremiere-render-'));
-  const htmlPath = path.join(workDir, 'composition.html');
+  const htmlPath = path.join(workDir, 'index.html');
   fs.writeFileSync(htmlPath, html, 'utf8');
+  // Proyecto mínimo de hyperframes para que reconozca la carpeta.
+  fs.writeFileSync(
+    path.join(workDir, 'hyperframes.json'),
+    JSON.stringify({ paths: { blocks: '.', assets: 'assets' } }, null, 2),
+    'utf8'
+  );
 
   fs.mkdirSync(path.dirname(outMovPath), { recursive: true });
 
   // Limpiar ghost files antes de que hyperframes escanee el dir.
   removeGhostFiles(workDir);
 
+  // Usar el binario LOCAL de hyperframes (evita que npx lo re-descargue).
+  const localBin = path.join(__dirname, '..', 'node_modules', '.bin', 'hyperframes');
+  const bin = fs.existsSync(localBin) ? localBin : 'npx';
+  const baseArgs = bin === 'npx' ? ['hyperframes'] : [];
+
   // hyperframes 0.7.x: --format mov => MOV con transparencia (alpha real, ProRes 4444).
-  // La duración NO es un flag: se declara en data-duration del #stage dentro del HTML
-  // (el prompt de sistema instruye al modelo a fijarla según la duración del marcador).
-  const args = [
-    'hyperframes',
+  // Sin -c: renderiza el index.html del proyecto. La duración vive en el HTML (data-duration).
+  const args = baseArgs.concat([
     'render',
     workDir,
-    '-c', path.basename(htmlPath),
     '-o', outMovPath,
     '--format', 'mov',
     '--quality', 'high',
-  ];
+  ]);
   void durationSec; // informativo; la duración vive en el HTML.
 
   await new Promise((resolve, reject) => {
-    const child = spawn('npx', args, {
+    const child = spawn(bin, args, {
       cwd: workDir,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],

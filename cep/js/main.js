@@ -387,7 +387,7 @@
         statusEl.textContent = "Colocando en el timeline…";
         var movArg = JSON.stringify(res.movPath);
         csInterface.evalScript(
-          "hp_placeClip(" + movArg + ", " + marker.start + ")",
+          "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
           function (place) {
             if (place === "ok") {
               statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")";
@@ -600,6 +600,31 @@
   }
 
   if (btnSaveConfig) btnSaveConfig.addEventListener("click", saveConfig);
+
+  // Iniciar sesión en Claude: el puente corre `claude setup-token`, abre el
+  // navegador y guarda el token solo. No hay que pegar nada a mano.
+  var btnLoginClaude = document.getElementById("btn-login-claude");
+  var loginStatus = document.getElementById("login-status");
+  if (btnLoginClaude) {
+    btnLoginClaude.addEventListener("click", function () {
+      btnLoginClaude.disabled = true;
+      loginStatus.textContent = "Abrí el navegador y autorizá… (esperando)";
+      fetch(BRIDGE_URL + "/login-claude", { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data && data.ok) {
+            loginStatus.textContent = "✓ Sesión de Claude lista";
+            cfgProvider.value = "claude-cli";
+          } else {
+            loginStatus.textContent = "Error: " + ((data && data.error) || "desconocido");
+          }
+        })
+        .catch(function () {
+          loginStatus.textContent = "Error de conexión con el puente";
+        })
+        .then(function () { btnLoginClaude.disabled = false; });
+    });
+  }
 
   btnTestConnection.addEventListener("click", onTestConnection);
   btnLoadMarkers.addEventListener("click", onLoadMarkers);

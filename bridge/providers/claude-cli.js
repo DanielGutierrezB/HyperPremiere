@@ -106,9 +106,14 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
 
   try {
+    // Token OAuth de suscripción: desde config (botón "Iniciar sesión") o del entorno.
+    const childEnv = Object.assign({}, process.env);
+    var oauth = cfg.oauthToken || cfg.apiKey || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (oauth) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauth;
+
     const stdout = await new Promise((resolve, reject) => {
       // shell: false (default) + args por array => sin interpretacion de shell.
-      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv });
 
       let out = '';
       let err = '';

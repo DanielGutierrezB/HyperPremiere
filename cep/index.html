@@ -55,9 +55,21 @@
         </select>
 
         <label class="field-label" for="cfg-model">Modelo</label>
-        <input type="text" id="cfg-model" placeholder="p.ej. claude-opus-4-8, claude-fable-5, qwen3-coder:30b">
+        <input type="text" id="cfg-model" list="model-suggestions" placeholder="Elegí o escribí un modelo">
+        <datalist id="model-suggestions">
+          <option value="claude-opus-4-8"></option>
+          <option value="claude-sonnet-5"></option>
+          <option value="claude-fable-5"></option>
+          <option value="claude-haiku-4-5-20251001"></option>
+          <option value="qwen3-coder:30b"></option>
+        </datalist>
 
-        <label class="field-label" for="cfg-apikey">Token / API key</label>
+        <div id="claude-login-row" class="config-actions">
+          <button id="btn-login-claude" type="button">Iniciar sesión en Claude</button>
+          <span id="login-status" class="muted"></span>
+        </div>
+
+        <label class="field-label" for="cfg-apikey">Token / API key <span class="muted">(no hace falta con Claude CLI)</span></label>
         <input type="password" id="cfg-apikey" placeholder="Solo para API key / compatible">
 
         <label class="field-label" for="cfg-baseurl">Base URL</label>
