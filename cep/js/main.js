@@ -2,7 +2,35 @@
   "use strict";
 
   var DEBOUNCE_MS = 300;
-  var BRIDGE_URL = "http://127.0.0.1:7867";
+
+  // Motor "todo en uno": corre dentro del panel vía Node (CEP --enable-nodejs).
+  // No hay servidor ni proceso externo. Ruta absoluta al módulo del repo.
+  var ENGINE_PATH = "/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/bridge/engine.js";
+  var HP_ENGINE = null;
+  (function loadEngine() {
+    try {
+      var req = (typeof window !== "undefined" && window.cep_node && window.cep_node.require)
+        ? window.cep_node.require
+        : (typeof require === "function" ? require : null);
+      if (req) HP_ENGINE = req(ENGINE_PATH);
+    } catch (e) {
+      HP_ENGINE = null;
+    }
+  })();
+
+  // Llama a un método del motor y devuelve SIEMPRE una Promise (los métodos
+  // sync como getConfig también quedan envueltos). Si Node no está disponible,
+  // rechaza con un mensaje claro.
+  function hpCall(method, arg) {
+    if (!HP_ENGINE || typeof HP_ENGINE[method] !== "function") {
+      return Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere para activar Node en el panel."));
+    }
+    try {
+      return Promise.resolve(HP_ENGINE[method](arg));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
 
   var csInterface = new CSInterface();
 
@@ -128,12 +156,7 @@
     if (objectiveInput) {
       objectiveInput.setAttribute("placeholder", "Derivando objetivo del transcript…");
     }
-    fetch(BRIDGE_URL + "/derive-objective", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transcript: segments })
-    })
-      .then(function (r) { return r.json(); })
+    hpCall("deriveObjective", { transcript: segments })
       .then(function (data) {
         if (data && data.ok && data.objective) {
           objectiveInput.value = data.objective;
@@ -366,19 +389,14 @@
       payload.previousHtml = readLocalFile(htmlPathByMarker[markerKey]);
     }
 
-    var endpoint = mode === "generate" ? "/generate" : "/feedback";
+    var method = mode === "generate" ? "generate" : "feedback";
     var verb = mode === "regen" ? "Regenerando" : mode === "adjust" ? "Ajustando" : "Generando";
 
     setButtonsDisabled(buttons, true);
     statusEl.textContent = verb + "… (puede tardar)";
     statusEl.className = "marker-status is-busy";
 
-    fetch(BRIDGE_URL + endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then(function (r) { return r.json(); })
+    hpCall(method, payload)
       .then(function (res) {
         if (!res || !res.ok) {
           throw new Error(res && res.error ? res.error : "error desconocido");
@@ -402,7 +420,7 @@
       })
       .catch(function (err) {
         var msg = err && err.message ? err.message : String(err);
-        statusEl.textContent = "Error: " + msg + " · ¿está corriendo el puente?";
+        statusEl.textContent = "Error: " + msg;
         statusEl.className = "marker-status is-error";
         setButtonsDisabled(buttons, false);
       });
@@ -559,18 +577,17 @@
   var configStatus = document.getElementById("config-status");
 
   function loadConfig() {
-    fetch(BRIDGE_URL + "/config")
-      .then(function (r) { return r.json(); })
+    hpCall("getConfig")
       .then(function (cfg) {
         if (!cfg) return;
         if (cfg.provider) cfgProvider.value = cfg.provider;
         cfgModel.value = cfg.model || "claude-opus-4-8";
         if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
-        // apiKey viene enmascarada: no la mostramos, dejamos placeholder.
         if (cfg.apiKey) cfgApiKey.setAttribute("placeholder", "•••• (guardada)");
+        if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
       })
-      .catch(function () {
-        if (configStatus) configStatus.textContent = "Puente no disponible";
+      .catch(function (e) {
+        if (configStatus) configStatus.textContent = (e && e.message) || "Motor no disponible";
       });
   }
 
@@ -579,23 +596,17 @@
       provider: cfgProvider.value,
       model: cfgModel.value.trim()
     };
-    // Solo mandar apiKey/baseUrl si el usuario escribió algo (no pisar con vacío).
     if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
     if (cfgBaseUrl.value.trim()) body.baseUrl = cfgBaseUrl.value.trim();
 
     configStatus.textContent = "Guardando…";
-    fetch(BRIDGE_URL + "/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    })
-      .then(function (r) { return r.json(); })
+    hpCall("setConfig", body)
       .then(function () {
         configStatus.textContent = "✓ Guardado";
         cfgApiKey.value = "";
       })
-      .catch(function () {
-        configStatus.textContent = "Error al guardar (¿puente corriendo?)";
+      .catch(function (e) {
+        configStatus.textContent = "Error al guardar: " + ((e && e.message) || "");
       });
   }
 
@@ -609,8 +620,7 @@
     btnLoginClaude.addEventListener("click", function () {
       btnLoginClaude.disabled = true;
       loginStatus.textContent = "Abrí el navegador y autorizá… (esperando)";
-      fetch(BRIDGE_URL + "/login-claude", { method: "POST" })
-        .then(function (r) { return r.json(); })
+      hpCall("loginClaude")
         .then(function (data) {
           if (data && data.ok) {
             loginStatus.textContent = "✓ Sesión de Claude lista";
@@ -619,8 +629,8 @@
             loginStatus.textContent = "Error: " + ((data && data.error) || "desconocido");
           }
         })
-        .catch(function () {
-          loginStatus.textContent = "Error de conexión con el puente";
+        .catch(function (e) {
+          loginStatus.textContent = "Error: " + ((e && e.message) || "login falló");
         })
         .then(function () { btnLoginClaude.disabled = false; });
     });
