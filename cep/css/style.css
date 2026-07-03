@@ -102,3 +102,41 @@ button:disabled {
   color: #e08a8a;
   border-color: #5a3535;
 }
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.markers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.marker-card {
+  background-color: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.marker-card:hover {
+  background-color: #333333;
+  border-color: #4a4a4a;
+}
+
+.marker-card.is-selected {
+  border-color: #3f7de0;
+  background-color: #30363f;
+}
+
+.marker-card .marker-name {
+  font-weight: 600;
+  color: #f0f0f0;
+}
+
+.marker-card .marker-meta {
+  font-size: 11px;
+  color: #9a9a9a;
+}

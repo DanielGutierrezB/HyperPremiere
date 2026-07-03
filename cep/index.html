@@ -8,14 +8,18 @@
 <body>
   <header class="panel-header">
     <h1>HyperPremiere</h1>
-    <span class="version">v0.1.0 — Fase 0</span>
+    <span class="version">v0.1.0 — Fase 1</span>
   </header>
 
   <main class="panel-body">
-    <button id="btn-test-connection" type="button">Probar conexión</button>
+    <div class="actions">
+      <button id="btn-test-connection" type="button">Probar conexión</button>
+      <button id="btn-load-markers" type="button">Cargar marcadores</button>
+    </div>
     <div id="output" class="output" aria-live="polite">
       <span class="placeholder">Pulsa "Probar conexión" para leer la secuencia activa.</span>
     </div>
+    <div id="markers" class="markers"></div>
   </main>
 
   <script src="js/CSInterface.js"></script>
