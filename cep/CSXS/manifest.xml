@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ExtensionManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   ExtensionBundleId="com.codigo.hyperpremiere"
+                   ExtensionBundleVersion="0.1.0"
+                   ExtensionBundleName="HyperPremiere"
+                   Version="12.0">
+  <ExtensionList>
+    <Extension Id="com.codigo.hyperpremiere.panel" Version="0.1.0"/>
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <!-- Rango amplio para cubrir Premiere Pro 2024+ (2026 = 25.x/26.x) -->
+      <Host Name="PPRO" Version="[24.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="12.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.codigo.hyperpremiere.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <ScriptPath>./jsx/host.jsx</ScriptPath>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>HyperPremiere</Menu>
+          <Geometry>
+            <Size>
+              <Width>400</Width>
+              <Height>600</Height>
+            </Size>
+            <MinSize>
+              <Width>320</Width>
+              <Height>400</Height>
+            </MinSize>
+            <MaxSize>
+              <Width>2200</Width>
+              <Height>2200</Height>
+            </MaxSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
