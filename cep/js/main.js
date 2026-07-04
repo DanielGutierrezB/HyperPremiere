@@ -34,6 +34,16 @@
 
   var csInterface = new CSInterface();
 
+  // CEP NO re-evalúa el ScriptPath (host.jsx) al recargar el panel: mantiene el
+  // motor ExtendScript viejo en memoria. Lo recargamos explícitamente en cada
+  // apertura para que los cambios del .jsx siempre tomen efecto.
+  (function reloadHostJsx() {
+    try {
+      var ext = csInterface.getSystemPath(SystemPath.EXTENSION);
+      csInterface.evalScript('$.evalFile("' + ext + '/jsx/host.jsx")');
+    } catch (e) {}
+  })();
+
   var btnTestConnection = document.getElementById("btn-test-connection");
   var btnLoadMarkers = document.getElementById("btn-load-markers");
   var output = document.getElementById("output");

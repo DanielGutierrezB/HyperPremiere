@@ -100,49 +100,31 @@ function hp_getProjectPath() {
 
 // Exporta el frame actual del monitor de programa (playhead) a un PNG.
 // Adobe cambió esta API entre versiones; probamos varias vías en orden y
-// reportamos con detalle si ninguna funciona. Devuelve "ok" o "error: ...".
+// reportamos con detalle si ninguna funciona. Devuelve "ok|<ruta>" o "error: ...".
 function hp_captureProgramFrame(outPath) {
-    var seq = app.project.activeSequence;
-    if (!seq) return "error: no hay secuencia activa";
-
-    var ticks = "0";
-    try { ticks = seq.getPlayerPosition().ticks; } catch (e) {}
-
-    var tried = [];
-    // QE agrega ".png" al path que se le pasa; probamos varias formas del nombre.
-    var base = String(outPath).replace(/\.png$/i, "");
-
-    function firstExisting(paths) {
-        for (var i = 0; i < paths.length; i++) {
-            var ff = new File(paths[i]);
-            if (ff.exists && ff.length > 0) return paths[i];
-        }
-        return null;
-    }
-
-    // 1) DOM: seq.exportFramePNG(ticks, path)  (Premiere viejo)
-    try {
-        if (typeof seq.exportFramePNG === "function") {
-            seq.exportFramePNG(ticks, outPath);
-            var got1 = firstExisting([outPath, outPath + ".png", base + ".png"]);
-            if (got1) return "ok|" + got1;
-        } else { tried.push("dom: sin exportFramePNG"); }
-    } catch (e) { tried.push("dom: " + e.toString()); }
-
-    // 2) QE DOM (vía confiable en Premiere reciente; agrega ".png" solo)
+    // Método probado (igual que Editor Pro): QE + CTI.timecode + exportFramePNG(time, base).
+    // QE agrega ".png" solo, y la exportación tarda: hay que esperar antes de leer.
     try {
         app.enableQE();
-        var q = (typeof qe !== "undefined" && qe.project) ? qe.project.getActiveSequence() : null;
-        if (q && typeof q.exportFramePNG === "function") {
-            try { q.exportFramePNG(base); } catch (eA) {
-                try { q.exportFramePNG(base, ticks); } catch (eB) { tried.push("qe: " + eB.toString()); }
-            }
-            var got2 = firstExisting([base + ".png", outPath, outPath + ".png"]);
-            if (got2) return "ok|" + got2;
-        } else { tried.push("qe: sin exportFramePNG"); }
-    } catch (e) { tried.push("qe-enable: " + e.toString()); }
+        var qeSeq = (typeof qe !== "undefined" && qe.project) ? qe.project.getActiveSequence() : null;
+        if (!qeSeq) return "error: no hay secuencia activa (QE)";
+        if (typeof qeSeq.exportFramePNG !== "function") return "error: exportFramePNG no disponible en QE";
 
-    return "error: no se pudo exportar el frame [" + tried.join(" | ") + "]";
+        var time = qeSeq.CTI.timecode; // timecode del playhead (string), no ticks
+        var base = String(outPath).replace(/\.png$/i, "");
+
+        qeSeq.exportFramePNG(time, base);
+        $.sleep(1200); // QE escribe el archivo de forma diferida
+
+        var candidates = [base + ".png", base, base + ".png.png", outPath, outPath + ".png"];
+        for (var i = 0; i < candidates.length; i++) {
+            var f = new File(candidates[i]);
+            if (f.exists && f.length > 100) return "ok|" + candidates[i];
+        }
+        return "error: el frame no se generó (tc=" + time + ")";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
 }
 
 // ¿Está libre la pista en el rango [start, start+dur)? (sin clips que solapen)
