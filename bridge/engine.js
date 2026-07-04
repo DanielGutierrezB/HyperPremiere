@@ -137,11 +137,27 @@ async function runGeneration(body, mode, onProgress) {
   const provider = getProvider(config.provider);
   const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
   report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' });
-  const rawResponse = await provider.generate({
-    systemPrompt, userPrompt, images: stillsList, model: config.model, config,
-  });
+  function isValidComposition(h) {
+    return h && /data-composition-id/.test(h) && /data-duration\s*=\s*["']?\s*[0-9.]*[1-9]/.test(h) && /__timelines/.test(h);
+  }
 
-  const html = stripHtmlFence(rawResponse);
+  let html = stripHtmlFence(await provider.generate({
+    systemPrompt, userPrompt, images: stillsList, model: config.model, config,
+  }));
+
+  // Reintento único si no cumple el contrato de HyperFrames (evita render fallido).
+  if (!isValidComposition(html)) {
+    report({ pct: 45, msg: 'Corrigiendo la estructura de la composición…' });
+    const fixPrompt = userPrompt +
+      '\n\n## IMPORTANTE: la estructura anterior era inválida\n' +
+      'Devolvé el HTML COMPLETO siguiendo EXACTAMENTE la plantilla obligatoria. El <div id="stage"> ' +
+      'DEBE tener data-composition-id, data-width="1920", data-height="1080", data-duration (número > 0 = duración del marcador) y data-fps="30". ' +
+      'El script DEBE terminar con window.__timelines[COMP_ID] = tl; (COMP_ID igual a data-composition-id). Sin esto el render falla.';
+    html = stripHtmlFence(await provider.generate({
+      systemPrompt, userPrompt: fixPrompt, images: stillsList, model: config.model, config,
+    }));
+  }
+
   if (!html) throw new Error(`El proveedor "${config.provider}" devolvió respuesta vacía`);
   fs.writeFileSync(outPaths.html, html, 'utf8');
 

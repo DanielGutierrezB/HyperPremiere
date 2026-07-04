@@ -25,7 +25,7 @@ const os = require('os');
 const path = require('path');
 const { stripHtmlFence, parseImageDataUrl } = require('./index');
 
-const DEFAULT_TIMEOUT_MS = 240_000; // 240s
+const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas y se demora)
 
 /** Extension de archivo segun media type; png como fallback razonable. */
 function extForMediaType(mediaType) {
