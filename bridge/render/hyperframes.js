@@ -78,12 +78,17 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress }) 
 
   // hyperframes 0.7.x: --format mov => MOV con transparencia (alpha real, ProRes 4444).
   // Sin -c: renderiza el index.html del proyecto. La duración vive en el HTML (data-duration).
+  // --workers 1: captura SECUENCIAL. Las composiciones con video (ej. marcadores que
+  // reusan el diagrama anterior) revientan con workers en paralelo ("Parallel capture
+  // timed out" / "Navigation timeout of 60000 ms exceeded") porque varios Chrome compiten
+  // por RAM/GPU. Secuencial es más lento pero estable — es la solución que sugiere el CLI.
   const args = baseArgs.concat([
     'render',
     workDir,
     '-o', outMovPath,
     '--format', 'mov',
     '--quality', 'high',
+    '--workers', '1',
   ]);
   void durationSec; // informativo; la duración vive en el HTML.
 
