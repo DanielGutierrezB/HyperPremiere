@@ -706,6 +706,122 @@
     body.appendChild(actions);
     body.appendChild(estimate);
     body.appendChild(status);
+
+    // ── Editor de HTML manual (elegir versión → Abrir → editar → Render) ──
+    var editor = document.createElement("details");
+    editor.className = "html-editor";
+    var eSum = document.createElement("summary");
+    eSum.textContent = "Editar HTML manualmente";
+    editor.appendChild(eSum);
+
+    var eBody = document.createElement("div");
+    eBody.className = "html-editor-body";
+
+    var verRow = document.createElement("div");
+    verRow.className = "editor-row";
+    var verMount = document.createElement("div");
+    var openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn-secondary";
+    openBtn.textContent = "Abrir";
+    verRow.appendChild(verMount);
+    verRow.appendChild(openBtn);
+
+    var ta = document.createElement("textarea");
+    ta.className = "html-editor-textarea";
+    ta.spellcheck = false;
+    ta.setAttribute("placeholder", "Abrí una versión para editar su HTML…");
+
+    var renderBtn = document.createElement("button");
+    renderBtn.type = "button";
+    renderBtn.className = "btn-generate";
+    renderBtn.textContent = "Guardar y renderizar (nueva versión)";
+
+    var eStatus = document.createElement("div");
+    eStatus.className = "marker-status";
+
+    eBody.appendChild(verRow);
+    eBody.appendChild(ta);
+    eBody.appendChild(renderBtn);
+    eBody.appendChild(eStatus);
+    editor.appendChild(eBody);
+    body.appendChild(editor);
+
+    var verSel = HPSelect(verMount);
+
+    function refreshVersions() {
+      hpCall("listMarkerVersions", {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName, markerSlug: markerKey
+      }).then(function (r) {
+        if (r && r.ok && r.versions && r.versions.length) {
+          var opts = r.versions.map(function (v) {
+            return { value: String(v.version), label: "v" + v.version + (v.model ? " [" + v.model + "]" : "") };
+          });
+          verSel.setOptions(opts, String(r.versions[r.versions.length - 1].version));
+        } else {
+          verSel.setOptions([{ value: "", label: "(sin versiones aún)" }], "");
+        }
+      }).catch(function () {});
+    }
+
+    openBtn.addEventListener("click", function () {
+      var v = parseInt(verSel.value, 10);
+      if (!v) { eStatus.className = "marker-status is-error"; eStatus.textContent = "Generá una versión primero."; return; }
+      eStatus.className = "marker-status"; eStatus.textContent = "Abriendo v" + v + "…";
+      hpCall("readMarkerHtml", {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName, markerSlug: markerKey, version: v
+      }).then(function (r) {
+        if (r && r.ok) { ta.value = r.html; eStatus.textContent = "v" + v + " cargada — editá y dale Render."; }
+        else { eStatus.className = "marker-status is-error"; eStatus.textContent = "No se pudo abrir: " + ((r && r.error) || ""); }
+      }).catch(function (e) { eStatus.className = "marker-status is-error"; eStatus.textContent = "Error: " + ((e && e.message) || ""); });
+    });
+
+    renderBtn.addEventListener("click", function () {
+      var html = ta.value.trim();
+      if (!html) { eStatus.className = "marker-status is-error"; eStatus.textContent = "El HTML está vacío."; return; }
+      renderBtn.disabled = true; openBtn.disabled = true;
+      eStatus.textContent = ""; eStatus.className = "marker-status is-busy";
+      var bar = document.createElement("div"); bar.className = "hp-bar";
+      var fill = document.createElement("div"); fill.className = "hp-bar-fill"; bar.appendChild(fill);
+      var msg = document.createElement("div"); msg.className = "hp-bar-msg";
+      eStatus.appendChild(bar); eStatus.appendChild(msg);
+      var t0 = Date.now();
+      function onP(p) { if (!p) return; if (typeof p.pct === "number") fill.style.width = Math.max(0, Math.min(100, p.pct)) + "%"; if (p.msg) msg.textContent = p.msg; }
+      onP({ pct: 5, msg: "Preparando…" });
+
+      var payload = {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName,
+        marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
+        markerSlug: markerKey, html: html
+      };
+      var call;
+      if (HP_ENGINE && typeof HP_ENGINE.renderManualHtml === "function") {
+        try { call = Promise.resolve(HP_ENGINE.renderManualHtml(payload, onP)); } catch (e) { call = Promise.reject(e); }
+      } else { call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere.")); }
+
+      call.then(function (res) {
+        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
+        onP({ pct: 98, msg: "Colocando en el timeline…" });
+        var movArg = JSON.stringify(res.movPath);
+        csInterface.evalScript("hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")", function (place) {
+          eStatus.className = "marker-status is-ok";
+          eStatus.textContent = (place === "ok" ? "✓ Renderizado y colocado" : "Render OK, no se pudo colocar: " + place) +
+            " (versión " + res.version + ") · tardó " + fmtDuration((Date.now() - t0) / 1000);
+          HPStore.setMarkerGenerated(markerKey, true);
+          syncUI();
+          refreshVersions();
+          renderBtn.disabled = false; openBtn.disabled = false;
+        });
+      }).catch(function (err) {
+        eStatus.className = "marker-status is-error";
+        eStatus.textContent = "Error: " + (err && err.message ? err.message : String(err));
+        renderBtn.disabled = false; openBtn.disabled = false;
+      });
+    });
+
+    // Refrescar la lista de versiones al abrir el editor.
+    editor.addEventListener("toggle", function () { if (editor.open) refreshVersions(); });
+
     card.appendChild(body);
 
     // Acordeón: al abrir esta tarjeta, colapsar las demás (ahorra pantalla).

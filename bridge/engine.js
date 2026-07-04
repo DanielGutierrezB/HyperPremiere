@@ -450,10 +450,96 @@ function selfUpdate() {
   });
 }
 
+function escapeReg(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Lista las versiones ya generadas de un marcador (escaneo del baseDir).
+// Devuelve { ok, versions: [{ version, model }] } ordenado por versión.
+function listMarkerVersions(body) {
+  try {
+    body = body || {};
+    const markerSlug = String(body.markerSlug || '').trim();
+    if (!markerSlug) return { ok: false, error: 'falta markerSlug', versions: [] };
+    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+    let entries = [];
+    try { entries = fs.readdirSync(baseDir); } catch (e) {}
+    const re = new RegExp('^' + escapeReg(markerSlug) + ' v(\\d+)(?: \\[(.+?)\\])?\\.html$');
+    const out = [];
+    for (const name of entries) {
+      const m = name.match(re);
+      if (m) out.push({ version: parseInt(m[1], 10), model: m[2] || '' });
+    }
+    out.sort((a, b) => a.version - b.version);
+    return { ok: true, versions: out };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), versions: [] };
+  }
+}
+
+// Lee el HTML de una versión concreta de un marcador.
+function readMarkerHtml(body) {
+  try {
+    body = body || {};
+    const markerSlug = String(body.markerSlug || '').trim();
+    const version = parseInt(body.version, 10);
+    if (!markerSlug || !version) return { ok: false, error: 'faltan markerSlug/version' };
+    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+    const p = versionFile(baseDir, markerSlug, version, '.html');
+    if (!p) return { ok: false, error: 'no se encontró la versión ' + version };
+    return { ok: true, html: fs.readFileSync(p, 'utf8'), version };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
+// Renderiza un HTML editado a mano por el editor como una NUEVA versión, SIN
+// llamar al modelo. Se marca como [manual] en el nombre. Devuelve el .mov.
+async function renderManualHtml(body, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
+  body = body || {};
+  const { projectPath, sequenceName, marker } = body;
+  if (!marker || typeof marker !== 'object') throw new Error('Falta "marker"');
+  const durationSec = Number(marker.duration) || 0;
+  if (durationSec <= 0) throw new Error('marker.duration debe ser > 0');
+  const cleanHtml = String(body.html || '').trim();
+  if (!cleanHtml) throw new Error('El HTML está vacío');
+  const markerSlug = String(body.markerSlug || '').trim() || slugify(marker.name);
+
+  const baseDir = ensureOutputDir(projectPath, sequenceName);
+  const version = nextVersion(baseDir, markerSlug);
+  const outPaths = paths(baseDir, markerSlug, version, 'manual');
+
+  report({ pct: 20, msg: 'Guardando HTML editado…' });
+  fs.writeFileSync(outPaths.html, cleanHtml, 'utf8');
+
+  report({ pct: 40, msg: 'Renderizando el video con alpha…' });
+  await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report });
+
+  let history = [];
+  if (version > 1) {
+    const prevMetaPath = versionFile(baseDir, markerSlug, version - 1, '.meta.json');
+    const prevMeta = prevMetaPath ? readMeta(prevMetaPath) : null;
+    if (prevMeta) {
+      history = Array.isArray(prevMeta.history) ? prevMeta.history.slice() : [];
+      history.push({ version: prevMeta.version, instruction: prevMeta.instruction, createdAt: prevMeta.createdAt });
+    }
+  }
+  saveMeta(outPaths.meta, {
+    instruction: '(edición manual)', marker, version, model: 'manual', provider: 'manual',
+    mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(), history,
+  });
+
+  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
+}
+
 module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   estimateTokens,
+  listMarkerVersions,
+  readMarkerHtml,
+  renderManualHtml,
   deriveObjective,
   getConfig,
   setConfig: saveConfig,

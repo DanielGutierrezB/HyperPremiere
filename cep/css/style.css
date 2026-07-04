@@ -752,3 +752,36 @@ textarea:focus {
 .hps-option.is-sel { color: var(--accent); background: var(--accent-dim); }
 .hps-menu::-webkit-scrollbar { width: 8px; }
 .hps-menu::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,0.14); border-radius: 4px; }
+
+/* ── v0.1.21: editor de HTML manual por marcador ─────────────── */
+.html-editor { margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 8px; }
+.html-editor > summary {
+  cursor: pointer; font-size: 11px; color: var(--text-secondary);
+  list-style: none; user-select: none;
+}
+.html-editor > summary::-webkit-details-marker { display: none; }
+.html-editor > summary::before { content: "▸ "; color: var(--accent); }
+.html-editor[open] > summary::before { content: "▾ "; }
+.html-editor-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.editor-row { display: flex; align-items: center; gap: 8px; }
+.editor-row .hp-select { flex: 1; }
+.editor-row .btn-secondary { flex: none; }
+.html-editor-textarea {
+  width: 100%;
+  min-height: 180px;
+  box-sizing: border-box;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.html-editor-textarea:focus { outline: none; border-color: var(--accent); }
