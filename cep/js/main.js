@@ -528,7 +528,14 @@
     var instruction = document.createElement("textarea");
     instruction.className = "marker-instruction";
     instruction.placeholder = "¿Qué querés que haga la IA en este marcador?";
-    instruction.value = HPStore.getMarkerData(markerKey).instruction;
+    // Si el marcador trae un comentario en Premiere y todavía no escribiste una
+    // instrucción, lo usamos como punto de partida (y lo guardamos).
+    var initialInstruction = HPStore.getMarkerData(markerKey).instruction;
+    if (!initialInstruction && marker.comment && marker.comment.trim()) {
+      initialInstruction = marker.comment.trim();
+      HPStore.setMarkerInstruction(markerKey, initialInstruction);
+    }
+    instruction.value = initialInstruction;
     instruction.addEventListener("input", debounce(function () {
       HPStore.setMarkerInstruction(markerKey, instruction.value);
     }, DEBOUNCE_MS));
