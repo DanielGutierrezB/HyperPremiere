@@ -124,6 +124,15 @@ async function runGeneration(body, mode, onProgress) {
   }
   saveStills(outPaths.stillsDir, stillsList);
 
+  // Continuidad: exponer los otros recursos ya generados en la clase, por si la
+  // instrucción pide continuar/retomar otro marcador.
+  const others = listOtherResources(baseDir, markerSlug);
+  if (others.length) {
+    userPrompt += '\n\n## Otros recursos ya generados en esta clase (referencia de continuidad y estilo)\n' +
+      'Si tu instrucción pide continuar, retomar o mantener coherencia con otro marcador, usá estos como base:\n' +
+      others.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
+  }
+
   const config = loadConfig();
   const provider = getProvider(config.provider);
   const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
@@ -197,6 +206,34 @@ function loginClaude() {
 }
 
 const REPO_ROOT = path.join(__dirname, '..');
+
+// Junta el HTML de la última versión de los OTROS marcadores ya generados en
+// esta clase, para dar continuidad (retomar/continuar lo hecho en otro marcador).
+function listOtherResources(baseDir, currentSlug) {
+  const out = [];
+  let entries;
+  try { entries = fs.readdirSync(baseDir); } catch (e) { return out; }
+  const latest = {}; // slug -> {version, file}
+  const re = /^(.*) v(\d+)\.html$/;
+  for (const name of entries) {
+    const m = name.match(re);
+    if (!m) continue;
+    const slug = m[1], ver = parseInt(m[2], 10);
+    if (slug === currentSlug) continue;
+    if (!latest[slug] || ver > latest[slug].version) latest[slug] = { version: ver, file: name };
+  }
+  let budget = 12000; // tope total de chars para no inflar tokens
+  for (const slug in latest) {
+    if (budget <= 0) break;
+    try {
+      let html = fs.readFileSync(path.join(baseDir, latest[slug].file), 'utf8');
+      if (html.length > 4000) html = html.slice(0, 4000) + '\n<!-- …(recortado)… -->';
+      budget -= html.length;
+      out.push({ slug: slug + ' v' + latest[slug].version, html: html });
+    } catch (e) {}
+  }
+  return out;
+}
 
 // Lee un PNG (el frame capturado por host.jsx) y lo devuelve como dataURL.
 // Borra el archivo temporal después. Lo hace Node (fiable), no la API de CEP.

@@ -464,26 +464,29 @@
       call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
     }
 
-    call
+    return call
       .then(function (res) {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
         onProgress({ pct: 98, msg: "Colocando en el timeline…" });
-        var movArg = JSON.stringify(res.movPath);
-        csInterface.evalScript(
-          "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
-          function (place) {
-            if (place === "ok") {
-              statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")";
-              statusEl.className = "marker-status is-ok";
-            } else {
-              statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
-              statusEl.className = "marker-status is-error";
+        return new Promise(function (resolvePlace) {
+          var movArg = JSON.stringify(res.movPath);
+          csInterface.evalScript(
+            "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
+            function (place) {
+              if (place === "ok") {
+                statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")";
+                statusEl.className = "marker-status is-ok";
+              } else {
+                statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
+                statusEl.className = "marker-status is-error";
+              }
+              HPStore.setMarkerGenerated(markerKey, true);
+              setButtonsDisabled(buttons, false);
+              if (onSuccess) onSuccess();
+              resolvePlace();
             }
-            HPStore.setMarkerGenerated(markerKey, true);
-            setButtonsDisabled(buttons, false);
-            if (onSuccess) onSuccess();
-          }
-        );
+          );
+        });
       })
       .catch(function (err) {
         statusEl.textContent = "Error: " + (err && err.message ? err.message : String(err));
@@ -577,13 +580,20 @@
       sBadge.textContent = generated ? "✓" : "";
     }
 
-    genBtn.addEventListener("click", function () {
+    function doGenerate() {
       var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
-      runGenerationForMarker(marker, status, buttons, mode, syncUI);
-    });
+      return runGenerationForMarker(marker, status, buttons, mode, syncUI);
+    }
+    genBtn.addEventListener("click", doGenerate);
     regenBtn.addEventListener("click", function () {
       runGenerationForMarker(marker, status, buttons, "regen", syncUI);
     });
+
+    // Para el botón global "Generar listos".
+    card._runGen = doGenerate;
+    card._isReady = function () {
+      return !!(HPStore.getMarkerData(markerKey).instruction || "").trim();
+    };
 
     actions.appendChild(genBtn);
     actions.appendChild(regenBtn);
@@ -769,6 +779,36 @@
 
   btnTestConnection.addEventListener("click", onTestConnection);
   btnLoadMarkers.addEventListener("click", onLoadMarkers);
+
+  // Generar todos los marcadores listos (con instrucción), en secuencia.
+  var btnGenerateAll = document.getElementById("btn-generate-all");
+  var batchStatus = document.getElementById("batch-status");
+  function generateAllReady() {
+    var cards = markersContainer.querySelectorAll("details.marker-card");
+    var ready = [];
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i]._isReady && cards[i]._isReady()) ready.push(cards[i]);
+    }
+    if (!ready.length) {
+      if (batchStatus) batchStatus.textContent = "No hay marcadores listos (poné una instrucción en al menos uno).";
+      return;
+    }
+    btnGenerateAll.disabled = true;
+    function step(i) {
+      if (i >= ready.length) {
+        btnGenerateAll.disabled = false;
+        if (batchStatus) batchStatus.textContent = "✓ Generados " + ready.length + " marcador(es).";
+        return;
+      }
+      if (batchStatus) batchStatus.textContent = "Generando " + (i + 1) + " de " + ready.length + "…";
+      var c = ready[i];
+      c.open = true; // abrir para ver su barra de progreso
+      Promise.resolve(c._runGen()).then(function () { step(i + 1); });
+    }
+    step(0);
+  }
+  if (btnGenerateAll) btnGenerateAll.addEventListener("click", generateAllReady);
+
   loadConfig();
 
   // Arranque: fijar contexto y rehidratar objetivo + estado del transcript.
