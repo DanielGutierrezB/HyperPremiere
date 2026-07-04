@@ -778,8 +778,80 @@
   // Configuración del modelo (proveedor / modelo / token / baseUrl)
   // ---------------------------------------------------------------------
 
-  var cfgProvider = document.getElementById("cfg-provider");
-  var cfgModel = document.getElementById("cfg-model");
+  // Desplegable propio: Premiere (CEP/CEF) no dibuja el popup de los <select>
+  // nativos, así que armamos uno con divs (botón + menú) que sí despliega.
+  function HPSelect(root) {
+    if (!root) return null;
+    root.classList.add("hp-select");
+    root.innerHTML = "";
+    var trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "hps-trigger";
+    var label = document.createElement("span");
+    label.className = "hps-label";
+    var arrow = document.createElement("span");
+    arrow.className = "hps-arrow";
+    arrow.textContent = "▾";
+    trigger.appendChild(label);
+    trigger.appendChild(arrow);
+    var menu = document.createElement("div");
+    menu.className = "hps-menu";
+    menu.hidden = true;
+    root.appendChild(trigger);
+    root.appendChild(menu);
+
+    var opts = [];
+    var value = null;
+    var api = { onChange: null };
+
+    function labelFor(v) {
+      for (var i = 0; i < opts.length; i++) if (opts[i].value === v) return opts[i].label;
+      return v || "—";
+    }
+    function markSelected() {
+      var kids = menu.children;
+      for (var i = 0; i < kids.length; i++) {
+        kids[i].className = "hps-option" + (kids[i].getAttribute("data-value") === value ? " is-sel" : "");
+      }
+    }
+    function close() { menu.hidden = true; root.classList.remove("is-open"); }
+    function toggle(e) { e.stopPropagation(); if (menu.hidden) { menu.hidden = false; root.classList.add("is-open"); } else { close(); } }
+
+    trigger.addEventListener("click", toggle);
+    document.addEventListener("click", function (e) { if (!root.contains(e.target)) close(); });
+
+    api.setOptions = function (list, selected) {
+      opts = (list || []).map(function (o) { return { value: String(o.value), label: String(o.label) }; });
+      menu.innerHTML = "";
+      opts.forEach(function (o) {
+        var el = document.createElement("div");
+        el.className = "hps-option";
+        el.setAttribute("data-value", o.value);
+        el.textContent = o.label;
+        el.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var changed = (o.value !== value);
+          value = o.value;
+          label.textContent = o.label;
+          markSelected();
+          close();
+          if (changed && typeof api.onChange === "function") api.onChange(value);
+        });
+        menu.appendChild(el);
+      });
+      if (selected != null) value = String(selected);
+      label.textContent = labelFor(value);
+      markSelected();
+    };
+    Object.defineProperty(api, "value", {
+      get: function () { return value; },
+      set: function (v) { value = (v == null ? null : String(v)); label.textContent = labelFor(value); markSelected(); }
+    });
+    return api;
+  }
+
+  var cfgProviderSel = HPSelect(document.getElementById("cfg-provider"));
+  var cfgModelSel = HPSelect(document.getElementById("cfg-model"));
   var cfgModelCustom = document.getElementById("cfg-model-custom");
   var cfgApiKey = document.getElementById("cfg-apikey");
   var cfgBaseUrl = document.getElementById("cfg-baseurl");
@@ -830,32 +902,29 @@
     if (el) el.setAttribute("data-hidden", show ? "false" : "true");
   }
 
-  // Rellena el <select> de modelos según el proveedor y marca el activo.
+  // Rellena el desplegable de modelos según el proveedor y marca el activo.
   function populateModels(provider, selected) {
     var list = MODELS[provider] || CLAUDE_MODELS;
-    cfgModel.innerHTML = "";
     var matched = false;
-    for (var i = 0; i < list.length; i++) {
-      var opt = document.createElement("option");
-      opt.value = list[i].v; opt.textContent = list[i].t;
-      cfgModel.appendChild(opt);
-      if (list[i].v === selected) matched = true;
-    }
+    for (var i = 0; i < list.length; i++) if (list[i].v === selected) matched = true;
+    var opts = list.map(function (o) { return { value: o.v, label: o.t }; });
+    var val;
     if (selected && !matched && provider !== "claude-cli" && provider !== "claude-api") {
       // ID personalizado que no está en la lista → seleccionar "Otro" y precargar.
-      cfgModel.value = "__custom__";
+      val = "__custom__";
       if (cfgModelCustom) cfgModelCustom.value = selected;
     } else if (matched) {
-      cfgModel.value = selected;
+      val = selected;
     } else {
-      cfgModel.value = list[0].v;
+      val = list[0].v;
     }
+    cfgModelSel.setOptions(opts, val);
   }
 
-  // Modelo efectivo: el del <select>, o el texto libre si eligió "Otro".
+  // Modelo efectivo: el del desplegable, o el texto libre si eligió "Otro".
   function effectiveModel() {
-    if (cfgModel.value === "__custom__") return (cfgModelCustom.value || "").trim();
-    return cfgModel.value;
+    if (cfgModelSel.value === "__custom__") return (cfgModelCustom.value || "").trim();
+    return cfgModelSel.value;
   }
 
   function modelLabel(id) {
@@ -869,11 +938,11 @@
 
   // Muestra/oculta campos según el proveedor y actualiza pistas.
   function applyProviderUI() {
-    var p = cfgProvider.value;
+    var p = cfgProviderSel.value;
     showRow("row-login", p === "claude-cli");
     showRow("row-apikey", p === "claude-api" || p === "openai-compat");
     showRow("row-baseurl", p === "openai-compat" || p === "ollama");
-    showRow("row-model-custom", cfgModel.value === "__custom__");
+    showRow("row-model-custom", cfgModelSel.value === "__custom__");
     var hintEl = document.getElementById("baseurl-hint");
     if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
   }
@@ -881,7 +950,7 @@
   // Semáforo del resumen: verde si el proveedor está listo, aviso si falta algo.
   function updateSummary() {
     if (!cfgSummary) return;
-    var p = cfgProvider.value;
+    var p = cfgProviderSel.value;
     var model = effectiveModel();
     var ok = true, warn = "";
     if (p === "claude-cli" && !currentHasSession) { ok = false; warn = "iniciá sesión en Claude"; }
@@ -899,7 +968,7 @@
   }
 
   function autoSave() {
-    var body = { provider: cfgProvider.value, model: effectiveModel() };
+    var body = { provider: cfgProviderSel.value, model: effectiveModel() };
     if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
     if (cfgBaseUrl.value.trim()) body.baseUrl = cfgBaseUrl.value.trim();
     if (!body.model) { updateSummary(); return; }
@@ -932,7 +1001,7 @@
           });
           list.push({ v: "__custom__", t: "Otro (escribir ID)…" });
           MODELS["ollama"] = list;
-          if (cfgProvider.value === "ollama") { populateModels("ollama", selected || effectiveModel()); applyProviderUI(); updateSummary(); }
+          if (cfgProviderSel.value === "ollama") { populateModels("ollama", selected || effectiveModel()); applyProviderUI(); updateSummary(); }
         }
       })
       .catch(function () {});
@@ -941,17 +1010,17 @@
   // Vuelca una config (del motor) a los controles del panel.
   function applyConfigToUI(cfg) {
     if (!cfg) return;
-    if (cfg.provider) cfgProvider.value = cfg.provider;
+    if (cfg.provider) cfgProviderSel.value = cfg.provider;
     currentHasSession = Boolean(cfg.hasSession);
     cfgBaseUrl.value = cfg.baseUrl || "";
     cfgApiKey.value = "";
     if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
     else { cfgApiKey.removeAttribute("data-has"); cfgApiKey.setAttribute("placeholder", "Pegá tu API key"); }
     if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
-    populateModels(cfgProvider.value, cfg.model || defaultModelFor(cfgProvider.value));
+    populateModels(cfgProviderSel.value, cfg.model || defaultModelFor(cfgProviderSel.value));
     applyProviderUI();
     updateSummary();
-    if (cfgProvider.value === "ollama") refreshOllamaModels(cfg.model);
+    if (cfgProviderSel.value === "ollama") refreshOllamaModels(cfg.model);
   }
 
   function loadConfig() {
@@ -966,18 +1035,26 @@
       });
   }
 
+  // Opciones fijas del proveedor.
+  cfgProviderSel.setOptions([
+    { value: "claude-cli", label: "Claude (CLI / suscripción)" },
+    { value: "claude-api", label: "Claude (API key)" },
+    { value: "openai-compat", label: "API compatible (OpenAI / Gemini / OpenRouter…)" },
+    { value: "ollama", label: "Local (Ollama)" }
+  ], "claude-cli");
+
   // Cambiar de proveedor: guarda el proveedor activo y RESTAURA las credenciales
   // guardadas de ese proveedor (no se pierden al saltar entre modelos).
-  cfgProvider.addEventListener("change", function () {
+  cfgProviderSel.onChange = function () {
     configStatus.textContent = "Cambiando…";
-    hpCall("setConfig", { provider: cfgProvider.value })
+    hpCall("setConfig", { provider: cfgProviderSel.value })
       .then(function (cfg) { applyConfigToUI(cfg); configStatus.textContent = "✓ Guardado"; })
       .catch(function (e) { configStatus.textContent = "Error: " + ((e && e.message) || ""); });
-  });
-  cfgModel.addEventListener("change", function () {
+  };
+  cfgModelSel.onChange = function () {
     applyProviderUI();
     autoSave();
-  });
+  };
   if (cfgModelCustom) cfgModelCustom.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
   if (cfgApiKey) cfgApiKey.addEventListener("input", function () { updateSummary(); });
   if (cfgBaseUrl) cfgBaseUrl.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
@@ -1066,9 +1143,9 @@
         .then(function (data) {
           if (data && data.ok) {
             loginStatus.textContent = "✓ Sesión de Claude lista";
-            cfgProvider.value = "claude-cli";
+            cfgProviderSel.value = "claude-cli";
             currentHasSession = true;
-            populateModels(cfgProvider.value, effectiveModel());
+            populateModels(cfgProviderSel.value, effectiveModel());
             applyProviderUI();
             autoSave();
           } else {

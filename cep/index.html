@@ -15,7 +15,7 @@
       <p class="subtitle">Marcadores de secuencia</p>
     </div>
     <button id="btn-update" class="btn-update" type="button" title="Buscar actualización">
-      <span class="update-icon">⟳</span> <span id="version-label">v0.1.19</span>
+      <span class="update-icon">⟳</span> <span id="version-label">v0.1.20</span>
     </button>
   </header>
 
@@ -72,16 +72,11 @@
     <details class="config-section">
       <summary>Configuración del modelo <span id="cfg-summary" class="cfg-summary"></span></summary>
       <div class="config-body">
-        <label class="field-label" for="cfg-provider">Proveedor</label>
-        <select id="cfg-provider">
-          <option value="claude-cli">Claude (CLI / suscripción)</option>
-          <option value="claude-api">Claude (API key)</option>
-          <option value="openai-compat">API compatible (OpenAI / Gemini / OpenRouter…)</option>
-          <option value="ollama">Local (Ollama)</option>
-        </select>
+        <label class="field-label">Proveedor</label>
+        <div id="cfg-provider" class="hp-select"></div>
 
-        <label class="field-label" for="cfg-model">Modelo</label>
-        <select id="cfg-model"></select>
+        <label class="field-label">Modelo</label>
+        <div id="cfg-model" class="hp-select"></div>
 
         <div id="row-model-custom" class="cfg-row" data-hidden="true">
           <label class="field-label" for="cfg-model-custom">ID del modelo</label>
