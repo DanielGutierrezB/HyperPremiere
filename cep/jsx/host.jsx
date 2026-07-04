@@ -142,9 +142,25 @@ function hp_trackIsFree(track, start, end) {
     }
 }
 
+// Busca un bin hijo por nombre dentro de `parent`; si no existe, lo crea.
+// Devuelve el projectItem del bin, o null si no se pudo.
+function hp_ensureBin(parent, name) {
+    if (!parent || !name) return null;
+    try {
+        var kids = parent.children;
+        for (var i = 0; i < kids.numItems; i++) {
+            var ch = kids[i];
+            // type 2 = BIN. Coincidencia exacta de nombre.
+            if (ch && ch.name === name && ch.type === 2) return ch;
+        }
+    } catch (e) {}
+    try { return parent.createBin(name); } catch (e2) { return null; }
+}
+
 // Importa un .mov y lo coloca SIEMPRE en la pista superior si está libre;
 // si no, crea una pista de video nueva encima y lo pone ahí (nunca pisa nada).
-// Devuelve "ok" o "error: ...".
+// El clip se importa a un bin "HyperPremiere" > "<secuencia>" para no dejarlo
+// suelto en la raíz del proyecto. Devuelve "ok" o "error: ...".
 function hp_placeClip(movPath, atSeconds, durationSec) {
     try {
         var seq = app.project.activeSequence;
@@ -156,11 +172,17 @@ function hp_placeClip(movPath, atSeconds, durationSec) {
         var start = Number(atSeconds) || 0;
         var end = start + (Number(durationSec) || 5);
 
-        // Importar al root del proyecto (suppressUI = true, no como stills).
-        app.project.importFiles([movPath], true, app.project.rootItem, false);
+        // Bin organizado: HyperPremiere > <nombre de la secuencia>.
+        // Si por algún motivo no se puede crear, cae a la raíz del proyecto.
+        var hpBin = hp_ensureBin(app.project.rootItem, "HyperPremiere");
+        var seqBin = hpBin ? hp_ensureBin(hpBin, String(seq.name || "secuencia")) : null;
+        var targetBin = seqBin || hpBin || app.project.rootItem;
+
+        // Importar al bin destino (suppressUI = true, no como stills).
+        app.project.importFiles([movPath], true, targetBin, false);
 
         // Localizar el projectItem recién importado por nombre; fallback al último.
-        var root = app.project.rootItem;
+        var root = targetBin;
         var count = root.children.numItems;
         var baseName = f.name.replace(/\.[^\.]+$/, "");
         var item = null;
