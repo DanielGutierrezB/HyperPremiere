@@ -12,7 +12,10 @@
 const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
-const DEFAULT_TIMEOUT_MS = 240_000;
+const DEFAULT_TIMEOUT_MS = 600_000; // modelos locales grandes: carga en frío + generación
+// Contexto amplio: el prompt (system + plantilla + transcript) + el HTML de salida
+// no entran en el num_ctx por defecto de Ollama (~4k), que cortaría el contrato.
+const NUM_CTX = 32768;
 
 /**
  * @param {object} opts
@@ -59,7 +62,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: false }),
+      body: JSON.stringify({ model, messages, stream: false, options: { num_ctx: NUM_CTX } }),
       signal: controller.signal,
     });
   } catch (e) {

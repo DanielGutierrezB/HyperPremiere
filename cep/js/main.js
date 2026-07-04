@@ -183,6 +183,7 @@
           objectiveInput.value = data.objective;
           HPStore.setObjective(data.objective);
         }
+        if (data && data.usage) { HPStore.addSessionUsage(data.usage); updateSessionUsageBar(); }
       })
       .catch(function () {
         // Silencioso: el editor puede escribir el objetivo a mano si el puente no está.

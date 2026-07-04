@@ -48,7 +48,10 @@ function getProvider(name) {
  */
 function stripHtmlFence(text) {
   if (typeof text !== 'string') return '';
-  const trimmed = text.trim();
+  // Modelos con "thinking" (ej. Qwen3-VL local) anteponen <think>…</think> con
+  // su razonamiento antes del HTML: lo quitamos para no contaminar la salida.
+  const noThink = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const trimmed = noThink.trim();
   if (!trimmed) return '';
 
   // Fence etiquetado como html (case-insensitive), con o sin salto final.
