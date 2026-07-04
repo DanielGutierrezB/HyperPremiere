@@ -99,19 +99,41 @@ function hp_getProjectPath() {
 }
 
 // Exporta el frame actual del monitor de programa (playhead) a un PNG.
-// Devuelve "ok" si el archivo quedó escrito, o "error: ...".
+// Adobe cambió esta API entre versiones; probamos varias vías en orden y
+// reportamos con detalle si ninguna funciona. Devuelve "ok" o "error: ...".
 function hp_captureProgramFrame(outPath) {
+    var seq = app.project.activeSequence;
+    if (!seq) return "error: no hay secuencia activa";
+
+    var ticks = "0";
+    try { ticks = seq.getPlayerPosition().ticks; } catch (e) {}
+
+    var tried = [];
+    var f = new File(outPath);
+
+    // 1) DOM: seq.exportFramePNG(ticks, path)  (Premiere viejo)
     try {
-        var seq = app.project.activeSequence;
-        if (!seq) return "error: no hay secuencia activa";
-        var pos = seq.getPlayerPosition(); // Time del playhead
-        // exportFramePNG(tiempoEnTicks, rutaDestino)
-        seq.exportFramePNG(pos.ticks, outPath);
-        var f = new File(outPath);
-        return f.exists ? "ok" : "error: no se generó el frame";
-    } catch (e) {
-        return "error: " + e.toString();
-    }
+        if (typeof seq.exportFramePNG === "function") {
+            seq.exportFramePNG(ticks, outPath);
+            if (f.exists && f.length > 0) return "ok";
+        } else { tried.push("dom: sin exportFramePNG"); }
+    } catch (e) { tried.push("dom: " + e.toString()); }
+
+    // 2) QE DOM (vía confiable en Premiere reciente)
+    try {
+        app.enableQE();
+        var q = (typeof qe !== "undefined" && qe.project) ? qe.project.getActiveSequence() : null;
+        if (q && typeof q.exportFramePNG === "function") {
+            // Firma A: exportFramePNG(path)
+            try { q.exportFramePNG(outPath); } catch (eA) {
+                // Firma B: exportFramePNG(ticks, path)
+                try { q.exportFramePNG(ticks, outPath); } catch (eB) { tried.push("qe: " + eB.toString()); }
+            }
+            if (f.exists && f.length > 0) return "ok";
+        } else { tried.push("qe: sin exportFramePNG"); }
+    } catch (e) { tried.push("qe-enable: " + e.toString()); }
+
+    return "error: no se pudo exportar el frame [" + tried.join(" | ") + "]";
 }
 
 // ¿Está libre la pista en el rango [start, start+dur)? (sin clips que solapen)
