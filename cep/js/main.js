@@ -573,6 +573,32 @@
         emit(); running = false; tick();
       });
     }
+    // Reordenamiento: solo afecta a los jobs EN COLA (el que corre no se mueve).
+    // Reescribe el orden de las ranuras "queued" en el array según orderIds.
+    function reorderQueued(orderIds) {
+      var byId = {}; jobs.forEach(function (j) { byId[j.id] = j; });
+      var newQueued = orderIds.map(function (id) { return byId[id]; }).filter(Boolean);
+      var slots = [], i;
+      for (i = 0; i < jobs.length; i++) if (jobs[i].status === "queued") slots.push(i);
+      for (i = 0; i < slots.length && i < newQueued.length; i++) jobs[slots[i]] = newQueued[i];
+      emit();
+    }
+    // Grupos de jobs EN COLA por secuencia (preserva orden de aparición).
+    function queuedGroups() {
+      var groups = [], map = {};
+      jobs.forEach(function (j) {
+        if (j.status !== "queued") return;
+        if (!map[j.seqName]) { map[j.seqName] = { seqName: j.seqName, ids: [] }; groups.push(map[j.seqName]); }
+        map[j.seqName].ids.push(j.id);
+      });
+      return groups;
+    }
+    function flatten(groups) {
+      var ids = [];
+      groups.forEach(function (g) { ids = ids.concat(g.ids); });
+      reorderQueued(ids);
+    }
+
     return {
       add: function (job) {
         job.id = "j" + (++counter);
@@ -586,6 +612,33 @@
         var found = null;
         for (var i = 0; i < jobs.length; i++) if (jobs[i].seqName === seqName && jobs[i].markerKey === markerKey) found = jobs[i];
         return found;
+      },
+      // Mueve un marcador (job en cola) dentro de su secuencia. dir: -1 sube, +1 baja.
+      moveJob: function (id, dir) {
+        var groups = queuedGroups();
+        for (var gi = 0; gi < groups.length; gi++) {
+          var ids = groups[gi].ids, p = ids.indexOf(id);
+          if (p >= 0) {
+            var t = p + dir;
+            if (t < 0 || t >= ids.length) return;
+            var tmp = ids[p]; ids[p] = ids[t]; ids[t] = tmp;
+            flatten(groups); return;
+          }
+        }
+      },
+      // Mueve una secuencia entera (grupo) arriba/abajo en el orden de proceso.
+      moveSeq: function (seqName, dir) {
+        var groups = queuedGroups(), gi = -1, i;
+        for (i = 0; i < groups.length; i++) if (groups[i].seqName === seqName) { gi = i; break; }
+        if (gi < 0) return;
+        var t = gi + dir;
+        if (t < 0 || t >= groups.length) return;
+        var tmp = groups[gi]; groups[gi] = groups[t]; groups[t] = tmp;
+        flatten(groups);
+      },
+      remove: function (id) {
+        jobs = jobs.filter(function (j) { return !(j.id === id && j.status === "queued"); });
+        emit();
       },
       clearFinished: function () { jobs = jobs.filter(function (j) { return j.status === "queued" || j.status === "running"; }); emit(); }
     };
@@ -626,7 +679,15 @@
     }
   }
 
-  // Panel de cola global (arriba, visible desde cualquier secuencia).
+  function iconBtn(txt, title, cb) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "qbtn"; b.textContent = txt; b.title = title;
+    b.addEventListener("click", function (e) { e.stopPropagation(); cb(); });
+    return b;
+  }
+
+  // Panel de cola global: agrupado por secuencia, con reordenamiento
+  // (secuencia arriba/abajo y marcador arriba/abajo dentro de su secuencia).
   function renderQueue(jobs) {
     var panel = document.getElementById("queue-panel");
     if (!panel) return;
@@ -635,6 +696,7 @@
     for (i = 0; i < jobs.length; i++) if (jobs[i].status === "queued" || jobs[i].status === "running") pending++;
     panel.setAttribute("data-hidden", "false");
     panel.innerHTML = "";
+
     var head = document.createElement("div"); head.className = "queue-head";
     var title = document.createElement("span");
     title.textContent = "Cola" + (pending ? " · " + pending + " en proceso/espera" : " · sin pendientes");
@@ -642,21 +704,56 @@
     clr.textContent = "limpiar terminados";
     clr.addEventListener("click", function () { HPQueue.clearFinished(); });
     head.appendChild(title); head.appendChild(clr); panel.appendChild(head);
+
+    // Agrupar por secuencia preservando el orden de proceso.
+    var groups = [], map = {};
     for (i = 0; i < jobs.length; i++) {
-      var j = jobs[i];
-      var row = document.createElement("div"); row.className = "queue-job is-" + j.status;
-      var top = document.createElement("div"); top.className = "qj-title";
-      var dot = j.status === "running" ? "▶ " : j.status === "queued" ? "• " : j.status === "done" ? "✓ " : "⚠ ";
-      top.textContent = dot + j.seqName + " · " + j.label;
-      var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
-      row.appendChild(top); row.appendChild(msg);
-      if (j.status === "running") {
-        var bar = document.createElement("div"); bar.className = "hp-bar";
-        var fill = document.createElement("div"); fill.className = "hp-bar-fill"; fill.style.width = (j.pct || 0) + "%"; bar.appendChild(fill);
-        row.appendChild(bar);
-      }
-      panel.appendChild(row);
+      var jj = jobs[i];
+      if (!map[jj.seqName]) { map[jj.seqName] = { seqName: jj.seqName, jobs: [] }; groups.push(map[jj.seqName]); }
+      map[jj.seqName].jobs.push(jj);
     }
+
+    groups.forEach(function (g, gi) {
+      var queuedInGroup = g.jobs.filter(function (j) { return j.status === "queued"; }).length;
+      var gh = document.createElement("div"); gh.className = "queue-seq";
+      var gname = document.createElement("span"); gname.className = "qs-name"; gname.textContent = g.seqName;
+      gh.appendChild(gname);
+      // Reordenar la secuencia completa (solo si tiene jobs en cola).
+      if (queuedInGroup > 0) {
+        var ctrls = document.createElement("span"); ctrls.className = "qs-ctrls";
+        if (gi > 0) ctrls.appendChild(iconBtn("▲", "Subir esta secuencia", function () { HPQueue.moveSeq(g.seqName, -1); }));
+        if (gi < groups.length - 1) ctrls.appendChild(iconBtn("▼", "Bajar esta secuencia", function () { HPQueue.moveSeq(g.seqName, 1); }));
+        gh.appendChild(ctrls);
+      }
+      panel.appendChild(gh);
+
+      var qIdx = 0, qCount = g.jobs.filter(function (j) { return j.status === "queued"; }).length;
+      g.jobs.forEach(function (j) {
+        var row = document.createElement("div"); row.className = "queue-job is-" + j.status;
+        var line = document.createElement("div"); line.className = "qj-line";
+        var top = document.createElement("div"); top.className = "qj-title";
+        var dot = j.status === "running" ? "▶ " : j.status === "queued" ? "• " : j.status === "done" ? "✓ " : "⚠ ";
+        top.textContent = dot + j.label;
+        line.appendChild(top);
+        if (j.status === "queued") {
+          var jc = document.createElement("span"); jc.className = "qj-ctrls";
+          if (qIdx > 0) jc.appendChild(iconBtn("▲", "Priorizar este marcador", function () { HPQueue.moveJob(j.id, -1); }));
+          if (qIdx < qCount - 1) jc.appendChild(iconBtn("▼", "Posponer este marcador", function () { HPQueue.moveJob(j.id, 1); }));
+          jc.appendChild(iconBtn("✕", "Quitar de la cola", function () { HPQueue.remove(j.id); }));
+          line.appendChild(jc);
+          qIdx++;
+        }
+        row.appendChild(line);
+        var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
+        row.appendChild(msg);
+        if (j.status === "running") {
+          var bar = document.createElement("div"); bar.className = "hp-bar";
+          var fill = document.createElement("div"); fill.className = "hp-bar-fill"; fill.style.width = (j.pct || 0) + "%"; bar.appendChild(fill);
+          row.appendChild(bar);
+        }
+        panel.appendChild(row);
+      });
+    });
   }
 
   HPQueue.on(function () { renderQueue(HPQueue.jobs()); reflectQueueOnCards(); });

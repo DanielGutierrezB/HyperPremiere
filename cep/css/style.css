@@ -651,11 +651,26 @@ textarea:focus {
   text-transform: none; letter-spacing: 0;
 }
 .queue-clear:hover { color: var(--accent); background: transparent; border: 0; }
+.queue-seq {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-secondary); margin-top: 6px; padding: 4px 0 2px;
+  border-bottom: 1px dashed var(--hairline);
+}
+.qs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-ctrls, .qj-ctrls { flex: none; display: inline-flex; gap: 2px; }
+.qbtn {
+  width: auto; flex: none; font-size: 11px; line-height: 1;
+  color: var(--text-muted); background: transparent; border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 2px 5px; cursor: pointer;
+}
+.qbtn:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
 .queue-job {
-  padding: 5px 0; border-bottom: 1px solid var(--hairline);
+  padding: 5px 0 5px 10px; border-bottom: 1px solid var(--hairline);
 }
 .queue-job:last-child { border-bottom: 0; }
-.qj-title { font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qj-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qj-title { font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .qj-msg { font-size: 10px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .queue-job.is-done .qj-title { color: #0ae98d; }
 .queue-job.is-error .qj-title { color: #f87171; }
