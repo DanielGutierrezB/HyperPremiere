@@ -45,7 +45,8 @@ function removeGhostFiles(dir) {
  *                                    la duración real la define la composición HTML).
  * @returns {Promise<{movPath: string, htmlPath: string}>}
  */
-async function renderComposition({ html, outMovPath, durationSec }) {
+async function renderComposition({ html, outMovPath, durationSec, onProgress }) {
+  var report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!html || typeof html !== 'string') {
     throw new Error('renderComposition: falta el HTML de la composición');
   }
@@ -104,8 +105,21 @@ async function renderComposition({ html, outMovPath, durationSec }) {
       reject(new Error(`hyperframes: timeout después de ${RENDER_TIMEOUT_MS / 1000}s\n${stderr}`));
     }, RENDER_TIMEOUT_MS);
 
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    function scan(text) {
+      // "Capturing frame 30/150" → progreso real del render (mapeado a 55–90%).
+      const fm = text.match(/frame\s+(\d+)\s*\/\s*(\d+)/i);
+      if (fm) {
+        const cur = parseInt(fm[1], 10), tot = parseInt(fm[2], 10) || 1;
+        const pct = 55 + Math.round((cur / tot) * 33);
+        report({ pct: pct, msg: 'Renderizando fotograma ' + cur + '/' + tot + '…' });
+        return;
+      }
+      if (/encoding/i.test(text)) report({ pct: 90, msg: 'Codificando el video…' });
+      else if (/assembling/i.test(text)) report({ pct: 93, msg: 'Ensamblando el video final…' });
+    }
+
+    child.stdout.on('data', (d) => { const s = d.toString(); stdout += s; scan(s); });
+    child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; scan(s); });
 
     child.on('error', (err) => {
       if (settled) return;

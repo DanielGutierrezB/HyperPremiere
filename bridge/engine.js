@@ -83,7 +83,8 @@ function getConfig() {
   return maskConfig(loadConfig());
 }
 
-async function runGeneration(body, mode) {
+async function runGeneration(body, mode, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
   const { projectPath, sequenceName, objective, transcript, marker, markerTranscript,
     instruction, stills, adjustment, previousHtml } = body || {};
 
@@ -94,6 +95,7 @@ async function runGeneration(body, mode) {
   const markerSlug = String(body.markerSlug || '').trim() || slugify(marker.name);
   const stillsList = Array.isArray(stills) ? stills : [];
 
+  report({ pct: 5, msg: 'Armando el contexto…' });
   const systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
   let userPrompt = buildUserPrompt({
     objective, transcriptSegments: transcript, marker, markerTranscript,
@@ -124,6 +126,8 @@ async function runGeneration(body, mode) {
 
   const config = loadConfig();
   const provider = getProvider(config.provider);
+  const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
+  report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' });
   const rawResponse = await provider.generate({
     systemPrompt, userPrompt, images: stillsList, model: config.model, config,
   });
@@ -132,7 +136,9 @@ async function runGeneration(body, mode) {
   if (!html) throw new Error(`El proveedor "${config.provider}" devolvió respuesta vacía`);
   fs.writeFileSync(outPaths.html, html, 'utf8');
 
-  await renderComposition({ html, outMovPath: outPaths.mov, durationSec });
+  report({ pct: 55, msg: 'Renderizando el video con alpha…' });
+  await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report });
+  report({ pct: 96, msg: 'Guardando archivos…' });
 
   let history = [];
   if (version > 1) {
@@ -237,8 +243,8 @@ function selfUpdate() {
 }
 
 module.exports = {
-  generate: (body) => runGeneration(body, 'generate'),
-  feedback: (body) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen'),
+  generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
+  feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   deriveObjective,
   getConfig,
   setConfig: saveConfig,

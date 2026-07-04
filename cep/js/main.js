@@ -429,16 +429,35 @@
     if (mode === "adjust") payload.adjustment = data.instruction || "";
 
     var method = mode === "generate" ? "generate" : "feedback";
-    var verb = mode === "regen" ? "Regenerando desde cero" : mode === "adjust" ? "Refinando" : "Generando";
 
     setButtonsDisabled(buttons, true);
-    statusEl.textContent = verb + "… (puede tardar)";
-    statusEl.className = "marker-status is-busy";
 
-    hpCall(method, payload)
+    // Barra de progreso con frase descriptiva por etapa.
+    statusEl.textContent = "";
+    statusEl.className = "marker-status is-busy";
+    var bar = document.createElement("div"); bar.className = "hp-bar";
+    var fill = document.createElement("div"); fill.className = "hp-bar-fill"; bar.appendChild(fill);
+    var msgEl = document.createElement("div"); msgEl.className = "hp-bar-msg";
+    statusEl.appendChild(bar); statusEl.appendChild(msgEl);
+    function onProgress(p) {
+      if (!p) return;
+      if (typeof p.pct === "number") fill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+      if (p.msg) msgEl.textContent = p.msg;
+    }
+    onProgress({ pct: 3, msg: "Preparando…" });
+
+    var call;
+    if (HP_ENGINE && typeof HP_ENGINE[method] === "function") {
+      try { call = Promise.resolve(HP_ENGINE[method](payload, onProgress)); }
+      catch (e) { call = Promise.reject(e); }
+    } else {
+      call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
+    }
+
+    call
       .then(function (res) {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
-        statusEl.textContent = "Colocando en el timeline…";
+        onProgress({ pct: 98, msg: "Colocando en el timeline…" });
         var movArg = JSON.stringify(res.movPath);
         csInterface.evalScript(
           "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
