@@ -37,7 +37,7 @@ body {
 }
 
 body {
-  min-width: 320px;
+  min-width: 220px;
   background-color: var(--bg-base);
   color: var(--text-primary);
   font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -158,8 +158,11 @@ button:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 14px 16px 0;
+  padding: 14px 16px 14px;
   gap: 12px;
+  /* Red de seguridad: si el panel es MUY bajo (con la config abierta, etc.),
+     el cuerpo entero puede desplazarse para que nada quede inalcanzable. */
+  overflow-y: auto;
 }
 
 /* ── Salida de estado ───────────────────────────────── */
@@ -276,11 +279,11 @@ textarea:focus {
 }
 
 .markers-scroll {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 90px; /* nunca colapsa a 0 → siempre queda una franja usable */
   overflow-y: auto;
   margin: 0 -16px;
-  padding: 0 16px 14px;
+  padding: 0 16px 4px;
 }
 
 .markers-scroll::-webkit-scrollbar {
@@ -642,7 +645,7 @@ textarea:focus {
   border-radius: var(--radius);
   background: var(--bg-inset);
   padding: 8px 10px;
-  max-height: 220px;
+  max-height: 32vh; /* relativo al alto del panel: no domina en paneles bajos */
   overflow-y: auto;
 }
 .queue-panel[data-hidden="true"] { display: none; }
@@ -788,17 +791,15 @@ textarea:focus {
 .hps-arrow { flex: none; color: var(--text-muted); font-size: 10px; transition: transform var(--ease); }
 .hp-select.is-open .hps-arrow { transform: rotate(180deg); }
 .hps-menu {
-  position: absolute;
-  top: calc(100% + 3px);
-  left: 0;
-  right: 0;
-  z-index: 50;
+  /* En-flujo (no absoluto): al abrir empuja el contenido hacia abajo y NUNCA
+     se recorta por el overflow de un contenedor. El cuerpo hace scroll si hace falta. */
+  margin-top: 4px;
   max-height: 240px;
   overflow-y: auto;
   background: #1a1f28;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-card);
   padding: 4px;
 }
 .hps-option {
@@ -833,8 +834,8 @@ textarea:focus {
 .code-edit {
   position: relative;
   width: 100%;
-  height: 280px;
-  min-height: 140px;
+  height: clamp(140px, 38vh, 340px);
+  min-height: 120px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
   background: var(--bg-inset);
