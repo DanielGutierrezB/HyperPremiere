@@ -11,17 +11,29 @@
 <body>
   <header class="panel-header">
     <div class="header-title">
-      <h1>HyperPremiere</h1>
-      <p class="subtitle">Marcadores de secuencia</p>
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4" width="18" height="16" rx="4"/>
+        <path d="M12 8.4l1.15 2.45L15.6 12l-2.45 1.15L12 15.6l-1.15-2.45L8.4 12l2.45-1.15z"/>
+      </svg>
+      <div class="brand-text">
+        <h1>HyperPremiere</h1>
+        <p class="subtitle">Marcadores de secuencia</p>
+      </div>
     </div>
     <button id="btn-update" class="btn-update" type="button" title="Buscar actualización">
-      <span class="update-icon">⟳</span> <span id="version-label">v0.1.25</span>
+      <span class="update-icon">⟳</span> <span id="version-label">v0.1.26</span>
     </button>
   </header>
 
   <div class="actions">
-    <button id="btn-load-markers" type="button" class="btn-primary">Cargar marcadores</button>
-    <button id="btn-generate-all" type="button">Generar listos</button>
+    <button id="btn-load-markers" type="button" class="btn-primary">
+      <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4h11l-2.6 4 2.6 4H6"/></svg>
+      <span>Cargar marcadores</span>
+    </button>
+    <button id="btn-generate-all" type="button">
+      <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13h5l-1 8 8-10h-5z"/></svg>
+      <span>Generar listos</span>
+    </button>
   </div>
   <div id="batch-status" class="muted"></div>
 

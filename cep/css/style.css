@@ -15,8 +15,14 @@
   --accent-dim: rgba(96, 165, 250, 0.12);
   --accent-glow: rgba(96, 165, 250, 0.25);
   --error: #e08a8a;
-  --radius: 2px;
+  --ok: #0ae98d;
+  --warn: #fbbf24;
+  /* Esquinas suaves: contenedores más redondeados, controles un poco menos. */
+  --radius: 10px;
+  --radius-sm: 7px;
   --ease: 150ms ease-out;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -99,7 +105,7 @@ button {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background-color: transparent;
   color: var(--text-primary);
   font-family: inherit;
@@ -207,7 +213,7 @@ textarea {
   appearance: none;
   width: 100%;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background-color: var(--bg-inset);
   color: var(--text-primary);
   font-family: inherit;
@@ -405,7 +411,7 @@ textarea:focus {
   color: #0e1116;
   background: #60a5fa;
   border: 0;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   padding: 7px 14px;
   cursor: pointer;
   transition: background 160ms ease-out, box-shadow 160ms ease-out;
@@ -445,7 +451,7 @@ textarea:focus {
   color: #e8e6df;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   padding: 6px 12px;
   cursor: pointer;
   transition: border-color 160ms ease-out, background 160ms ease-out;
@@ -490,7 +496,7 @@ textarea:focus {
   color: #e8e6df;
   background: #12161d;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   padding: 7px 9px;
 }
 .config-body select:focus,
@@ -526,7 +532,7 @@ textarea:focus {
   color: #8b97a8;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   padding: 4px 9px;
   cursor: pointer;
   display: inline-flex;
@@ -548,7 +554,7 @@ textarea:focus {
   position: absolute; top: 2px; right: 2px;
   width: 16px; height: 16px; line-height: 14px; text-align: center;
   font-size: 11px; color: #fff; background: rgba(0,0,0,.6);
-  border: 0; border-radius: 2px; cursor: pointer; padding: 0;
+  border: 0; border-radius: var(--radius-sm); cursor: pointer; padding: 0;
 }
 .still-remove:hover { background: #f87171; }
 .still-status { flex-basis: 100%; font-size: 11px; color: #8b97a8; margin-top: 4px; }
@@ -557,7 +563,7 @@ textarea:focus {
 /* ── v0.1.3: tarjetas de marcador colapsables (compactas/responsive) ── */
 .marker-card {
   border: 1px solid rgba(255,255,255,.08);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   margin-bottom: 6px;
   background: #161b22;
 }
@@ -662,7 +668,7 @@ textarea:focus {
 .qbtn {
   width: auto; flex: none; font-size: 11px; line-height: 1;
   color: var(--text-muted); background: transparent; border: 1px solid var(--hairline);
-  border-radius: 2px; padding: 2px 5px; cursor: pointer;
+  border-radius: var(--radius-sm); padding: 2px 5px; cursor: pointer;
 }
 .qbtn:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
 .queue-job {
@@ -771,7 +777,7 @@ textarea:focus {
   color: var(--text-primary);
   background: #12161d;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   padding: 7px 9px;
   cursor: pointer;
   text-align: left;
@@ -791,7 +797,7 @@ textarea:focus {
   overflow-y: auto;
   background: #1a1f28;
   border: 1px solid var(--hairline-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   padding: 4px;
 }
@@ -799,7 +805,7 @@ textarea:focus {
   font-size: 12px;
   color: var(--text-primary);
   padding: 7px 9px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -885,3 +891,74 @@ textarea:focus {
 .code-hl .token.operator { color: #89ddff; background: transparent; }
 .code-hl .token.boolean,
 .code-hl .token.constant { color: #f78c6c; }
+
+/* ══════════════════════════════════════════════════════════════════
+   v0.1.26 — Rework visual: contraste, esquinas suaves, íconos, responsive.
+   Solo estética (no cambia IDs ni comportamiento).
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Botones: alinear ícono + texto */
+button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-ico { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; opacity: 0.95; }
+
+/* Header con logo de línea */
+.header-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark { width: 24px; height: 24px; flex: none; color: var(--accent); }
+.brand-text { min-width: 0; }
+.panel-header { align-items: center; }
+.panel-header h1 { font-size: 15px; }
+
+/* Profundidad sutil por sombra (menos "plano/cuadrado") */
+.output,
+.marker-card,
+.help-section,
+.context-section,
+.config-section,
+.queue-panel,
+.code-edit { box-shadow: var(--shadow-card); }
+
+/* La barra de acciones se acomoda en anchos chicos */
+.actions { flex-wrap: wrap; }
+.actions button { min-width: 120px; }
+
+/* Contraste de jerarquía: acento a la izquierda en encabezados de sección */
+.section-label { display: flex; align-items: center; gap: 7px; }
+.section-label::before { content: ""; width: 3px; height: 11px; border-radius: 2px; background: var(--accent); opacity: 0.8; }
+
+/* Estados con más contraste */
+.marker-card[open] { box-shadow: 0 0 0 1px var(--accent-glow), var(--shadow-card); }
+.marker-summary .marker-badge { font-size: 13px; }
+
+/* Menús emergentes con sombra fuerte para despegar del fondo */
+.hps-menu { box-shadow: var(--shadow-pop); }
+
+/* ── Responsive: cómodo muy chico y muy grande ── */
+
+/* Muy angosto: compactar paddings, ocultar el subtítulo, apilar acciones */
+@media (max-width: 360px) {
+  .panel-header { padding: 10px 12px 8px; }
+  .panel-header .subtitle { display: none; }
+  .actions { padding: 8px 12px; gap: 6px; }
+  .panel-body { padding: 10px 12px 0; gap: 10px; }
+  .markers-scroll { margin: 0 -12px; padding: 0 12px 12px; }
+  .session-usage { padding: 4px 12px 6px; }
+  .queue-panel { margin: 0 12px 6px; }
+  .btn-ico { display: none; } /* priorizar el texto en pantallas mínimas */
+}
+
+/* Ancho generoso: más aire y tipografía un punto mayor para lectura cómoda */
+@media (min-width: 620px) {
+  body { font-size: 14px; }
+  .panel-body { padding: 18px 22px 0; gap: 14px; }
+  .panel-header { padding: 16px 22px 14px; }
+  .actions { padding: 14px 22px; }
+  .markers-scroll { margin: 0 -22px; padding: 0 22px 18px; }
+  .marker-card { padding: 12px 16px; }
+  .queue-panel { margin: 0 22px 10px; }
+  .session-usage { padding: 6px 22px 10px; }
+}
+
+/* Muy ancho: evitar líneas larguísimas de texto de ayuda */
+@media (min-width: 900px) {
+  .help-body p, .qj-msg, .marker-estimate { max-width: 820px; }
+}
