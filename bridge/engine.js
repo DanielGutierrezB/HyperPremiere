@@ -23,6 +23,7 @@ const {
   slugify,
   ensureOutputDir,
   paths,
+  versionFile,
   nextVersion,
   saveMeta,
   readMeta,
@@ -189,16 +190,21 @@ async function runGeneration(body, mode, onProgress) {
     instruction, stillsCount: stillsList.length,
   });
 
+  // Config activa (necesitamos el modelo antes de armar los nombres de archivo).
+  const config = loadConfig();
   const baseDir = ensureOutputDir(projectPath, sequenceName);
   const version = nextVersion(baseDir, markerSlug);
-  const outPaths = paths(baseDir, markerSlug, version);
+  const outPaths = paths(baseDir, markerSlug, version, config.model);
 
   // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
   // Si el panel no mandó el HTML previo, lo leemos del disco (versión anterior).
   if (mode === 'adjust') {
     let prevHtml = String(previousHtml || '').trim();
     if (!prevHtml && version > 1) {
-      try { prevHtml = fs.readFileSync(paths(baseDir, markerSlug, version - 1).html, 'utf8'); } catch (e) {}
+      try {
+        const prevPath = versionFile(baseDir, markerSlug, version - 1, '.html');
+        if (prevPath) prevHtml = fs.readFileSync(prevPath, 'utf8');
+      } catch (e) {}
     }
     userPrompt += [
       '', '## Refinamiento sobre la versión previa',
@@ -232,7 +238,6 @@ async function runGeneration(body, mode, onProgress) {
       others.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
   }
 
-  const config = loadConfig();
   const provider = getProvider(config.provider);
   const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
   report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' });
@@ -275,7 +280,8 @@ async function runGeneration(body, mode, onProgress) {
 
   let history = [];
   if (version > 1) {
-    const prevMeta = readMeta(paths(baseDir, markerSlug, version - 1).meta);
+    const prevMetaPath = versionFile(baseDir, markerSlug, version - 1, '.meta.json');
+    const prevMeta = prevMetaPath ? readMeta(prevMetaPath) : null;
     if (prevMeta) {
       history = Array.isArray(prevMeta.history) ? prevMeta.history.slice() : [];
       history.push({ version: prevMeta.version, instruction: prevMeta.instruction, createdAt: prevMeta.createdAt });
@@ -378,7 +384,8 @@ function listOtherResources(baseDir, currentSlug) {
   let entries;
   try { entries = fs.readdirSync(baseDir); } catch (e) { return out; }
   const latest = {}; // slug -> {version, file}
-  const re = /^(.*) v(\d+)\.html$/;
+  // Matchea "<slug> vN.html" y "<slug> vN [modelo].html".
+  const re = /^(.*) v(\d+)(?:[\s.\-\[].*)?\.html$/;
   for (const name of entries) {
     const m = name.match(re);
     if (!m) continue;
