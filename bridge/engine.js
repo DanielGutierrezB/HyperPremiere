@@ -27,6 +27,7 @@ const {
   saveMeta,
   readMeta,
   saveStills,
+  saveResources,
 } = require('./store/project-fs');
 
 // CEP corre Node con un PATH mínimo (apps de GUI en macOS no heredan el shell).
@@ -94,6 +95,23 @@ async function runGeneration(body, mode, onProgress) {
 
   const markerSlug = String(body.markerSlug || '').trim() || slugify(marker.name);
   const stillsList = Array.isArray(stills) ? stills : [];
+  const resourcesList = Array.isArray(body.resources) ? body.resources : [];
+
+  // Acumulador de tokens de esta generación (puede haber 2 llamadas al modelo:
+  // la principal + el reintento por contrato inválido).
+  const usageAcc = {
+    inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+    costUsd: null, calls: 0,
+  };
+  function addUsage(u) {
+    if (!u) return;
+    usageAcc.inputTokens += Number(u.inputTokens) || 0;
+    usageAcc.outputTokens += Number(u.outputTokens) || 0;
+    usageAcc.cacheReadTokens += Number(u.cacheReadTokens) || 0;
+    usageAcc.cacheCreationTokens += Number(u.cacheCreationTokens) || 0;
+    if (typeof u.costUsd === 'number') usageAcc.costUsd = (usageAcc.costUsd || 0) + u.costUsd;
+    usageAcc.calls += 1;
+  }
 
   report({ pct: 5, msg: 'Armando el contexto…' });
   const systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
@@ -124,6 +142,18 @@ async function runGeneration(body, mode, onProgress) {
   }
   saveStills(outPaths.stillsDir, stillsList);
 
+  // Recursos de referencia (PDFs, imágenes, docs) subidos por el editor: se
+  // guardan al lado de la render y se referencian por ruta en el prompt para
+  // que el agente (claude-cli) los lea con sus herramientas antes de componer.
+  if (resourcesList.length) {
+    const savedResPaths = saveResources(outPaths.resourcesDir, resourcesList);
+    if (savedResPaths.length) {
+      userPrompt += '\n\n## Recursos de referencia adjuntos (leelos desde disco antes de componer)\n' +
+        'El editor subió estos archivos como referencia. Abrilos/leelos antes de diseñar la composición:\n' +
+        savedResPaths.map((p) => '- ' + p).join('\n');
+    }
+  }
+
   // Continuidad: exponer los otros recursos ya generados en la clase, por si la
   // instrucción pide continuar/retomar otro marcador.
   const others = listOtherResources(baseDir, markerSlug);
@@ -141,9 +171,11 @@ async function runGeneration(body, mode, onProgress) {
     return h && /data-composition-id/.test(h) && /data-duration\s*=\s*["']?\s*[0-9.]*[1-9]/.test(h) && /__timelines/.test(h);
   }
 
-  let html = stripHtmlFence(await provider.generate({
+  let gen = await provider.generate({
     systemPrompt, userPrompt, images: stillsList, model: config.model, config,
-  }));
+  });
+  addUsage(gen.usage);
+  let html = stripHtmlFence(gen.text);
 
   // Reintento único si no cumple el contrato de HyperFrames (evita render fallido).
   if (!isValidComposition(html)) {
@@ -153,9 +185,11 @@ async function runGeneration(body, mode, onProgress) {
       'Devolvé el HTML COMPLETO siguiendo EXACTAMENTE la plantilla obligatoria. El <div id="stage"> ' +
       'DEBE tener data-composition-id, data-width="1920", data-height="1080", data-duration (número > 0 = duración del marcador) y data-fps="30". ' +
       'El script DEBE terminar con window.__timelines[COMP_ID] = tl; (COMP_ID igual a data-composition-id). Sin esto el render falla.';
-    html = stripHtmlFence(await provider.generate({
+    gen = await provider.generate({
       systemPrompt, userPrompt: fixPrompt, images: stillsList, model: config.model, config,
-    }));
+    });
+    addUsage(gen.usage);
+    html = stripHtmlFence(gen.text);
   }
 
   if (!html) throw new Error(`El proveedor "${config.provider}" devolvió respuesta vacía`);
@@ -163,7 +197,12 @@ async function runGeneration(body, mode, onProgress) {
 
   report({ pct: 55, msg: 'Renderizando el video con alpha…' });
   await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report });
-  report({ pct: 96, msg: 'Guardando archivos…' });
+  report({
+    pct: 96,
+    msg: 'Tokens: ↑' + usageAcc.inputTokens + ' ↓' + usageAcc.outputTokens +
+      (typeof usageAcc.costUsd === 'number' ? ' · $' + usageAcc.costUsd.toFixed(4) : ''),
+    usage: usageAcc,
+  });
 
   let history = [];
   if (version > 1) {
@@ -179,7 +218,48 @@ async function runGeneration(body, mode, onProgress) {
     createdAt: new Date(Date.now()).toISOString(), history,
   });
 
-  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
+  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, usage: usageAcc };
+}
+
+// Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al
+// modelo. Sirve como semáforo previo a generar. Heurística: ~4 chars/token +
+// costo fijo por imagen/recurso (los stills y PDFs pesan más que su texto).
+function estimateTokens(body) {
+  try {
+    body = body || {};
+    const marker = body.marker || {};
+    const transcript = Array.isArray(body.transcript) ? body.transcript : [];
+    const markerTranscript = Array.isArray(body.markerTranscript) ? body.markerTranscript : [];
+    const stills = Array.isArray(body.stills) ? body.stills : [];
+    const resources = Array.isArray(body.resources) ? body.resources : [];
+
+    let systemPrompt = '';
+    try { systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8'); } catch (e) {}
+
+    let userPrompt = '';
+    try {
+      userPrompt = buildUserPrompt({
+        objective: body.objective || '',
+        transcriptSegments: transcript,
+        marker,
+        markerTranscript,
+        instruction: body.instruction || '',
+        stillsCount: stills.length,
+      });
+    } catch (e) {
+      userPrompt = String(body.objective || '') + ' ' + String(body.instruction || '');
+    }
+
+    const promptChars = systemPrompt.length + userPrompt.length;
+    const inputTokensEst = Math.ceil(promptChars / 4) + stills.length * 1200 + resources.length * 1500;
+    return {
+      ok: true,
+      inputTokensEst,
+      breakdown: { promptChars, images: stills.length, resources: resources.length },
+    };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), inputTokensEst: 0 };
+  }
 }
 
 async function deriveObjective(body) {
@@ -191,10 +271,10 @@ async function deriveObjective(body) {
   const { system, user } = buildObjectivePrompt(transcriptText);
   const config = loadConfig();
   const provider = getProvider(config.provider);
-  const raw = await provider.generate({
+  const gen = await provider.generate({
     systemPrompt: system, userPrompt: user, images: [], model: config.model, config,
   });
-  return { ok: true, objective: String(raw || '').trim() };
+  return { ok: true, objective: String((gen && gen.text) || '').trim(), usage: (gen && gen.usage) || null };
 }
 
 // Corre `claude setup-token`, abre el navegador, captura el token y lo guarda.
@@ -298,6 +378,7 @@ function selfUpdate() {
 module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
+  estimateTokens,
   deriveObjective,
   getConfig,
   setConfig: saveConfig,

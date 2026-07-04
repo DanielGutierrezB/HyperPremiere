@@ -23,7 +23,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { stripHtmlFence, parseImageDataUrl } = require('./index');
+const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas y se demora)
 
@@ -101,7 +101,9 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
       imagePaths.map((p) => `- ${p}`).join('\n');
   }
 
-  const args = ['-p', prompt];
+  // --output-format json => stdout es un objeto JSON con .result (texto) y
+  // .usage (tokens) + .total_cost_usd. Así podemos contar el gasto real.
+  const args = ['-p', prompt, '--output-format', 'json'];
   if (model) args.push('--model', model);
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
 
@@ -151,9 +153,36 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
       });
     });
 
-    const html = stripHtmlFence(stdout);
+    // Con --output-format json, stdout es un objeto JSON. Fallback: si un CLI
+    // viejo devolvió texto crudo, lo tratamos como HTML sin usage.
+    let text = '';
+    let usage = null;
+    try {
+      const parsed = JSON.parse(stdout);
+      if (parsed && parsed.is_error) {
+        throw new Error('claude-cli: is_error en la respuesta: ' + String(parsed.result || parsed.error || '').slice(0, 300));
+      }
+      text = typeof parsed.result === 'string' ? parsed.result : '';
+      const u = parsed && parsed.usage ? parsed.usage : {};
+      usage = makeUsage('claude-cli', model, {
+        inputTokens: u.input_tokens,
+        outputTokens: u.output_tokens,
+        cacheReadTokens: u.cache_read_input_tokens,
+        cacheCreationTokens: u.cache_creation_input_tokens,
+        costUsd: typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : null,
+      });
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        text = stdout; // CLI viejo sin --output-format json
+        usage = null;
+      } else {
+        throw e;
+      }
+    }
+
+    const html = stripHtmlFence(text);
     if (!html) throw new Error('claude-cli: la respuesta del CLI vino vacia');
-    return html;
+    return { text: html, usage };
   } finally {
     cleanup();
   }

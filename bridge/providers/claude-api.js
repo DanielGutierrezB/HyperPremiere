@@ -8,7 +8,7 @@
  * Las imagenes viajan como bloques `image` base64 dentro del mensaje user.
  */
 
-const { stripHtmlFence, parseImageDataUrl } = require('./index');
+const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
@@ -106,7 +106,16 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   const html = stripHtmlFence(text);
   if (!html) throw new Error('claude-api: la respuesta no contiene texto');
-  return html;
+
+  const u = data.usage || {};
+  const usage = makeUsage('claude-api', model || DEFAULT_MODEL, {
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
+    cacheReadTokens: u.cache_read_input_tokens,
+    cacheCreationTokens: u.cache_creation_input_tokens,
+    costUsd: null, // Anthropic no devuelve costo en el body
+  });
+  return { text: html, usage };
 }
 
 module.exports = { generate };

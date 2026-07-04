@@ -90,4 +90,30 @@ function parseImageDataUrl(dataUrl) {
   return { mediaType: m[1], base64: m[2].replace(/\s+/g, '') };
 }
 
-module.exports = { getProvider, stripHtmlFence, parseImageDataUrl };
+/**
+ * Normaliza el uso de tokens a una forma común para todos los proveedores.
+ * Los campos ausentes quedan en 0; costUsd es null cuando el proveedor no lo
+ * reporta (Anthropic API) y 0 cuando es local (Ollama).
+ *
+ * @param {string} provider
+ * @param {string} model
+ * @param {object} raw - { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd }
+ * @returns {{ inputTokens:number, outputTokens:number, cacheReadTokens:number, cacheCreationTokens:number, costUsd:number|null, provider:string, model:string }}
+ */
+function makeUsage(provider, model, raw) {
+  raw = raw || {};
+  const n = function (v) { v = Number(v); return Number.isFinite(v) ? v : 0; };
+  return {
+    inputTokens: n(raw.inputTokens),
+    outputTokens: n(raw.outputTokens),
+    cacheReadTokens: n(raw.cacheReadTokens),
+    cacheCreationTokens: n(raw.cacheCreationTokens),
+    costUsd: (raw.costUsd === null || raw.costUsd === undefined || !Number.isFinite(Number(raw.costUsd)))
+      ? (raw.costUsd === 0 ? 0 : null)
+      : Number(raw.costUsd),
+    provider: provider || '',
+    model: model || '',
+  };
+}
+
+module.exports = { getProvider, stripHtmlFence, parseImageDataUrl, makeUsage };

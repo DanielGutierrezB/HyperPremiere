@@ -9,7 +9,7 @@
  * Ollama para modelos con vision (llava, llama3.2-vision, etc.).
  */
 
-const { stripHtmlFence, parseImageDataUrl } = require('./index');
+const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
 const DEFAULT_TIMEOUT_MS = 240_000;
@@ -90,7 +90,12 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     throw new Error('ollama: respuesta sin message.content');
   }
 
-  return stripHtmlFence(contentText);
+  const usage = makeUsage('ollama', model, {
+    inputTokens: data.prompt_eval_count,
+    outputTokens: data.eval_count,
+    costUsd: 0, // local = gratis
+  });
+  return { text: stripHtmlFence(contentText), usage };
 }
 
 module.exports = { generate };

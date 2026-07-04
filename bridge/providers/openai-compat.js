@@ -9,7 +9,7 @@
  * (el formato data:...;base64,... es aceptado por el estandar de OpenAI).
  */
 
-const { stripHtmlFence } = require('./index');
+const { stripHtmlFence, makeUsage } = require('./index');
 
 const DEFAULT_TIMEOUT_MS = 240_000;
 
@@ -99,7 +99,13 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     throw new Error('openai-compat: respuesta sin choices[0].message.content');
   }
 
-  return stripHtmlFence(contentText);
+  const u = data.usage || {};
+  const usage = makeUsage('openai-compat', model, {
+    inputTokens: u.prompt_tokens,
+    outputTokens: u.completion_tokens,
+    costUsd: null,
+  });
+  return { text: stripHtmlFence(contentText), usage };
 }
 
 module.exports = { generate };
