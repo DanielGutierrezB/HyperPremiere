@@ -510,115 +510,156 @@
     return el;
   }
 
-  // Genera el recurso de un marcador.
-  // mode: "generate" (1ra vez, desde cero) | "adjust" (refina sobre lo previo,
-  // usando la instrucción de arriba) | "regen" (desde cero, solo prompt+stills).
-  function runGenerationForMarker(marker, statusEl, buttons, mode, onSuccess) {
+  // ── Cola global de generación/render ────────────────────────────────
+  // Serial (uno a la vez → no revienta la RAM con varios renders), persiste
+  // entre secuencias (vive en el JS del panel) y es visible desde cualquier
+  // secuencia. Cada job coloca su clip en SU secuencia por nombre.
+  var HPQueue = (function () {
+    var jobs = [];
+    var counter = 0;
+    var running = false;
+    var subs = [];
+    function emit() { for (var i = 0; i < subs.length; i++) { try { subs[i](jobs); } catch (e) {} } }
+    function nextQueued() { for (var i = 0; i < jobs.length; i++) if (jobs[i].status === "queued") return jobs[i]; return null; }
+    function markGenerated(job) {
+      // Persistir el flag en el namespace del job (aunque estés en otra secuencia).
+      try {
+        HPStore.setContext(job.projectPath, job.seqName);
+        HPStore.setMarkerGenerated(job.markerKey, true);
+        HPStore.setContext(currentProjectPath, currentSequenceName);
+      } catch (e) {}
+    }
+    function tick() {
+      if (running) return;
+      var job = nextQueued();
+      if (!job) return;
+      running = true;
+      job.status = "running"; job.pct = 3; job.msg = "Preparando…"; job.startedAt = Date.now();
+      emit();
+      function onP(p) {
+        if (!p) return;
+        if (typeof p.pct === "number") job.pct = Math.max(0, Math.min(100, p.pct));
+        if (p.msg) job.msg = p.msg;
+        emit();
+      }
+      var call;
+      if (HP_ENGINE && typeof HP_ENGINE[job.kind] === "function") {
+        try { call = Promise.resolve(HP_ENGINE[job.kind](job.payload, onP)); }
+        catch (e) { call = Promise.reject(e); }
+      } else {
+        call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
+      }
+      call.then(function (res) {
+        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
+        job.version = res.version; job.usage = res.usage || null;
+        if (job.usage) { HPStore.addSessionUsage(job.usage); updateSessionUsageBar(); }
+        job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
+        var movArg = JSON.stringify(res.movPath), seqArg = JSON.stringify(job.seqName);
+        csInterface.evalScript(
+          "hp_placeClipInSequence(" + movArg + ", " + seqArg + ", " + job.markerStart + ", " + job.markerDuration + ")",
+          function (place) {
+            var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
+            var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
+            job.status = "done"; job.pct = 100;
+            job.msg = (place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place) +
+              " (v" + job.version + ")" + tok + " · " + dur;
+            markGenerated(job);
+            emit(); running = false; tick();
+          }
+        );
+      }).catch(function (err) {
+        job.status = "error";
+        job.msg = "Error: " + (err && err.message ? err.message : String(err));
+        emit(); running = false; tick();
+      });
+    }
+    return {
+      add: function (job) {
+        job.id = "j" + (++counter);
+        job.status = "queued"; job.pct = 0; job.msg = "En cola…";
+        jobs.push(job); emit(); tick();
+        return job.id;
+      },
+      on: function (cb) { subs.push(cb); },
+      jobs: function () { return jobs; },
+      latestFor: function (seqName, markerKey) {
+        var found = null;
+        for (var i = 0; i < jobs.length; i++) if (jobs[i].seqName === seqName && jobs[i].markerKey === markerKey) found = jobs[i];
+        return found;
+      },
+      clearFinished: function () { jobs = jobs.filter(function (j) { return j.status === "queued" || j.status === "running"; }); emit(); }
+    };
+  })();
+
+  // Encola la generación IA de un marcador (no corre al instante: la cola serializa).
+  function enqueueMarkerGeneration(marker, mode) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
     var segments = HPStore.getTranscript() || [];
-    var markerTranscript = HPTranscript.sliceByRange(
-      segments, marker.start, marker.start + marker.duration
-    );
-
+    var markerTranscript = HPTranscript.sliceByRange(segments, marker.start, marker.start + marker.duration);
     var payload = {
-      projectPath: currentProjectPath,
-      sequenceName: currentSequenceName,
-      objective: HPStore.getObjective(),
-      transcript: segments,
-      marker: {
-        name: marker.name || markerKey,
-        start: marker.start,
-        end: marker.start + marker.duration,
-        duration: marker.duration
-      },
-      markerTranscript: markerTranscript,
-      instruction: data.instruction || "",
-      stills: data.stills || [],
-      resources: data.resources || [],
-      markerSlug: markerKey,
-      mode: mode
+      projectPath: currentProjectPath, sequenceName: currentSequenceName,
+      objective: HPStore.getObjective(), transcript: segments,
+      marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
+      markerTranscript: markerTranscript, instruction: data.instruction || "",
+      stills: data.stills || [], resources: data.resources || [],
+      markerSlug: markerKey, mode: mode
     };
-
-    // "adjust" = refinar: la instrucción de arriba es el pedido; el motor lee
-    // el HTML de la última versión del disco como referencia.
     if (mode === "adjust") payload.adjustment = data.instruction || "";
-
-    var method = mode === "generate" ? "generate" : "feedback";
-
-    setButtonsDisabled(buttons, true);
-
-    // Barra de progreso con frase descriptiva por etapa.
-    statusEl.textContent = "";
-    statusEl.className = "marker-status is-busy";
-    var bar = document.createElement("div"); bar.className = "hp-bar";
-    var fill = document.createElement("div"); fill.className = "hp-bar-fill"; bar.appendChild(fill);
-    var msgEl = document.createElement("div"); msgEl.className = "hp-bar-msg";
-    statusEl.appendChild(bar); statusEl.appendChild(msgEl);
-    function onProgress(p) {
-      if (!p) return;
-      if (typeof p.pct === "number") fill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
-      if (p.msg) msgEl.textContent = p.msg;
-    }
-    onProgress({ pct: 3, msg: "Preparando…" });
-
-    // Cronómetro de la generación: cuenta el tiempo transcurrido en vivo.
-    var startedAt = Date.now();
-    function elapsedSec() { return (Date.now() - startedAt) / 1000; }
-    var tick = setInterval(function () {
-      msgEl.setAttribute("data-elapsed", fmtDuration(elapsedSec()));
-      var base = (msgEl.textContent || "").replace(/\s*·\s*\d+m?\s*\d*s?$/, "");
-      msgEl.textContent = base + " · " + fmtDuration(elapsedSec());
-    }, 1000);
-    function stopTimer() { if (tick) { clearInterval(tick); tick = null; } }
-
-    var call;
-    if (HP_ENGINE && typeof HP_ENGINE[method] === "function") {
-      try { call = Promise.resolve(HP_ENGINE[method](payload, onProgress)); }
-      catch (e) { call = Promise.reject(e); }
-    } else {
-      call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
-    }
-
-    return call
-      .then(function (res) {
-        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
-        stopTimer();
-        // Contabilizar tokens de esta generación en el acumulado de la sesión.
-        var usg = res.usage || null;
-        if (usg) { HPStore.addSessionUsage(usg); updateSessionUsageBar(); }
-        var tokTxt = usg
-          ? " · " + addThousands(usg.inputTokens) + " tokens de entrada, " + addThousands(usg.outputTokens) + " de salida"
-          : "";
-        var durTxt = " · tardó " + fmtDuration(elapsedSec());
-        onProgress({ pct: 98, msg: "Colocando en el timeline…" });
-        return new Promise(function (resolvePlace) {
-          var movArg = JSON.stringify(res.movPath);
-          csInterface.evalScript(
-            "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
-            function (place) {
-              if (place === "ok") {
-                statusEl.textContent = "✓ Listo y colocado (versión " + res.version + ")" + tokTxt + durTxt;
-                statusEl.className = "marker-status is-ok";
-              } else {
-                statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
-                statusEl.className = "marker-status is-error";
-              }
-              HPStore.setMarkerGenerated(markerKey, true);
-              setButtonsDisabled(buttons, false);
-              if (onSuccess) onSuccess();
-              resolvePlace();
-            }
-          );
-        });
-      })
-      .catch(function (err) {
-        stopTimer();
-        statusEl.textContent = "Error: " + (err && err.message ? err.message : String(err)) + " · tras " + fmtDuration(elapsedSec());
-        statusEl.className = "marker-status is-error";
-        setButtonsDisabled(buttons, false);
-      });
+    HPQueue.add({
+      kind: mode === "generate" ? "generate" : "feedback",
+      payload: payload, seqName: currentSequenceName, projectPath: currentProjectPath,
+      markerKey: markerKey, label: markerKey + (marker.name ? " · " + marker.name : ""),
+      markerStart: marker.start, markerDuration: marker.duration
+    });
   }
+
+  // Refleja el estado de los jobs en las tarjetas de la secuencia ACTUAL.
+  function reflectQueueOnCards() {
+    if (!markersContainer) return;
+    var cards = markersContainer.querySelectorAll("details.marker-card");
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (!c._markerKey || !c._applyJob) continue;
+      var job = HPQueue.latestFor(currentSequenceName, c._markerKey);
+      if (job) c._applyJob(job);
+    }
+  }
+
+  // Panel de cola global (arriba, visible desde cualquier secuencia).
+  function renderQueue(jobs) {
+    var panel = document.getElementById("queue-panel");
+    if (!panel) return;
+    if (!jobs.length) { panel.setAttribute("data-hidden", "true"); panel.innerHTML = ""; return; }
+    var pending = 0, i;
+    for (i = 0; i < jobs.length; i++) if (jobs[i].status === "queued" || jobs[i].status === "running") pending++;
+    panel.setAttribute("data-hidden", "false");
+    panel.innerHTML = "";
+    var head = document.createElement("div"); head.className = "queue-head";
+    var title = document.createElement("span");
+    title.textContent = "Cola" + (pending ? " · " + pending + " en proceso/espera" : " · sin pendientes");
+    var clr = document.createElement("button"); clr.type = "button"; clr.className = "queue-clear";
+    clr.textContent = "limpiar terminados";
+    clr.addEventListener("click", function () { HPQueue.clearFinished(); });
+    head.appendChild(title); head.appendChild(clr); panel.appendChild(head);
+    for (i = 0; i < jobs.length; i++) {
+      var j = jobs[i];
+      var row = document.createElement("div"); row.className = "queue-job is-" + j.status;
+      var top = document.createElement("div"); top.className = "qj-title";
+      var dot = j.status === "running" ? "▶ " : j.status === "queued" ? "• " : j.status === "done" ? "✓ " : "⚠ ";
+      top.textContent = dot + j.seqName + " · " + j.label;
+      var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
+      row.appendChild(top); row.appendChild(msg);
+      if (j.status === "running") {
+        var bar = document.createElement("div"); bar.className = "hp-bar";
+        var fill = document.createElement("div"); fill.className = "hp-bar-fill"; fill.style.width = (j.pct || 0) + "%"; bar.appendChild(fill);
+        row.appendChild(bar);
+      }
+      panel.appendChild(row);
+    }
+  }
+
+  HPQueue.on(function () { renderQueue(HPQueue.jobs()); reflectQueueOnCards(); });
 
   function setButtonsDisabled(buttons, disabled) {
     for (var i = 0; i < buttons.length; i++) buttons[i].disabled = disabled;
@@ -707,17 +748,45 @@
 
     function doGenerate() {
       var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
-      return runGenerationForMarker(marker, status, buttons, mode, syncUI);
+      enqueueMarkerGeneration(marker, mode);
     }
     genBtn.addEventListener("click", doGenerate);
     regenBtn.addEventListener("click", function () {
-      runGenerationForMarker(marker, status, buttons, "regen", syncUI);
+      enqueueMarkerGeneration(marker, "regen");
     });
 
     // Para el botón global "Generar listos".
     card._runGen = doGenerate;
     card._isReady = function () {
       return !!(HPStore.getMarkerData(markerKey).instruction || "").trim();
+    };
+    card._markerKey = markerKey;
+
+    // Refleja el estado de un job de la cola en esta tarjeta: barra en el
+    // status y un indicador en el summary (visible aunque esté colapsada).
+    card._applyJob = function (job) {
+      if (!job) return;
+      if (job.status === "queued" || job.status === "running") {
+        setButtonsDisabled(buttons, true);
+        status.className = "marker-status is-busy";
+        status.textContent = "";
+        var bar = document.createElement("div"); bar.className = "hp-bar";
+        var fill = document.createElement("div"); fill.className = "hp-bar-fill";
+        fill.style.width = (job.pct || 0) + "%"; bar.appendChild(fill);
+        var m = document.createElement("div"); m.className = "hp-bar-msg"; m.textContent = job.msg || "";
+        status.appendChild(bar); status.appendChild(m);
+        sBadge.textContent = job.status === "running" ? "⏳" : "…";
+      } else if (job.status === "done") {
+        setButtonsDisabled(buttons, false);
+        status.className = "marker-status is-ok";
+        status.textContent = job.msg || "✓ Listo";
+        syncUI();
+      } else if (job.status === "error") {
+        setButtonsDisabled(buttons, false);
+        status.className = "marker-status is-error";
+        status.textContent = job.msg || "Error";
+        sBadge.textContent = "⚠";
+      }
     };
 
     var estimate = document.createElement("div");
@@ -828,44 +897,20 @@
     renderBtn.addEventListener("click", function () {
       var html = codeEd.getValue().trim();
       if (!html) { eStatus.className = "marker-status is-error"; eStatus.textContent = "El HTML está vacío."; return; }
-      renderBtn.disabled = true; openBtn.disabled = true;
-      eStatus.textContent = ""; eStatus.className = "marker-status is-busy";
-      var bar = document.createElement("div"); bar.className = "hp-bar";
-      var fill = document.createElement("div"); fill.className = "hp-bar-fill"; bar.appendChild(fill);
-      var msg = document.createElement("div"); msg.className = "hp-bar-msg";
-      eStatus.appendChild(bar); eStatus.appendChild(msg);
-      var t0 = Date.now();
-      function onP(p) { if (!p) return; if (typeof p.pct === "number") fill.style.width = Math.max(0, Math.min(100, p.pct)) + "%"; if (p.msg) msg.textContent = p.msg; }
-      onP({ pct: 5, msg: "Preparando…" });
-
-      var payload = {
-        projectPath: currentProjectPath, sequenceName: currentSequenceName,
-        marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
-        markerSlug: markerKey, html: html
-      };
-      var call;
-      if (HP_ENGINE && typeof HP_ENGINE.renderManualHtml === "function") {
-        try { call = Promise.resolve(HP_ENGINE.renderManualHtml(payload, onP)); } catch (e) { call = Promise.reject(e); }
-      } else { call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere.")); }
-
-      call.then(function (res) {
-        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
-        onP({ pct: 98, msg: "Colocando en el timeline…" });
-        var movArg = JSON.stringify(res.movPath);
-        csInterface.evalScript("hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")", function (place) {
-          eStatus.className = "marker-status is-ok";
-          eStatus.textContent = (place === "ok" ? "✓ Renderizado y colocado" : "Render OK, no se pudo colocar: " + place) +
-            " (versión " + res.version + ") · tardó " + fmtDuration((Date.now() - t0) / 1000);
-          HPStore.setMarkerGenerated(markerKey, true);
-          syncUI();
-          refreshVersions();
-          renderBtn.disabled = false; openBtn.disabled = false;
-        });
-      }).catch(function (err) {
-        eStatus.className = "marker-status is-error";
-        eStatus.textContent = "Error: " + (err && err.message ? err.message : String(err));
-        renderBtn.disabled = false; openBtn.disabled = false;
+      HPQueue.add({
+        kind: "renderManualHtml",
+        payload: {
+          projectPath: currentProjectPath, sequenceName: currentSequenceName,
+          marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
+          markerSlug: markerKey, html: html
+        },
+        seqName: currentSequenceName, projectPath: currentProjectPath, markerKey: markerKey,
+        label: markerKey + " (edición manual)", markerStart: marker.start, markerDuration: marker.duration
       });
+      eStatus.className = "marker-status";
+      eStatus.textContent = "Encolado. Mirá el progreso en la Cola (arriba) o en el estado del marcador.";
+      // Refrescar la lista de versiones cuando el job termine (aprox).
+      setTimeout(refreshVersions, 1500);
     });
 
     // Refrescar la lista de versiones al abrir el editor.
@@ -903,6 +948,8 @@
     // Flujo progresivo: al tener marcadores, colapsar contexto para dar aire.
     var ctx = document.getElementById("context-section");
     if (ctx && objectiveInput && objectiveInput.value.trim()) ctx.open = false;
+    // Si hay jobs en curso de esta secuencia, reflejar su progreso en las tarjetas.
+    reflectQueueOnCards();
   }
 
   function onLoadMarkers() {
@@ -1345,27 +1392,15 @@
   var batchStatus = document.getElementById("batch-status");
   function generateAllReady() {
     var cards = markersContainer.querySelectorAll("details.marker-card");
-    var ready = [];
+    var n = 0;
     for (var i = 0; i < cards.length; i++) {
-      if (cards[i]._isReady && cards[i]._isReady()) ready.push(cards[i]);
+      if (cards[i]._isReady && cards[i]._isReady()) { cards[i]._runGen(); n++; }
     }
-    if (!ready.length) {
-      if (batchStatus) batchStatus.textContent = "No hay marcadores listos (poné una instrucción en al menos uno).";
-      return;
+    if (batchStatus) {
+      batchStatus.textContent = n
+        ? "Encolados " + n + " marcador(es) — se procesan uno a uno (mirá la Cola arriba)."
+        : "No hay marcadores listos (poné una instrucción en al menos uno).";
     }
-    btnGenerateAll.disabled = true;
-    function step(i) {
-      if (i >= ready.length) {
-        btnGenerateAll.disabled = false;
-        if (batchStatus) batchStatus.textContent = "✓ Generados " + ready.length + " marcador(es).";
-        return;
-      }
-      if (batchStatus) batchStatus.textContent = "Generando " + (i + 1) + " de " + ready.length + "…";
-      var c = ready[i];
-      c.open = true; // abrir para ver su barra de progreso
-      Promise.resolve(c._runGen()).then(function () { step(i + 1); });
-    }
-    step(0);
   }
   if (btnGenerateAll) btnGenerateAll.addEventListener("click", generateAllReady);
 

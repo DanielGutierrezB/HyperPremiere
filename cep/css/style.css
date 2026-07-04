@@ -628,6 +628,40 @@ textarea:focus {
 }
 .session-usage .su-reset:hover { color: var(--accent); background: transparent; border: 0; }
 
+/* ── v0.1.24: cola global de generación/render ───────────────── */
+.queue-panel {
+  flex: none;
+  margin: 0 16px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.queue-panel[data-hidden="true"] { display: none; }
+.queue-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted);
+  padding-bottom: 6px; border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
+}
+.queue-clear {
+  flex: none; width: auto; font-size: 10px; color: var(--text-muted);
+  background: transparent; border: 0; padding: 2px 4px; cursor: pointer; text-decoration: underline;
+  text-transform: none; letter-spacing: 0;
+}
+.queue-clear:hover { color: var(--accent); background: transparent; border: 0; }
+.queue-job {
+  padding: 5px 0; border-bottom: 1px solid var(--hairline);
+}
+.queue-job:last-child { border-bottom: 0; }
+.qj-title { font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qj-msg { font-size: 10px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.queue-job.is-done .qj-title { color: #0ae98d; }
+.queue-job.is-error .qj-title { color: #f87171; }
+.queue-job.is-running .qj-title { color: var(--accent); }
+.queue-job.is-queued .qj-title { color: var(--text-secondary); }
+
 /* ── v0.1.13: secciones colapsables (help / contexto) ─────────── */
 .help-section, .context-section {
   flex: none;

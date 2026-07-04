@@ -15,7 +15,7 @@
       <p class="subtitle">Marcadores de secuencia</p>
     </div>
     <button id="btn-update" class="btn-update" type="button" title="Buscar actualización">
-      <span class="update-icon">⟳</span> <span id="version-label">v0.1.23</span>
+      <span class="update-icon">⟳</span> <span id="version-label">v0.1.24</span>
     </button>
   </header>
 
@@ -31,6 +31,9 @@
     <span id="su-value" class="su-value">↑0 ↓0</span>
     <button id="su-reset" type="button" class="su-reset" title="Reiniciar contador">reiniciar</button>
   </div>
+
+  <!-- Cola global de generación/render (visible desde cualquier secuencia). -->
+  <div id="queue-panel" class="queue-panel" data-hidden="true"></div>
 
   <main class="panel-body">
     <!-- Cómo funciona -->

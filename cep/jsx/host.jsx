@@ -157,6 +157,73 @@ function hp_ensureBin(parent, name) {
     try { return parent.createBin(name); } catch (e2) { return null; }
 }
 
+// Busca una secuencia del proyecto por nombre. Devuelve el objeto o null.
+function hp_findSequenceByName(name) {
+    try {
+        var seqs = app.project.sequences;
+        for (var i = 0; i < seqs.numSequences; i++) {
+            if (seqs[i] && seqs[i].name === name) return seqs[i];
+        }
+    } catch (e) {}
+    return null;
+}
+
+// Coloca el .mov en una secuencia ESPECÍFICA (por nombre), aunque no sea la
+// activa — necesario para la cola: un trabajo de la secuencia A puede terminar
+// mientras el editor está en la secuencia B. Devuelve "ok" o "error: ...".
+function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec) {
+    try {
+        var active = app.project.activeSequence;
+        var isActive = active && active.name === seqName;
+        var seq = isActive ? active : hp_findSequenceByName(seqName);
+        if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\" (¿la cerraste?)";
+
+        var f = new File(movPath);
+        if (!f.exists) return "error: no existe el archivo: " + movPath;
+
+        var start = Number(atSeconds) || 0;
+        var end = start + (Number(durationSec) || 5);
+
+        var hpBin = hp_ensureBin(app.project.rootItem, "HyperPremiere");
+        var seqBin = hpBin ? hp_ensureBin(hpBin, String(seqName || "secuencia")) : null;
+        var targetBin = seqBin || hpBin || app.project.rootItem;
+        app.project.importFiles([movPath], true, targetBin, false);
+
+        var root = targetBin;
+        var count = root.children.numItems;
+        var baseName = f.name.replace(/\.[^\.]+$/, "");
+        var item = null;
+        for (var i = count - 1; i >= 0; i--) {
+            var ch = root.children[i];
+            if (ch && ch.name && ch.name.indexOf(baseName) === 0) { item = ch; break; }
+        }
+        if (!item && count > 0) item = root.children[count - 1];
+        if (!item) return "error: no se pudo localizar el clip importado";
+
+        var vTracks = seq.videoTracks;
+        if (!vTracks || vTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";
+        var target = vTracks[vTracks.numTracks - 1];
+
+        if (!hp_trackIsFree(target, start, end) && isActive) {
+            // Solo podemos agregar pista vía QE en la secuencia ACTIVA.
+            try {
+                app.enableQE();
+                var qeSeq = qe.project.getActiveSequence();
+                qeSeq.addTracks(1, vTracks.numTracks);
+                vTracks = seq.videoTracks;
+                target = vTracks[vTracks.numTracks - 1];
+            } catch (qerr) {
+                target = vTracks[vTracks.numTracks - 1];
+            }
+        }
+
+        target.overwriteClip(item, start);
+        return "ok";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // Importa un .mov y lo coloca SIEMPRE en la pista superior si está libre;
 // si no, crea una pista de video nueva encima y lo pone ahí (nunca pisa nada).
 // El clip se importa a un bin "HyperPremiere" > "<secuencia>" para no dejarlo
