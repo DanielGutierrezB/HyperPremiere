@@ -356,11 +356,12 @@
     }
 
     csInterface.evalScript("hp_captureProgramFrame(" + arg + ")", function (result) {
-      if (result !== "ok") {
+      if (!result || result.indexOf("ok|") !== 0) {
         fail("No se pudo capturar: " + (result || "sin secuencia/monitor"));
         return;
       }
-      hpCall("readStill", tmpPath)
+      var realPath = result.substring(3); // "ok|<ruta real>"
+      hpCall("readStill", realPath)
         .then(function (res) {
           if (res && res.ok && res.dataUrl) {
             HPStore.addMarkerStill(markerKey, res.dataUrl);

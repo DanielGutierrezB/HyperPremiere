@@ -109,27 +109,36 @@ function hp_captureProgramFrame(outPath) {
     try { ticks = seq.getPlayerPosition().ticks; } catch (e) {}
 
     var tried = [];
-    var f = new File(outPath);
+    // QE agrega ".png" al path que se le pasa; probamos varias formas del nombre.
+    var base = String(outPath).replace(/\.png$/i, "");
+
+    function firstExisting(paths) {
+        for (var i = 0; i < paths.length; i++) {
+            var ff = new File(paths[i]);
+            if (ff.exists && ff.length > 0) return paths[i];
+        }
+        return null;
+    }
 
     // 1) DOM: seq.exportFramePNG(ticks, path)  (Premiere viejo)
     try {
         if (typeof seq.exportFramePNG === "function") {
             seq.exportFramePNG(ticks, outPath);
-            if (f.exists && f.length > 0) return "ok";
+            var got1 = firstExisting([outPath, outPath + ".png", base + ".png"]);
+            if (got1) return "ok|" + got1;
         } else { tried.push("dom: sin exportFramePNG"); }
     } catch (e) { tried.push("dom: " + e.toString()); }
 
-    // 2) QE DOM (vía confiable en Premiere reciente)
+    // 2) QE DOM (vía confiable en Premiere reciente; agrega ".png" solo)
     try {
         app.enableQE();
         var q = (typeof qe !== "undefined" && qe.project) ? qe.project.getActiveSequence() : null;
         if (q && typeof q.exportFramePNG === "function") {
-            // Firma A: exportFramePNG(path)
-            try { q.exportFramePNG(outPath); } catch (eA) {
-                // Firma B: exportFramePNG(ticks, path)
-                try { q.exportFramePNG(ticks, outPath); } catch (eB) { tried.push("qe: " + eB.toString()); }
+            try { q.exportFramePNG(base); } catch (eA) {
+                try { q.exportFramePNG(base, ticks); } catch (eB) { tried.push("qe: " + eB.toString()); }
             }
-            if (f.exists && f.length > 0) return "ok";
+            var got2 = firstExisting([base + ".png", outPath, outPath + ".png"]);
+            if (got2) return "ok|" + got2;
         } else { tried.push("qe: sin exportFramePNG"); }
     } catch (e) { tried.push("qe-enable: " + e.toString()); }
 
