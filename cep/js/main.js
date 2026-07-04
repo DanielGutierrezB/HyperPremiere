@@ -12,7 +12,18 @@
       var req = (typeof window !== "undefined" && window.cep_node && window.cep_node.require)
         ? window.cep_node.require
         : (typeof require === "function" ? require : null);
-      if (req) HP_ENGINE = req(ENGINE_PATH);
+      if (!req) return;
+      // Node cachea los require: sin esto, recargar el panel (⟳) NO trae los
+      // cambios del motor (seguiría el módulo viejo en memoria hasta reiniciar
+      // Premiere). Vaciamos la caché de todo el bridge para cargarlo fresco.
+      try {
+        if (req.cache) {
+          Object.keys(req.cache).forEach(function (k) {
+            if (k.indexOf("/HyperPremiere/bridge/") !== -1) delete req.cache[k];
+          });
+        }
+      } catch (e) {}
+      HP_ENGINE = req(ENGINE_PATH);
     } catch (e) {
       HP_ENGINE = null;
     }
