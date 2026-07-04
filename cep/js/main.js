@@ -498,6 +498,16 @@
     }
     onProgress({ pct: 3, msg: "Preparando…" });
 
+    // Cronómetro de la generación: cuenta el tiempo transcurrido en vivo.
+    var startedAt = Date.now();
+    function elapsedSec() { return (Date.now() - startedAt) / 1000; }
+    var tick = setInterval(function () {
+      msgEl.setAttribute("data-elapsed", fmtDuration(elapsedSec()));
+      var base = (msgEl.textContent || "").replace(/\s*·\s*\d+m?\s*\d*s?$/, "");
+      msgEl.textContent = base + " · " + fmtDuration(elapsedSec());
+    }, 1000);
+    function stopTimer() { if (tick) { clearInterval(tick); tick = null; } }
+
     var call;
     if (HP_ENGINE && typeof HP_ENGINE[method] === "function") {
       try { call = Promise.resolve(HP_ENGINE[method](payload, onProgress)); }
@@ -509,10 +519,14 @@
     return call
       .then(function (res) {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
+        stopTimer();
         // Contabilizar tokens de esta generación en el acumulado de la sesión.
         var usg = res.usage || null;
         if (usg) { HPStore.addSessionUsage(usg); updateSessionUsageBar(); }
-        var tokTxt = usg ? " · ↑" + usg.inputTokens + " ↓" + usg.outputTokens : "";
+        var tokTxt = usg
+          ? " · " + addThousands(usg.inputTokens) + " tokens de entrada, " + addThousands(usg.outputTokens) + " de salida"
+          : "";
+        var durTxt = " · tardó " + fmtDuration(elapsedSec());
         onProgress({ pct: 98, msg: "Colocando en el timeline…" });
         return new Promise(function (resolvePlace) {
           var movArg = JSON.stringify(res.movPath);
@@ -520,7 +534,7 @@
             "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
             function (place) {
               if (place === "ok") {
-                statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")" + tokTxt;
+                statusEl.textContent = "✓ Listo y colocado (versión " + res.version + ")" + tokTxt + durTxt;
                 statusEl.className = "marker-status is-ok";
               } else {
                 statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
@@ -535,7 +549,8 @@
         });
       })
       .catch(function (err) {
-        statusEl.textContent = "Error: " + (err && err.message ? err.message : String(err));
+        stopTimer();
+        statusEl.textContent = "Error: " + (err && err.message ? err.message : String(err)) + " · tras " + fmtDuration(elapsedSec());
         statusEl.className = "marker-status is-error";
         setButtonsDisabled(buttons, false);
       });
@@ -888,30 +903,60 @@
       });
   }
 
+  function defaultModelFor(p) {
+    return (p === "claude-cli" || p === "claude-api") ? "claude-sonnet-5" : "";
+  }
+
+  // Autopobla la lista de Ollama con los modelos realmente instalados.
+  function refreshOllamaModels(selected) {
+    var base = (cfgBaseUrl.value || "").trim();
+    hpCall("listOllamaModels", base)
+      .then(function (r) {
+        if (r && r.ok && r.models && r.models.length) {
+          var list = r.models.map(function (m) { return { v: m, t: m }; });
+          list.push({ v: "__custom__", t: "Otro (escribir ID)…" });
+          MODELS["ollama"] = list;
+          if (cfgProvider.value === "ollama") { populateModels("ollama", selected || effectiveModel()); applyProviderUI(); updateSummary(); }
+        }
+      })
+      .catch(function () {});
+  }
+
+  // Vuelca una config (del motor) a los controles del panel.
+  function applyConfigToUI(cfg) {
+    if (!cfg) return;
+    if (cfg.provider) cfgProvider.value = cfg.provider;
+    currentHasSession = Boolean(cfg.hasSession);
+    cfgBaseUrl.value = cfg.baseUrl || "";
+    cfgApiKey.value = "";
+    if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
+    else { cfgApiKey.removeAttribute("data-has"); cfgApiKey.setAttribute("placeholder", "Pegá tu API key"); }
+    if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
+    populateModels(cfgProvider.value, cfg.model || defaultModelFor(cfgProvider.value));
+    applyProviderUI();
+    updateSummary();
+    if (cfgProvider.value === "ollama") refreshOllamaModels(cfg.model);
+  }
+
   function loadConfig() {
     hpCall("getConfig")
       .then(function (cfg) {
-        if (!cfg) return;
-        if (cfg.provider) cfgProvider.value = cfg.provider;
-        currentHasSession = Boolean(cfg.hasSession);
-        populateModels(cfgProvider.value, cfg.model || "claude-sonnet-5");
-        if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
-        if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
-        if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
-        applyProviderUI();
-        var ok = updateSummary();
+        applyConfigToUI(cfg);
         // Si ya está bien configurado, arranca colapsado (flujo progresivo).
-        if (ok && configSection) configSection.open = false;
+        if (updateSummary() && configSection) configSection.open = false;
       })
       .catch(function (e) {
         if (configStatus) configStatus.textContent = (e && e.message) || "Motor no disponible";
       });
   }
 
+  // Cambiar de proveedor: guarda el proveedor activo y RESTAURA las credenciales
+  // guardadas de ese proveedor (no se pierden al saltar entre modelos).
   cfgProvider.addEventListener("change", function () {
-    populateModels(cfgProvider.value, effectiveModel());
-    applyProviderUI();
-    autoSave();
+    configStatus.textContent = "Cambiando…";
+    hpCall("setConfig", { provider: cfgProvider.value })
+      .then(function (cfg) { applyConfigToUI(cfg); configStatus.textContent = "✓ Guardado"; })
+      .catch(function (e) { configStatus.textContent = "Error: " + ((e && e.message) || ""); });
   });
   cfgModel.addEventListener("change", function () {
     applyProviderUI();
@@ -925,17 +970,31 @@
   // ── Contador de uso de la sesión (tokens) ───────────────────────────
   var suValue = document.getElementById("su-value");
   var suReset = document.getElementById("su-reset");
+  // Número con separador de miles (1234 -> "1.234").
+  function addThousands(n) {
+    n = Math.round(Number(n) || 0);
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  }
+  // Compacto para etiquetas cortas (1234 -> "1,2k").
   function fmtTokens(n) {
     n = Number(n) || 0;
-    if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+    if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(".", ",") + "k";
     return String(n);
+  }
+  // Duración legible: "45s" o "1m 12s".
+  function fmtDuration(sec) {
+    sec = Math.max(0, Math.round(Number(sec) || 0));
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m ? (m + "m " + (s < 10 ? "0" : "") + s + "s") : (s + "s");
   }
   function updateSessionUsageBar() {
     if (!suValue) return;
     var u = HPStore.getSessionUsage();
-    var txt = "↑" + fmtTokens(u.inputTokens) + " ↓" + fmtTokens(u.outputTokens);
+    if (!u.generations) { suValue.textContent = "sin generaciones todavía"; return; }
+    var txt = addThousands(u.inputTokens) + " tokens de entrada · " +
+      addThousands(u.outputTokens) + " de salida";
     if (u.costUsd > 0) txt += " · $" + u.costUsd.toFixed(3);
-    if (u.generations) txt += " · " + u.generations + " gen";
+    txt += " · " + u.generations + (u.generations === 1 ? " generación" : " generaciones");
     suValue.textContent = txt;
   }
   if (suReset) suReset.addEventListener("click", function () {

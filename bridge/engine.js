@@ -44,30 +44,80 @@ const {
 const SYSTEM_PROMPT_PATH = path.join(__dirname, 'prompt', 'system.md');
 const CONFIG_DIR = path.join(os.homedir(), '.hyperpremiere');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
-const DEFAULT_CONFIG = { provider: 'claude-cli', model: 'claude-sonnet-5', apiKey: '', baseUrl: '', oauthToken: '' };
+const DEFAULT_PROVIDER = 'claude-cli';
 
-function loadConfig() {
-  let stored = {};
-  try { stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) || {}; } catch (e) {}
-  const cfg = Object.assign({}, DEFAULT_CONFIG, stored);
-  if (!cfg.model || !String(cfg.model).trim()) cfg.model = DEFAULT_CONFIG.model;
-  if (!cfg.provider || !String(cfg.provider).trim()) cfg.provider = DEFAULT_CONFIG.provider;
-  return cfg;
+// Modelo por defecto por proveedor. Vacío = el editor lo define (API compat / Ollama).
+function defaultModelFor(provider) {
+  return (provider === 'claude-cli' || provider === 'claude-api') ? 'claude-sonnet-5' : '';
 }
 
-function saveConfig(patch) {
-  const cfg = loadConfig();
-  for (const key of Object.keys(DEFAULT_CONFIG)) {
-    if (patch[key] === undefined || patch[key] === null) continue;
-    const val = String(patch[key]);
-    if ((key === 'model' || key === 'provider') && !val.trim()) continue;
-    if (key === 'apiKey' && val.startsWith('••••')) continue; // enmascarada
-    cfg[key] = val;
+// Lee la config CRUDA del disco y la normaliza a la forma v2 (por proveedor):
+//   { provider, oauthToken, perProvider: { <name>: { model, apiKey, baseUrl } } }
+// Migra el formato viejo plano (model/apiKey/baseUrl arriba) sin perder nada.
+function loadRawConfig() {
+  let stored = {};
+  try { stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) || {}; } catch (e) {}
+
+  const raw = {
+    provider: stored.provider && String(stored.provider).trim() ? stored.provider : DEFAULT_PROVIDER,
+    oauthToken: stored.oauthToken || '',
+    perProvider: (stored.perProvider && typeof stored.perProvider === 'object') ? stored.perProvider : {},
+  };
+
+  // Migración del formato viejo: campos planos → slot del proveedor activo.
+  if (!stored.perProvider && (stored.model || stored.apiKey || stored.baseUrl)) {
+    raw.perProvider[raw.provider] = {
+      model: stored.model || defaultModelFor(raw.provider),
+      apiKey: stored.apiKey || '',
+      baseUrl: stored.baseUrl || '',
+    };
   }
-  if (!cfg.model || !String(cfg.model).trim()) cfg.model = DEFAULT_CONFIG.model;
+  return raw;
+}
+
+function saveRawConfig(raw) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
-  return maskConfig(cfg);
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf8');
+}
+
+// Vista PLANA del proveedor activo (lo que consumen los providers): incluye
+// model/apiKey/baseUrl del slot activo + oauthToken (compartido por Claude).
+function loadConfig() {
+  const raw = loadRawConfig();
+  const slot = raw.perProvider[raw.provider] || {};
+  const model = (slot.model && String(slot.model).trim()) ? slot.model : defaultModelFor(raw.provider);
+  return {
+    provider: raw.provider,
+    model,
+    apiKey: slot.apiKey || '',
+    baseUrl: slot.baseUrl || '',
+    oauthToken: raw.oauthToken || '',
+    perProvider: raw.perProvider,
+  };
+}
+
+// Guarda SOLO el slot del proveedor indicado (no toca los otros → cambiar de
+// modelo/proveedor nunca borra las credenciales del anterior).
+function saveConfig(patch) {
+  patch = patch || {};
+  const raw = loadRawConfig();
+  const provider = (patch.provider && String(patch.provider).trim()) ? patch.provider : raw.provider;
+  raw.provider = provider;
+  const slot = Object.assign({ model: '', apiKey: '', baseUrl: '' }, raw.perProvider[provider] || {});
+
+  if (patch.model !== undefined && patch.model !== null && String(patch.model).trim()) {
+    slot.model = String(patch.model);
+  }
+  if (patch.apiKey !== undefined && patch.apiKey !== null) {
+    const v = String(patch.apiKey);
+    if (v && !v.startsWith('••••')) slot.apiKey = v; // no pisar con la máscara
+  }
+  if (patch.baseUrl !== undefined && patch.baseUrl !== null) {
+    slot.baseUrl = String(patch.baseUrl);
+  }
+  raw.perProvider[provider] = slot;
+  saveRawConfig(raw);
+  return maskConfig(loadConfig());
 }
 
 function maskConfig(cfg) {
@@ -82,6 +132,25 @@ function maskConfig(cfg) {
 
 function getConfig() {
   return maskConfig(loadConfig());
+}
+
+// Lista los modelos instalados en Ollama (GET <baseUrl>/api/tags).
+// Devuelve { ok, models: [name, ...] } o { ok:false, error }.
+async function listOllamaModels(baseUrl) {
+  const base = String(baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
+  try {
+    const res = await fetch(base + '/api/tags');
+    if (!res.ok) return { ok: false, error: 'HTTP ' + res.status, models: [] };
+    const data = await res.json();
+    const models = (Array.isArray(data.models) ? data.models : [])
+      .map((m) => (m && m.name) ? m.name : null)
+      .filter(Boolean)
+      // Los modelos de embeddings no generan texto: no sirven acá.
+      .filter((name) => !/(embed|bge-|nomic)/i.test(name));
+    return { ok: true, models };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), models: [] };
+  }
 }
 
 async function runGeneration(body, mode, onProgress) {
@@ -291,11 +360,10 @@ function loginClaude() {
       clearTimeout(timer);
       const m = (out + '\n' + err).match(/sk-ant-oat[0-9]+-[A-Za-z0-9_-]+/);
       if (!m) return reject(new Error('login: no se encontró el token en la salida'));
-      const cfg = loadConfig();
-      cfg.oauthToken = m[0];
-      cfg.provider = 'claude-cli';
-      fs.mkdirSync(CONFIG_DIR, { recursive: true });
-      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+      const raw = loadRawConfig();
+      raw.oauthToken = m[0];
+      raw.provider = 'claude-cli';
+      saveRawConfig(raw);
       resolve({ ok: true, provider: 'claude-cli' });
     });
   });
@@ -382,6 +450,7 @@ module.exports = {
   deriveObjective,
   getConfig,
   setConfig: saveConfig,
+  listOllamaModels,
   loginClaude,
   getVersion,
   selfUpdate,
