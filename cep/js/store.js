@@ -147,8 +147,17 @@
       }
       return {
         instruction: typeof entry.instruction === 'string' ? entry.instruction : '',
-        stills: isArray(entry.stills) ? entry.stills : []
+        stills: isArray(entry.stills) ? entry.stills : [],
+        generated: Boolean(entry.generated)
       };
+    },
+
+    /** Marca si el marcador ya tuvo al menos una generación exitosa. */
+    setMarkerGenerated: function (markerKey, value) {
+      var state = readState();
+      var entry = ensureMarker(state, markerKey);
+      entry.generated = Boolean(value);
+      writeState(state);
     },
 
     setMarkerInstruction: function (markerKey, text) {

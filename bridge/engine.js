@@ -100,19 +100,26 @@ async function runGeneration(body, mode) {
     instruction, stillsCount: stillsList.length,
   });
 
-  if (mode === 'adjust') {
-    userPrompt += [
-      '', '## Ajuste sobre una versión previa',
-      'Partí del HTML previo y aplicá SOLO el ajuste pedido, conservando lo demás.',
-      '', '### Ajuste pedido', (adjustment || '').trim() || '(sin detalle)',
-      '', '### HTML previo', '```html', String(previousHtml || '').trim() || '(no recibido)', '```',
-      '', 'Devolvé SOLO el HTML completo ajustado.',
-    ].join('\n');
-  }
-
   const baseDir = ensureOutputDir(projectPath, sequenceName);
   const version = nextVersion(baseDir, markerSlug);
   const outPaths = paths(baseDir, markerSlug, version);
+
+  // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
+  // Si el panel no mandó el HTML previo, lo leemos del disco (versión anterior).
+  if (mode === 'adjust') {
+    let prevHtml = String(previousHtml || '').trim();
+    if (!prevHtml && version > 1) {
+      try { prevHtml = fs.readFileSync(paths(baseDir, markerSlug, version - 1).html, 'utf8'); } catch (e) {}
+    }
+    userPrompt += [
+      '', '## Refinamiento sobre la versión previa',
+      'Ya generaste una versión de este recurso (abajo). Tomala como REFERENCIA:',
+      'mantené lo que funciona y aplicá la nueva instrucción del editor sobre esa base.',
+      '', '### Nueva instrucción', (adjustment || instruction || '').trim() || '(sin detalle)',
+      '', '### Versión previa (HTML)', '```html', prevHtml || '(no disponible)', '```',
+      '', 'Devolvé SOLO el HTML completo de la versión refinada.',
+    ].join('\n');
+  }
   saveStills(outPaths.stillsDir, stillsList);
 
   const config = loadConfig();

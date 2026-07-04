@@ -394,30 +394,15 @@
     return el;
   }
 
-  // Recuerda el htmlPath de la última generación por marcador (para ajustes).
-  var htmlPathByMarker = {};
-
-  // Lee un archivo local usando la API de CEP (para pasar el HTML previo).
-  function readLocalFile(path) {
-    try {
-      if (window.cep && window.cep.fs && path) {
-        var r = window.cep.fs.readFile(path);
-        if (r && r.err === 0) return r.data;
-      }
-    } catch (e) {}
-    return "";
-  }
-
-  // Genera / regenera / ajusta el recurso de un marcador.
-  // mode: "generate" | "regen" | "adjust". adjustment: texto (solo adjust).
-  function runGenerationForMarker(marker, statusEl, buttons, mode, adjustment) {
+  // Genera el recurso de un marcador.
+  // mode: "generate" (1ra vez, desde cero) | "adjust" (refina sobre lo previo,
+  // usando la instrucción de arriba) | "regen" (desde cero, solo prompt+stills).
+  function runGenerationForMarker(marker, statusEl, buttons, mode, onSuccess) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
     var segments = HPStore.getTranscript() || [];
     var markerTranscript = HPTranscript.sliceByRange(
-      segments,
-      marker.start,
-      marker.start + marker.duration
+      segments, marker.start, marker.start + marker.duration
     );
 
     var payload = {
@@ -426,7 +411,7 @@
       objective: HPStore.getObjective(),
       transcript: segments,
       marker: {
-        name: marker.name || "Marcador " + (marker.index + 1),
+        name: marker.name || markerKey,
         start: marker.start,
         end: marker.start + marker.duration,
         duration: marker.duration
@@ -438,13 +423,12 @@
       mode: mode
     };
 
-    if (mode === "adjust") {
-      payload.adjustment = adjustment || "";
-      payload.previousHtml = readLocalFile(htmlPathByMarker[markerKey]);
-    }
+    // "adjust" = refinar: la instrucción de arriba es el pedido; el motor lee
+    // el HTML de la última versión del disco como referencia.
+    if (mode === "adjust") payload.adjustment = data.instruction || "";
 
     var method = mode === "generate" ? "generate" : "feedback";
-    var verb = mode === "regen" ? "Regenerando" : mode === "adjust" ? "Ajustando" : "Generando";
+    var verb = mode === "regen" ? "Regenerando desde cero" : mode === "adjust" ? "Refinando" : "Generando";
 
     setButtonsDisabled(buttons, true);
     statusEl.textContent = verb + "… (puede tardar)";
@@ -452,10 +436,7 @@
 
     hpCall(method, payload)
       .then(function (res) {
-        if (!res || !res.ok) {
-          throw new Error(res && res.error ? res.error : "error desconocido");
-        }
-        if (res.htmlPath) htmlPathByMarker[markerKey] = res.htmlPath;
+        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
         statusEl.textContent = "Colocando en el timeline…";
         var movArg = JSON.stringify(res.movPath);
         csInterface.evalScript(
@@ -468,13 +449,14 @@
               statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
               statusEl.className = "marker-status is-error";
             }
+            HPStore.setMarkerGenerated(markerKey, true);
             setButtonsDisabled(buttons, false);
+            if (onSuccess) onSuccess();
           }
         );
       })
       .catch(function (err) {
-        var msg = err && err.message ? err.message : String(err);
-        statusEl.textContent = "Error: " + msg;
+        statusEl.textContent = "Error: " + (err && err.message ? err.message : String(err));
         statusEl.className = "marker-status is-error";
         setButtonsDisabled(buttons, false);
       });
@@ -484,92 +466,95 @@
     for (var i = 0; i < buttons.length; i++) buttons[i].disabled = disabled;
   }
 
+  // Tarjeta colapsable por marcador (compacta; escala a muchos marcadores).
   function createMarkerCard(marker) {
     var markerKey = markerKeyFor(marker);
 
-    var card = document.createElement("div");
+    var card = document.createElement("details");
     card.className = "marker-card";
 
-    var header = document.createElement("div");
-    header.className = "marker-header";
-
-    var name = document.createElement("div");
-    name.className = "marker-name";
-    // Nombre consecutivo, idéntico al de los archivos. Si el marcador tiene
-    // nombre propio en Premiere, lo mostramos como subtítulo aparte.
-    name.textContent = markerKeyFor(marker) + (marker.name ? " · " + marker.name : "");
-
-    var meta = document.createElement("div");
-    meta.className = "marker-meta";
-    meta.textContent = formatTime(marker.start) + " · " + marker.duration.toFixed(1) + " s";
-
-    header.appendChild(name);
-    header.appendChild(meta);
-    // El seek vive solo en la cabecera: los controles de abajo no lo disparan.
-    header.addEventListener("click", function () {
-      onHeaderClick(card, marker);
+    var summary = document.createElement("summary");
+    summary.className = "marker-summary";
+    var sName = document.createElement("span");
+    sName.className = "marker-name";
+    sName.textContent = markerKey + (marker.name ? " · " + marker.name : "");
+    var sMeta = document.createElement("span");
+    sMeta.className = "marker-meta";
+    sMeta.textContent = formatTime(marker.start) + " · " + marker.duration.toFixed(1) + "s";
+    var sBadge = document.createElement("span");
+    sBadge.className = "marker-badge";
+    summary.appendChild(sName);
+    summary.appendChild(sMeta);
+    summary.appendChild(sBadge);
+    // Al abrir/clicar el marcador, mover el playhead a ese punto.
+    summary.addEventListener("click", function () {
+      csInterface.evalScript("hp_seekToTime(" + marker.start + ")", function () {});
     });
-    card.appendChild(header);
+    card.appendChild(summary);
+
+    var body = document.createElement("div");
+    body.className = "marker-body";
 
     var instruction = document.createElement("textarea");
     instruction.className = "marker-instruction";
     instruction.placeholder = "¿Qué querés que haga la IA en este marcador?";
     instruction.value = HPStore.getMarkerData(markerKey).instruction;
-    instruction.addEventListener(
-      "input",
-      debounce(function () {
-        HPStore.setMarkerInstruction(markerKey, instruction.value);
-      }, DEBOUNCE_MS)
-    );
-    card.appendChild(instruction);
+    instruction.addEventListener("input", debounce(function () {
+      HPStore.setMarkerInstruction(markerKey, instruction.value);
+    }, DEBOUNCE_MS));
+    body.appendChild(instruction);
 
-    card.appendChild(createStillsControl(markerKey));
+    body.appendChild(createStillsControl(markerKey));
 
+    // Transcript del marcador: colapsado (la herramienta ya lo tiene, es solo referencia).
     var sliceEl = createTranscriptSlice(marker);
-    if (sliceEl) card.appendChild(sliceEl);
+    if (sliceEl) {
+      var tDetails = document.createElement("details");
+      tDetails.className = "transcript-details";
+      var tSum = document.createElement("summary");
+      tSum.textContent = "Ver transcript del marcador";
+      tDetails.appendChild(tSum);
+      tDetails.appendChild(sliceEl);
+      body.appendChild(tDetails);
+    }
 
-    // Acciones: Generar / Regenerar / Ajustar (llaman al puente y colocan el .mov).
     var actions = document.createElement("div");
     actions.className = "marker-actions";
-
     var genBtn = document.createElement("button");
     genBtn.type = "button";
     genBtn.className = "btn-generate";
-    genBtn.textContent = "Generar";
-
     var regenBtn = document.createElement("button");
     regenBtn.type = "button";
     regenBtn.className = "btn-secondary";
-    regenBtn.textContent = "Regenerar";
-
-    var adjustBtn = document.createElement("button");
-    adjustBtn.type = "button";
-    adjustBtn.className = "btn-secondary";
-    adjustBtn.textContent = "Ajustar";
-
+    regenBtn.textContent = "Regenerar desde cero";
     var status = document.createElement("div");
     status.className = "marker-status";
+    var buttons = [genBtn, regenBtn];
 
-    var buttons = [genBtn, regenBtn, adjustBtn];
+    // Refleja el estado: sin generar → solo "Generar"; ya generado → "Generar"
+    // (refina) + "Regenerar desde cero", y badge ✓.
+    function syncUI() {
+      var generated = HPStore.getMarkerData(markerKey).generated;
+      genBtn.textContent = generated ? "Generar (refinar)" : "Generar";
+      regenBtn.style.display = generated ? "" : "none";
+      sBadge.textContent = generated ? "✓" : "";
+    }
 
     genBtn.addEventListener("click", function () {
-      runGenerationForMarker(marker, status, buttons, "generate");
+      var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
+      runGenerationForMarker(marker, status, buttons, mode, syncUI);
     });
     regenBtn.addEventListener("click", function () {
-      runGenerationForMarker(marker, status, buttons, "regen");
-    });
-    adjustBtn.addEventListener("click", function () {
-      var adjustment = window.prompt("¿Qué ajuste querés? (ej. 'más lento', 'que el título aparezca al final')");
-      if (adjustment === null) return; // canceló
-      runGenerationForMarker(marker, status, buttons, "adjust", adjustment);
+      runGenerationForMarker(marker, status, buttons, "regen", syncUI);
     });
 
     actions.appendChild(genBtn);
     actions.appendChild(regenBtn);
-    actions.appendChild(adjustBtn);
-    card.appendChild(actions);
-    card.appendChild(status);
+    body.appendChild(actions);
+    body.appendChild(status);
+    card.appendChild(body);
 
+    syncUI();
     return card;
   }
 
