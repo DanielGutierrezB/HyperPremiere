@@ -913,7 +913,11 @@
     hpCall("listOllamaModels", base)
       .then(function (r) {
         if (r && r.ok && r.models && r.models.length) {
-          var list = r.models.map(function (m) { return { v: m, t: m }; });
+          var list = r.models.map(function (m) {
+            // Marcar los modelos con visión (pueden leer los stills).
+            var vision = /(-vl|vision|llava)/i.test(m);
+            return { v: m, t: m + (vision ? "  👁 visión" : "") };
+          });
           list.push({ v: "__custom__", t: "Otro (escribir ID)…" });
           MODELS["ollama"] = list;
           if (cfgProvider.value === "ollama") { populateModels("ollama", selected || effectiveModel()); applyProviderUI(); updateSummary(); }

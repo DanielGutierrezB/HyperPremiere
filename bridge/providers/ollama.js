@@ -75,6 +75,13 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   const raw = await res.text();
   if (!res.ok) {
+    // Error típico al mandar stills a un modelo sin visión (ej: qwen3-coder).
+    if (/multimodal/i.test(raw)) {
+      throw new Error(
+        `El modelo "${model}" no soporta imágenes. Elegí un modelo con visión ` +
+        `(ej: qwen3-vl:30b) o quitá los stills de este marcador.`
+      );
+    }
     throw new Error(`ollama: HTTP ${res.status}: ${raw.slice(0, 2000)}`);
   }
 
