@@ -766,22 +766,65 @@ textarea:focus {
 .editor-row { display: flex; align-items: center; gap: 8px; }
 .editor-row .hp-select { flex: 1; }
 .editor-row .btn-secondary { flex: none; }
-.html-editor-textarea {
+/* Editor de código con resaltado: <pre> coloreado + textarea transparente encima */
+.code-edit {
+  position: relative;
   width: 100%;
-  min-height: 180px;
+  height: 280px;
+  min-height: 140px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+  resize: vertical;
+}
+.code-edit .code-hl,
+.code-edit .code-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 0;
+  padding: 8px 10px;
   box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-primary);
-  background: var(--bg-inset);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  resize: vertical;
+  tab-size: 2;
   white-space: pre;
-  overflow: auto;
+  word-wrap: normal;
+}
+.code-edit .code-hl { z-index: 1; pointer-events: none; color: var(--text-primary); background: transparent; }
+.code-edit .code-hl code { font: inherit; white-space: pre; }
+.code-edit .code-input {
+  z-index: 2;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: transparent;
+  caret-color: #fff;
+  resize: none;
+  outline: none;
   user-select: text;
   -webkit-user-select: text;
 }
-.html-editor-textarea:focus { outline: none; border-color: var(--accent); }
+.code-edit.focus-within, .code-edit:focus-within { border-color: var(--accent); }
+.code-edit .code-input::selection { background: rgba(96,165,250,0.28); }
+
+/* Colores de sintaxis (Prism, tema oscuro propio) */
+.code-hl .token.comment { color: #5c6675; font-style: italic; }
+.code-hl .token.tag { color: #60a5fa; }
+.code-hl .token.tag .punctuation { color: #8b97a8; }
+.code-hl .token.attr-name { color: #7fd1b9; }
+.code-hl .token.attr-value,
+.code-hl .token.string { color: #e0b673; }
+.code-hl .token.punctuation { color: #8b97a8; }
+.code-hl .token.property { color: #7fb8fb; }
+.code-hl .token.selector { color: #c3e88d; }
+.code-hl .token.keyword { color: #c792ea; }
+.code-hl .token.function { color: #82aaff; }
+.code-hl .token.number { color: #f78c6c; }
+.code-hl .token.operator { color: #89ddff; background: transparent; }
+.code-hl .token.boolean,
+.code-hl .token.constant { color: #f78c6c; }

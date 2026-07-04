@@ -88,6 +88,58 @@
     };
   }
 
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Editor de código con resaltado de sintaxis: textarea transparente encima de
+  // un <pre> coloreado por Prism (sirve offline, sin CDN). Devuelve { el,
+  // getValue, setValue }. Resalta HTML + CSS + JS embebidos.
+  function makeCodeEditor() {
+    var box = document.createElement("div");
+    box.className = "code-edit";
+    var pre = document.createElement("pre");
+    pre.className = "code-hl";
+    pre.setAttribute("aria-hidden", "true");
+    var code = document.createElement("code");
+    pre.appendChild(code);
+    var input = document.createElement("textarea");
+    input.className = "code-input";
+    input.spellcheck = false;
+    box.appendChild(pre);
+    box.appendChild(input);
+
+    function paint() {
+      var src = input.value;
+      if (typeof Prism !== "undefined" && Prism.languages && Prism.languages.markup) {
+        // Newline final: Prism/pre necesita que la última línea tenga cierre.
+        code.innerHTML = Prism.highlight(src + "\n", Prism.languages.markup, "markup");
+      } else {
+        code.innerHTML = escapeHtml(src) + "\n";
+      }
+    }
+    function sync() { pre.scrollTop = input.scrollTop; pre.scrollLeft = input.scrollLeft; }
+
+    input.addEventListener("input", paint);
+    input.addEventListener("scroll", sync);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        var s = input.selectionStart, en = input.selectionEnd;
+        input.value = input.value.slice(0, s) + "  " + input.value.slice(en);
+        input.selectionStart = input.selectionEnd = s + 2;
+        paint();
+      }
+    });
+
+    return {
+      el: box,
+      getValue: function () { return input.value; },
+      setValue: function (v) { input.value = String(v == null ? "" : v); paint(); sync(); },
+      focus: function () { input.focus(); }
+    };
+  }
+
   function slug(text) {
     var s = String(text).toLowerCase();
     // Quitar acentos: NFD separa la letra base de su diacritico.
@@ -727,10 +779,7 @@
     verRow.appendChild(verMount);
     verRow.appendChild(openBtn);
 
-    var ta = document.createElement("textarea");
-    ta.className = "html-editor-textarea";
-    ta.spellcheck = false;
-    ta.setAttribute("placeholder", "Abrí una versión para editar su HTML…");
+    var codeEd = makeCodeEditor();
 
     var renderBtn = document.createElement("button");
     renderBtn.type = "button";
@@ -741,7 +790,7 @@
     eStatus.className = "marker-status";
 
     eBody.appendChild(verRow);
-    eBody.appendChild(ta);
+    eBody.appendChild(codeEd.el);
     eBody.appendChild(renderBtn);
     eBody.appendChild(eStatus);
     editor.appendChild(eBody);
@@ -771,13 +820,13 @@
       hpCall("readMarkerHtml", {
         projectPath: currentProjectPath, sequenceName: currentSequenceName, markerSlug: markerKey, version: v
       }).then(function (r) {
-        if (r && r.ok) { ta.value = r.html; eStatus.textContent = "v" + v + " cargada — editá y dale Render."; }
+        if (r && r.ok) { codeEd.setValue(r.html); eStatus.textContent = "v" + v + " cargada — editá y dale Render."; }
         else { eStatus.className = "marker-status is-error"; eStatus.textContent = "No se pudo abrir: " + ((r && r.error) || ""); }
       }).catch(function (e) { eStatus.className = "marker-status is-error"; eStatus.textContent = "Error: " + ((e && e.message) || ""); });
     });
 
     renderBtn.addEventListener("click", function () {
-      var html = ta.value.trim();
+      var html = codeEd.getValue().trim();
       if (!html) { eStatus.className = "marker-status is-error"; eStatus.textContent = "El HTML está vacío."; return; }
       renderBtn.disabled = true; openBtn.disabled = true;
       eStatus.textContent = ""; eStatus.className = "marker-status is-busy";
