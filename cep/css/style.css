@@ -663,6 +663,14 @@ textarea:focus {
 .cfg-summary.is-ok { color: #0ae98d; }
 .cfg-summary.is-warn { color: #fbbf24; }
 .cfg-row[data-hidden="true"] { display: none; }
+.provider-note {
+  font-size: 11px; line-height: 1.4; color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: var(--radius);
+  padding: 6px 8px; margin-top: 2px;
+}
+.provider-note[data-hidden="true"] { display: none; }
 .cfg-row { display: flex; flex-direction: column; gap: 6px; }
 #baseurl-hint { white-space: normal; line-height: 1.4; }
 

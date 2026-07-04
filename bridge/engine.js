@@ -240,7 +240,8 @@ async function runGeneration(body, mode, onProgress) {
 
   const provider = getProvider(config.provider);
   const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
-  report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' });
+  const localHint = config.provider === 'ollama' ? ' — modelo local, puede tardar varios minutos' : '';
+  report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' + localHint });
   function isValidComposition(h) {
     return h && /data-composition-id/.test(h) && /data-duration\s*=\s*["']?\s*[0-9.]*[1-9]/.test(h) && /__timelines/.test(h);
   }

@@ -12,7 +12,10 @@
 const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
-const DEFAULT_TIMEOUT_MS = 600_000; // modelos locales grandes: carga en frío + generación
+// Modelos locales grandes (30B/32B) en Apple Silicon: carga en frío + prompt
+// largo + generación de un HTML completo pueden irse a 15-20 min, sobre todo el
+// 32B denso. Damos 30 min para no cortar generaciones válidas.
+const DEFAULT_TIMEOUT_MS = 1_800_000;
 // Contexto amplio: el prompt (system + plantilla + transcript) + el HTML de salida
 // no entran en el num_ctx por defecto de Ollama (~4k), que cortaría el contrato.
 const NUM_CTX = 32768;

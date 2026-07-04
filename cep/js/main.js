@@ -1110,6 +1110,20 @@
     showRow("row-model-custom", cfgModelSel.value === "__custom__");
     var hintEl = document.getElementById("baseurl-hint");
     if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
+    // Aviso de lentitud para modelos locales.
+    var noteEl = document.getElementById("provider-note");
+    if (noteEl) {
+      if (p === "ollama") {
+        var m = effectiveModel();
+        var dense = /vl:32b|:32b|coder:30b|gemma4/i.test(m);
+        noteEl.textContent = "⏳ Modelo local: cada marcador puede tardar " +
+          (dense ? "10–20+ min (modelo denso/pesado)" : "2–4 min") +
+          ". No cierres el panel mientras genera.";
+        noteEl.setAttribute("data-hidden", "false");
+      } else {
+        noteEl.setAttribute("data-hidden", "true");
+      }
+    }
   }
 
   // Semáforo del resumen: verde si el proveedor está listo, aviso si falta algo.
