@@ -591,6 +591,15 @@
     body.appendChild(status);
     card.appendChild(body);
 
+    // Acordeón: al abrir esta tarjeta, colapsar las demás (ahorra pantalla).
+    card.addEventListener("toggle", function () {
+      if (!card.open) return;
+      var all = markersContainer.querySelectorAll("details.marker-card");
+      for (var i = 0; i < all.length; i++) {
+        if (all[i] !== card) all[i].open = false;
+      }
+    });
+
     syncUI();
     return card;
   }
