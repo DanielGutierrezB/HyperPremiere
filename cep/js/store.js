@@ -91,11 +91,12 @@
     var key = String(markerKey);
     var entry = state.markers[key];
     if (!entry || typeof entry !== 'object') {
-      entry = { instruction: '', stills: [] };
+      entry = { instruction: '', stills: [], resources: [] };
       state.markers[key] = entry;
     }
     if (typeof entry.instruction !== 'string') entry.instruction = '';
     if (!isArray(entry.stills)) entry.stills = [];
+    if (!isArray(entry.resources)) entry.resources = [];
     return entry;
   }
 
@@ -148,6 +149,7 @@
       return {
         instruction: typeof entry.instruction === 'string' ? entry.instruction : '',
         stills: isArray(entry.stills) ? entry.stills : [],
+        resources: isArray(entry.resources) ? entry.resources : [],
         generated: Boolean(entry.generated)
       };
     },
@@ -185,6 +187,68 @@
       }
       entry.stills.splice(i, 1);
       writeState(state);
+    },
+
+    /** Agrega un recurso de referencia { name, dataUrl, mediaType } al marcador. */
+    addMarkerResource: function (markerKey, resource) {
+      if (!resource || typeof resource.dataUrl !== 'string') return;
+      var state = readState();
+      var entry = ensureMarker(state, markerKey);
+      entry.resources.push({
+        name: String(resource.name || 'recurso'),
+        dataUrl: String(resource.dataUrl),
+        mediaType: String(resource.mediaType || '')
+      });
+      writeState(state);
+    },
+
+    /** Quita el recurso en `index` del marcador; ignora indices invalidos. */
+    removeMarkerResource: function (markerKey, index) {
+      var state = readState();
+      var entry = ensureMarker(state, markerKey);
+      var i = parseInt(index, 10);
+      if (isNaN(i) || i < 0 || i >= entry.resources.length) {
+        return;
+      }
+      entry.resources.splice(i, 1);
+      writeState(state);
+    },
+
+    // ── Uso de tokens de la sesión (GLOBAL, no por secuencia) ──────────
+    // Mide cuánto de la sesión de Claude se ha consumido en total.
+
+    getSessionUsage: function () {
+      var empty = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, generations: 0 };
+      try {
+        var raw = global.localStorage.getItem(STORAGE_PREFIX + 'session-usage');
+        if (!raw) return empty;
+        var u = JSON.parse(raw);
+        if (!u || typeof u !== 'object') return empty;
+        return {
+          inputTokens: Number(u.inputTokens) || 0,
+          outputTokens: Number(u.outputTokens) || 0,
+          cacheReadTokens: Number(u.cacheReadTokens) || 0,
+          costUsd: Number(u.costUsd) || 0,
+          generations: Number(u.generations) || 0
+        };
+      } catch (e) { return empty; }
+    },
+
+    /** Suma un uso de tokens al acumulado de la sesión. */
+    addSessionUsage: function (usage) {
+      if (!usage) return this.getSessionUsage();
+      var cur = this.getSessionUsage();
+      cur.inputTokens += Number(usage.inputTokens) || 0;
+      cur.outputTokens += Number(usage.outputTokens) || 0;
+      cur.cacheReadTokens += Number(usage.cacheReadTokens) || 0;
+      if (typeof usage.costUsd === 'number') cur.costUsd += usage.costUsd;
+      cur.generations += 1;
+      try { global.localStorage.setItem(STORAGE_PREFIX + 'session-usage', JSON.stringify(cur)); } catch (e) {}
+      return cur;
+    },
+
+    resetSessionUsage: function () {
+      try { global.localStorage.removeItem(STORAGE_PREFIX + 'session-usage'); } catch (e) {}
     },
 
     /** Estado completo del contexto activo (copia parseada). */

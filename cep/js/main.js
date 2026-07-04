@@ -44,7 +44,6 @@
     } catch (e) {}
   })();
 
-  var btnTestConnection = document.getElementById("btn-test-connection");
   var btnLoadMarkers = document.getElementById("btn-load-markers");
   var output = document.getElementById("output");
   var markersContainer = document.getElementById("markers");
@@ -225,18 +224,6 @@
   // Marcadores
   // ---------------------------------------------------------------------
 
-  function onTestConnection() {
-    setOutput("Consultando secuencia activa…", false);
-
-    csInterface.evalScript("hp_getActiveSequenceName()", function (result) {
-      if (result === undefined || result === null || result === "EvalScript error.") {
-        setOutput("Error al comunicarse con Premiere (EvalScript).", true);
-        return;
-      }
-      setOutput("Secuencia activa: " + result, false);
-    });
-  }
-
   function selectCard(card) {
     var cards = markersContainer.querySelectorAll(".marker-card");
     for (var i = 0; i < cards.length; i++) {
@@ -282,6 +269,67 @@
     }
   }
 
+  // Lista de recursos de referencia (PDFs, docs, etc.) del marcador.
+  function renderResources(container, markerKey) {
+    container.innerHTML = "";
+    var resources = HPStore.getMarkerData(markerKey).resources || [];
+    for (var i = 0; i < resources.length; i++) {
+      (function (index) {
+        var chip = document.createElement("div");
+        chip.className = "resource-chip";
+        var icon = document.createElement("span");
+        icon.className = "resource-icon";
+        icon.textContent = /pdf/i.test(resources[index].mediaType) ? "📄" : "📎";
+        var name = document.createElement("span");
+        name.className = "resource-name";
+        name.textContent = resources[index].name || "recurso";
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "resource-remove";
+        remove.textContent = "×";
+        remove.addEventListener("click", function () {
+          HPStore.removeMarkerResource(markerKey, index);
+          renderResources(container, markerKey);
+        });
+        chip.appendChild(icon);
+        chip.appendChild(name);
+        chip.appendChild(remove);
+        container.appendChild(chip);
+      })(i);
+    }
+  }
+
+  // Ingesta de una lista de File: imágenes → stills, el resto → recursos.
+  function ingestFiles(files, markerKey, thumbs, resList, statusEl) {
+    if (!files || !files.length) return;
+    var pending = files.length;
+    function done() {
+      pending--;
+      if (pending === 0) { renderStills(thumbs, markerKey); renderResources(resList, markerKey); }
+    }
+    for (var i = 0; i < files.length; i++) {
+      (function (file) {
+        var reader = new FileReader();
+        var isImage = /^image\//i.test(file.type) || /\.(png|jpe?g|webp|gif)$/i.test(file.name || "");
+        reader.onload = function () {
+          if (isImage) {
+            HPStore.addMarkerStill(markerKey, reader.result);
+          } else {
+            HPStore.addMarkerResource(markerKey, {
+              name: file.name || "recurso",
+              dataUrl: reader.result,
+              mediaType: file.type || ""
+            });
+          }
+          done();
+        };
+        reader.onerror = done;
+        reader.readAsDataURL(file);
+      })(files[i]);
+    }
+    if (statusEl) statusEl.textContent = "";
+  }
+
   function createStillsControl(markerKey) {
     var wrap = document.createElement("div");
     wrap.className = "marker-stills";
@@ -289,9 +337,13 @@
     var thumbs = document.createElement("div");
     thumbs.className = "still-thumbs";
 
+    var resList = document.createElement("div");
+    resList.className = "resource-list";
+
     var fileInput = document.createElement("input");
     fileInput.type = "file";
-    fileInput.accept = "image/*";
+    // Todo tipo de recursos: imágenes (stills) + PDFs/docs/referencias.
+    fileInput.accept = "image/*,application/pdf,.pdf,.txt,.md,.csv,.json,.doc,.docx";
     fileInput.multiple = true;
     fileInput.style.display = "none";
 
@@ -308,44 +360,33 @@
       captureProgramStill(markerKey, thumbs, captureBtn, stillStatus);
     });
 
-    // Secundario: subir un archivo de imagen.
-    var addBtn = document.createElement("button");
-    addBtn.type = "button";
-    addBtn.className = "btn-add-still-file";
-    addBtn.textContent = "…o subir archivo";
-    addBtn.addEventListener("click", function () {
-      fileInput.click();
+    // Zona drag & drop: al clicar abre el selector; al soltar, ingiere.
+    var drop = document.createElement("div");
+    drop.className = "dropzone";
+    drop.innerHTML = '<span class="dz-text">Arrastrá imágenes, PDFs o referencias aquí, o <u>hacé clic para elegir</u></span>';
+    drop.addEventListener("click", function () { fileInput.click(); });
+    drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("is-over"); });
+    drop.addEventListener("dragleave", function () { drop.classList.remove("is-over"); });
+    drop.addEventListener("drop", function (e) {
+      e.preventDefault();
+      drop.classList.remove("is-over");
+      var files = e.dataTransfer && e.dataTransfer.files;
+      ingestFiles(files, markerKey, thumbs, resList, stillStatus);
     });
 
     fileInput.addEventListener("change", function () {
-      var files = fileInput.files;
-      if (!files || !files.length) return;
-      var pending = files.length;
-
-      for (var i = 0; i < files.length; i++) {
-        (function (file) {
-          var reader = new FileReader();
-          reader.onload = function () {
-            HPStore.addMarkerStill(markerKey, reader.result);
-            pending--;
-            if (pending === 0) renderStills(thumbs, markerKey);
-          };
-          reader.onerror = function () {
-            pending--;
-            if (pending === 0) renderStills(thumbs, markerKey);
-          };
-          reader.readAsDataURL(file);
-        })(files[i]);
-      }
+      ingestFiles(fileInput.files, markerKey, thumbs, resList, stillStatus);
       fileInput.value = "";
     });
 
     wrap.appendChild(captureBtn);
-    wrap.appendChild(addBtn);
+    wrap.appendChild(drop);
     wrap.appendChild(fileInput);
     wrap.appendChild(stillStatus);
     wrap.appendChild(thumbs);
+    wrap.appendChild(resList);
     renderStills(thumbs, markerKey);
+    renderResources(resList, markerKey);
     return wrap;
   }
 
@@ -430,6 +471,7 @@
       markerTranscript: markerTranscript,
       instruction: data.instruction || "",
       stills: data.stills || [],
+      resources: data.resources || [],
       markerSlug: markerKey,
       mode: mode
     };
@@ -467,6 +509,10 @@
     return call
       .then(function (res) {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
+        // Contabilizar tokens de esta generación en el acumulado de la sesión.
+        var usg = res.usage || null;
+        if (usg) { HPStore.addSessionUsage(usg); updateSessionUsageBar(); }
+        var tokTxt = usg ? " · ↑" + usg.inputTokens + " ↓" + usg.outputTokens : "";
         onProgress({ pct: 98, msg: "Colocando en el timeline…" });
         return new Promise(function (resolvePlace) {
           var movArg = JSON.stringify(res.movPath);
@@ -474,7 +520,7 @@
             "hp_placeClip(" + movArg + ", " + marker.start + ", " + marker.duration + ")",
             function (place) {
               if (place === "ok") {
-                statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")";
+                statusEl.textContent = "✓ Listo y colocado (v" + res.version + ")" + tokTxt;
                 statusEl.className = "marker-status is-ok";
               } else {
                 statusEl.textContent = "Render OK, pero no se pudo colocar: " + place;
@@ -595,15 +641,50 @@
       return !!(HPStore.getMarkerData(markerKey).instruction || "").trim();
     };
 
+    var estimate = document.createElement("div");
+    estimate.className = "marker-estimate";
+
+    // Estima los tokens de entrada de este marcador (sin llamar al modelo).
+    function updateEstimate() {
+      var d = HPStore.getMarkerData(markerKey);
+      var segs = HPStore.getTranscript() || [];
+      var mt = HPTranscript.sliceByRange(segs, marker.start, marker.start + marker.duration);
+      var body = {
+        objective: HPStore.getObjective(),
+        transcript: segs,
+        marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
+        markerTranscript: mt,
+        instruction: d.instruction || "",
+        stills: d.stills || [],
+        resources: d.resources || []
+      };
+      hpCall("estimateTokens", body)
+        .then(function (r) {
+          if (r && r.ok) {
+            var extra = [];
+            if (r.breakdown && r.breakdown.images) extra.push(r.breakdown.images + " img");
+            if (r.breakdown && r.breakdown.resources) extra.push(r.breakdown.resources + " rec");
+            estimate.textContent = "≈ " + fmtTokens(r.inputTokensEst) + " tokens de entrada" + (extra.length ? " (" + extra.join(", ") + ")" : "");
+          }
+        })
+        .catch(function () {});
+    }
+    card._updateEstimate = updateEstimate;
+
+    // Recalcular el estimado cuando cambia la instrucción.
+    instruction.addEventListener("input", debounce(updateEstimate, DEBOUNCE_MS));
+
     actions.appendChild(genBtn);
     actions.appendChild(regenBtn);
     body.appendChild(actions);
+    body.appendChild(estimate);
     body.appendChild(status);
     card.appendChild(body);
 
     // Acordeón: al abrir esta tarjeta, colapsar las demás (ahorra pantalla).
     card.addEventListener("toggle", function () {
       if (!card.open) return;
+      updateEstimate();
       var all = markersContainer.querySelectorAll("details.marker-card");
       for (var i = 0; i < all.length; i++) {
         if (all[i] !== card) all[i].open = false;
@@ -625,7 +706,11 @@
     for (var i = 0; i < markers.length; i++) {
       markersContainer.appendChild(createMarkerCard(markers[i]));
     }
-    setOutput("Marcadores cargados: " + markers.length, false);
+    var seqTxt = currentSequenceName ? "Secuencia: " + currentSequenceName + "\n" : "";
+    setOutput(seqTxt + "Marcadores cargados: " + markers.length + " · estado guardado ✓", false);
+    // Flujo progresivo: al tener marcadores, colapsar contexto para dar aire.
+    var ctx = document.getElementById("context-section");
+    if (ctx && objectiveInput && objectiveInput.value.trim()) ctx.open = false;
   }
 
   function onLoadMarkers() {
@@ -668,55 +753,196 @@
 
   var cfgProvider = document.getElementById("cfg-provider");
   var cfgModel = document.getElementById("cfg-model");
+  var cfgModelCustom = document.getElementById("cfg-model-custom");
   var cfgApiKey = document.getElementById("cfg-apikey");
   var cfgBaseUrl = document.getElementById("cfg-baseurl");
   var btnSaveConfig = document.getElementById("btn-save-config");
   var configStatus = document.getElementById("config-status");
+  var cfgSummary = document.getElementById("cfg-summary");
+  var configSection = document.querySelector(".config-section");
 
-  function loadConfig() {
-    hpCall("getConfig")
-      .then(function (cfg) {
-        if (!cfg) return;
-        if (cfg.provider) cfgProvider.value = cfg.provider;
-        var m = cfg.model || "claude-sonnet-5";
-        cfgModel.value = m;
-        // Si el modelo guardado no está entre las opciones, lo agrego para que
-        // el editor siempre vea CUÁL tiene seleccionado.
-        if (cfgModel.value !== m) {
-          var opt = document.createElement("option");
-          opt.value = m; opt.textContent = m + " (personalizado)";
-          cfgModel.appendChild(opt);
-          cfgModel.value = m;
-        }
-        if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
-        if (cfg.apiKey) cfgApiKey.setAttribute("placeholder", "•••• (guardada)");
-        if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
-      })
-      .catch(function (e) {
-        if (configStatus) configStatus.textContent = (e && e.message) || "Motor no disponible";
-      });
+  var currentHasSession = false;
+
+  // Modelos compatibles por proveedor. Claude corre por CLI o API; los demás
+  // por API compatible (OpenAI/Gemini/OpenRouter) o local (Ollama).
+  var CLAUDE_MODELS = [
+    { v: "claude-sonnet-5", t: "Sonnet 5 — rápido (recomendado)" },
+    { v: "claude-opus-4-8", t: "Opus 4.8 — máxima calidad (lento)" },
+    { v: "claude-haiku-4-5-20251001", t: "Haiku 4.5 — el más rápido" },
+    { v: "claude-fable-5", t: "Fable 5" }
+  ];
+  var MODELS = {
+    "claude-cli": CLAUDE_MODELS,
+    "claude-api": CLAUDE_MODELS,
+    "openai-compat": [
+      { v: "gpt-4o", t: "OpenAI · GPT-4o" },
+      { v: "gpt-4o-mini", t: "OpenAI · GPT-4o mini" },
+      { v: "gemini-2.0-flash", t: "Google · Gemini 2.0 Flash" },
+      { v: "gemini-1.5-pro", t: "Google · Gemini 1.5 Pro" },
+      { v: "__custom__", t: "Otro (escribir ID)…" }
+    ],
+    "ollama": [
+      { v: "qwen3-coder:30b", t: "qwen3-coder:30b" },
+      { v: "llama3.2-vision", t: "llama3.2-vision (con imágenes)" },
+      { v: "__custom__", t: "Otro (escribir ID)…" }
+    ]
+  };
+  var PROVIDER_LABEL = {
+    "claude-cli": "Claude (suscripción)",
+    "claude-api": "Claude (API)",
+    "openai-compat": "API compatible",
+    "ollama": "Ollama local"
+  };
+  var BASEURL_HINT = {
+    "openai-compat": "OpenAI: https://api.openai.com/v1 · Gemini: https://generativelanguage.googleapis.com/v1beta/openai · OpenRouter: https://openrouter.ai/api/v1",
+    "ollama": "opcional — por defecto http://localhost:11434"
+  };
+
+  function showRow(id, show) {
+    var el = document.getElementById(id);
+    if (el) el.setAttribute("data-hidden", show ? "false" : "true");
   }
 
-  function saveConfig() {
-    var body = {
-      provider: cfgProvider.value,
-      model: cfgModel.value.trim()
-    };
+  // Rellena el <select> de modelos según el proveedor y marca el activo.
+  function populateModels(provider, selected) {
+    var list = MODELS[provider] || CLAUDE_MODELS;
+    cfgModel.innerHTML = "";
+    var matched = false;
+    for (var i = 0; i < list.length; i++) {
+      var opt = document.createElement("option");
+      opt.value = list[i].v; opt.textContent = list[i].t;
+      cfgModel.appendChild(opt);
+      if (list[i].v === selected) matched = true;
+    }
+    if (selected && !matched && provider !== "claude-cli" && provider !== "claude-api") {
+      // ID personalizado que no está en la lista → seleccionar "Otro" y precargar.
+      cfgModel.value = "__custom__";
+      if (cfgModelCustom) cfgModelCustom.value = selected;
+    } else if (matched) {
+      cfgModel.value = selected;
+    } else {
+      cfgModel.value = list[0].v;
+    }
+  }
+
+  // Modelo efectivo: el del <select>, o el texto libre si eligió "Otro".
+  function effectiveModel() {
+    if (cfgModel.value === "__custom__") return (cfgModelCustom.value || "").trim();
+    return cfgModel.value;
+  }
+
+  function modelLabel(id) {
+    for (var p in MODELS) {
+      for (var i = 0; i < MODELS[p].length; i++) {
+        if (MODELS[p][i].v === id) return MODELS[p][i].t.replace(/ —.*$/, "").replace(/\s*·.*$/, " ").trim() || id;
+      }
+    }
+    return id;
+  }
+
+  // Muestra/oculta campos según el proveedor y actualiza pistas.
+  function applyProviderUI() {
+    var p = cfgProvider.value;
+    showRow("row-login", p === "claude-cli");
+    showRow("row-apikey", p === "claude-api" || p === "openai-compat");
+    showRow("row-baseurl", p === "openai-compat" || p === "ollama");
+    showRow("row-model-custom", cfgModel.value === "__custom__");
+    var hintEl = document.getElementById("baseurl-hint");
+    if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
+  }
+
+  // Semáforo del resumen: verde si el proveedor está listo, aviso si falta algo.
+  function updateSummary() {
+    if (!cfgSummary) return;
+    var p = cfgProvider.value;
+    var model = effectiveModel();
+    var ok = true, warn = "";
+    if (p === "claude-cli" && !currentHasSession) { ok = false; warn = "iniciá sesión en Claude"; }
+    if (p === "claude-api" && !(cfgApiKey.value.trim() || cfgApiKey.getAttribute("data-has") === "1")) { ok = false; warn = "falta API key"; }
+    if (p === "openai-compat" && !cfgBaseUrl.value.trim()) { ok = false; warn = "falta Base URL"; }
+    if (!model) { ok = false; warn = "falta el modelo"; }
+    if (ok) {
+      cfgSummary.textContent = "✓ " + (PROVIDER_LABEL[p] || p) + " · " + modelLabel(model);
+      cfgSummary.className = "cfg-summary is-ok";
+    } else {
+      cfgSummary.textContent = "⚠ " + warn;
+      cfgSummary.className = "cfg-summary is-warn";
+    }
+    return ok;
+  }
+
+  function autoSave() {
+    var body = { provider: cfgProvider.value, model: effectiveModel() };
     if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
     if (cfgBaseUrl.value.trim()) body.baseUrl = cfgBaseUrl.value.trim();
-
+    if (!body.model) { updateSummary(); return; }
     configStatus.textContent = "Guardando…";
     hpCall("setConfig", body)
       .then(function () {
         configStatus.textContent = "✓ Guardado";
-        cfgApiKey.value = "";
+        if (cfgApiKey.value.trim()) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.value = ""; cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
+        updateSummary();
       })
       .catch(function (e) {
         configStatus.textContent = "Error al guardar: " + ((e && e.message) || "");
       });
   }
 
-  if (btnSaveConfig) btnSaveConfig.addEventListener("click", saveConfig);
+  function loadConfig() {
+    hpCall("getConfig")
+      .then(function (cfg) {
+        if (!cfg) return;
+        if (cfg.provider) cfgProvider.value = cfg.provider;
+        currentHasSession = Boolean(cfg.hasSession);
+        populateModels(cfgProvider.value, cfg.model || "claude-sonnet-5");
+        if (cfg.baseUrl) cfgBaseUrl.value = cfg.baseUrl;
+        if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
+        if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
+        applyProviderUI();
+        var ok = updateSummary();
+        // Si ya está bien configurado, arranca colapsado (flujo progresivo).
+        if (ok && configSection) configSection.open = false;
+      })
+      .catch(function (e) {
+        if (configStatus) configStatus.textContent = (e && e.message) || "Motor no disponible";
+      });
+  }
+
+  cfgProvider.addEventListener("change", function () {
+    populateModels(cfgProvider.value, effectiveModel());
+    applyProviderUI();
+    autoSave();
+  });
+  cfgModel.addEventListener("change", function () {
+    applyProviderUI();
+    autoSave();
+  });
+  if (cfgModelCustom) cfgModelCustom.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
+  if (cfgApiKey) cfgApiKey.addEventListener("input", function () { updateSummary(); });
+  if (cfgBaseUrl) cfgBaseUrl.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
+  if (btnSaveConfig) btnSaveConfig.addEventListener("click", autoSave);
+
+  // ── Contador de uso de la sesión (tokens) ───────────────────────────
+  var suValue = document.getElementById("su-value");
+  var suReset = document.getElementById("su-reset");
+  function fmtTokens(n) {
+    n = Number(n) || 0;
+    if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+    return String(n);
+  }
+  function updateSessionUsageBar() {
+    if (!suValue) return;
+    var u = HPStore.getSessionUsage();
+    var txt = "↑" + fmtTokens(u.inputTokens) + " ↓" + fmtTokens(u.outputTokens);
+    if (u.costUsd > 0) txt += " · $" + u.costUsd.toFixed(3);
+    if (u.generations) txt += " · " + u.generations + " gen";
+    suValue.textContent = txt;
+  }
+  if (suReset) suReset.addEventListener("click", function () {
+    HPStore.resetSessionUsage();
+    updateSessionUsageBar();
+  });
+  updateSessionUsageBar();
 
   // Actualización: muestra la versión y, al tocar, hace git pull y recarga.
   var btnUpdate = document.getElementById("btn-update");
@@ -766,6 +992,10 @@
           if (data && data.ok) {
             loginStatus.textContent = "✓ Sesión de Claude lista";
             cfgProvider.value = "claude-cli";
+            currentHasSession = true;
+            populateModels(cfgProvider.value, effectiveModel());
+            applyProviderUI();
+            autoSave();
           } else {
             loginStatus.textContent = "Error: " + ((data && data.error) || "desconocido");
           }
@@ -777,7 +1007,6 @@
     });
   }
 
-  btnTestConnection.addEventListener("click", onTestConnection);
   btnLoadMarkers.addEventListener("click", onLoadMarkers);
 
   // Generar todos los marcadores listos (con instrucción), en secuencia.
