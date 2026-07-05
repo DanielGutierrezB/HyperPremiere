@@ -523,6 +523,20 @@
     return el;
   }
 
+  // Clasifica un fallo: distingue "sin tokens / límite alcanzado" (reactivable
+  // cuando se reinicie el uso) del resto de errores. Detecta por el texto del
+  // error (los proveedores incluyen "HTTP 429", "usage limit", "quota", etc.).
+  function classifyFailure(err) {
+    var msg = (err && err.message) ? err.message : String(err || "");
+    var low = msg.toLowerCase();
+    var rate = /http 429|\b429\b|too many requests|rate[ _-]?limit|usage limit|limit reached|resets? at|quota|insufficient[_ ]?quota|credit balance|out of credit|billing|payment required|\b402\b|overloaded|\b529\b/.test(low);
+    return { rate: rate, msg: msg };
+  }
+  function shortenErr(msg) {
+    msg = String(msg || "").replace(/\s+/g, " ").trim();
+    return msg.length > 180 ? msg.slice(0, 180) + "…" : msg;
+  }
+
   // ── Cola global de generación/render ────────────────────────────────
   // Serial (uno a la vez → no revienta la RAM con varios renders), persiste
   // entre secuencias (vive en el JS del panel) y es visible desde cualquier
@@ -592,7 +606,13 @@
         job.status = "ready"; job.msg = "En espera de render…";
         modelBusy = false; emit(); pump();
       }).catch(function (err) {
-        job.status = "error"; job.msg = "Error: " + (err && err.message ? err.message : String(err));
+        var f = classifyFailure(err);
+        if (f.rate) {
+          job.status = "waiting"; job.pct = 0;
+          job.msg = "⏳ Sin tokens / límite alcanzado — esperá el reinicio y tocá ↻ Reactivar · " + shortenErr(f.msg);
+        } else {
+          job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
+        }
         modelBusy = false; emit(); pump();
       });
     }
@@ -608,7 +628,13 @@
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
         finishPlace(job, res);
       }).catch(function (err) {
-        job.status = "error"; job.msg = "Error: " + (err && err.message ? err.message : String(err));
+        var f = classifyFailure(err);
+        if (f.rate) {
+          job.status = "waiting"; job.pct = 0;
+          job.msg = "⏳ Sin tokens / límite alcanzado — esperá el reinicio y tocá ↻ Reactivar · " + shortenErr(f.msg);
+        } else {
+          job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
+        }
         renderBusy = false; emit(); pump();
       });
     }
@@ -684,6 +710,32 @@
         return false;
       },
       hasQueued: function () { for (var i = 0; i < jobs.length; i++) if (jobs[i].status === "queued") return true; return false; },
+      hasWaiting: function () { for (var i = 0; i < jobs.length; i++) if (jobs[i].status === "waiting") return true; return false; },
+      // Reencola un job que quedó "waiting" (sin tokens). Se usa cuando el uso
+      // ya se reinició. Vuelve a "queued" y arranca (respeta el pipeline).
+      reactivate: function (id) {
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          if (j.id === id && j.status === "waiting") {
+            j.status = "queued"; j.pct = 0; j.msg = "Reencolado, esperando turno…";
+            j.prepared = null; j._usageCounted = false;
+          }
+        }
+        paused = false; emit(); pump();
+      },
+      // Reencola TODOS los jobs "waiting" de una vez (o solo los de una secuencia
+      // si se pasa seqName). Devuelve cuántos reactivó.
+      reactivateAll: function (seqName) {
+        var n = 0;
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          if (j.status === "waiting" && (!seqName || j.seqName === seqName)) {
+            j.status = "queued"; j.pct = 0; j.msg = "Reencolado, esperando turno…";
+            j.prepared = null; j._usageCounted = false; n++;
+          }
+        }
+        paused = false; emit(); pump(); return n;
+      },
       on: function (cb) { subs.push(cb); },
       jobs: function () { return jobs; },
       latestFor: function (seqName, markerKey) {
@@ -715,12 +767,16 @@
         flatten(groups);
       },
       remove: function (id) {
-        jobs = jobs.filter(function (j) { return !(j.id === id && j.status === "queued"); });
+        jobs = jobs.filter(function (j) {
+          return !(j.id === id && (j.status === "queued" || j.status === "waiting" || j.status === "error"));
+        });
         emit();
       },
       clearFinished: function () {
+        // Conserva los activos, los en cola y los "waiting" (esos el usuario los
+        // quiere reactivar cuando tenga tokens); limpia solo done/error.
         jobs = jobs.filter(function (j) {
-          return j.status === "queued" || j.status === "modeling" || j.status === "ready" || j.status === "running";
+          return j.status === "queued" || j.status === "modeling" || j.status === "ready" || j.status === "running" || j.status === "waiting";
         });
         emit();
       }
@@ -803,13 +859,24 @@
     if (!panel) return;
     var scroller = document.getElementById("view-queue");
     var savedScroll = scroller ? scroller.scrollTop : 0;
-    var pending = 0, i;
-    for (i = 0; i < jobs.length; i++) { var st = jobs[i].status; if (st === "queued" || st === "modeling" || st === "ready" || st === "running") pending++; }
-    // Badge de la pestaña Cola.
+    var pending = 0, waiting = 0, i;
+    for (i = 0; i < jobs.length; i++) {
+      var st = jobs[i].status;
+      if (st === "queued" || st === "modeling" || st === "ready" || st === "running") pending++;
+      else if (st === "waiting") waiting++;
+    }
+    // Badge de la pestaña Cola (incluye los que esperan tokens para que se noten).
     var badge = document.getElementById("tab-queue-count");
     if (badge) {
-      if (pending) { badge.textContent = pending; badge.setAttribute("data-hidden", "false"); }
-      else { badge.setAttribute("data-hidden", "true"); }
+      var total = pending + waiting;
+      if (total) {
+        badge.textContent = waiting ? (total + " ⏳") : total;
+        badge.setAttribute("data-hidden", "false");
+        badge.className = "tab-badge" + (waiting ? " is-waiting" : "");
+      } else {
+        badge.setAttribute("data-hidden", "true");
+        badge.className = "tab-badge";
+      }
     }
     if (!jobs.length) {
       panel.innerHTML = '<div class="queue-empty">La cola está vacía. Encolá marcadores con “Enviar a la cola” o arrancá con “Generar”.</div>';
@@ -819,8 +886,17 @@
 
     var head = document.createElement("div"); head.className = "queue-head";
     var title = document.createElement("span");
-    title.textContent = "Cola" + (pending ? " · " + pending + " en proceso/espera" : " · sin pendientes");
+    title.textContent = "Cola" + (pending ? " · " + pending + " en proceso/espera" : " · sin pendientes")
+      + (waiting ? " · " + waiting + " esperando tokens ⏳" : "");
     head.appendChild(title);
+    // Reactivar todos: aparece cuando hay jobs pausados por falta de tokens.
+    if (waiting) {
+      var reactAll = document.createElement("button"); reactAll.type = "button"; reactAll.className = "queue-react";
+      reactAll.textContent = "↻ Reactivar todos (" + waiting + ")";
+      reactAll.title = "Reencola todo lo que quedó sin tokens (usalo cuando se reinicie tu uso)";
+      reactAll.addEventListener("click", function () { HPQueue.reactivateAll(); });
+      head.appendChild(reactAll);
+    }
     // Iniciar (si hay en espera y nada activo) / Pausar (si algo activo).
     if (HPQueue.hasActive()) {
       var pauseBtn = document.createElement("button"); pauseBtn.type = "button"; pauseBtn.className = "queue-clear";
@@ -874,7 +950,7 @@
         var row = document.createElement("div"); row.className = "queue-job is-" + j.status;
         var line = document.createElement("div"); line.className = "qj-line";
         var top = document.createElement("div"); top.className = "qj-title";
-        var dot = (j.status === "running") ? "▶ " : (j.status === "modeling") ? "✎ " : (j.status === "ready") ? "◔ " : (j.status === "queued") ? "• " : (j.status === "done") ? "✓ " : "⚠ ";
+        var dot = (j.status === "running") ? "▶ " : (j.status === "modeling") ? "✎ " : (j.status === "ready") ? "◔ " : (j.status === "queued") ? "• " : (j.status === "done") ? "✓ " : (j.status === "waiting") ? "⏳ " : "⚠ ";
         top.textContent = dot + j.label;
         line.appendChild(top);
         if (j.status === "queued") {
@@ -884,6 +960,13 @@
           jc.appendChild(iconBtn("✕", "Quitar de la cola", function () { HPQueue.remove(j.id); }));
           line.appendChild(jc);
           qIdx++;
+        } else if (j.status === "waiting") {
+          var wc = document.createElement("span"); wc.className = "qj-ctrls";
+          var rb = iconBtn("↻ Reactivar", "Reencolar este marcador (cuando tengas tokens de nuevo)", (function (id) { return function () { HPQueue.reactivate(id); }; })(j.id));
+          rb.className = "qbtn qbtn-react";
+          wc.appendChild(rb);
+          wc.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
+          line.appendChild(wc);
         }
         row.appendChild(line);
         var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
@@ -1052,6 +1135,12 @@
         status.className = "marker-status is-ok";
         status.textContent = job.msg || "✓ Listo";
         syncUI();
+      } else if (job.status === "waiting") {
+        // Sin tokens / límite alcanzado: se reactiva desde la pestaña Cola.
+        setButtonsDisabled(buttons, false);
+        status.className = "marker-status is-warn";
+        status.textContent = job.msg || "⏳ Sin tokens — reactivá desde la Cola cuando se reinicie tu uso";
+        sBadge.textContent = "⏳";
       } else if (job.status === "error") {
         setButtonsDisabled(buttons, false);
         status.className = "marker-status is-error";
@@ -1624,6 +1713,25 @@
   hpCall("getVersion").then(function (v) {
     if (versionLabel && v) versionLabel.textContent = "v" + v;
   }).catch(function () {});
+
+  // Aviso de actualización: al abrir el panel (y cada 30 min) consulta GitHub;
+  // si hay versión nueva, el botón ⟳ se resalta y avisa que puede actualizar.
+  function checkForUpdate() {
+    hpCall("checkUpdate").then(function (res) {
+      if (!btnUpdate) return;
+      if (res && res.ok && res.changed) {
+        btnUpdate.classList.add("has-update");
+        if (versionLabel) versionLabel.textContent = "v" + res.current + " → v" + res.remote;
+        btnUpdate.title = "¡Nueva versión v" + res.remote + " disponible en GitHub! Tocá para actualizar.";
+      } else {
+        btnUpdate.classList.remove("has-update");
+        if (res && res.ok && res.current && versionLabel) versionLabel.textContent = "v" + res.current;
+      }
+    }).catch(function () {});
+  }
+  checkForUpdate();
+  setInterval(checkForUpdate, 30 * 60 * 1000);
+
   if (btnUpdate) {
     btnUpdate.addEventListener("click", function () {
       btnUpdate.disabled = true;
@@ -1638,6 +1746,8 @@
               setTimeout(function () { window.location.reload(); }, 700);
             } else {
               btnUpdate.title = "Ya estás en la última (v" + res.version + ", igual a GitHub)";
+              btnUpdate.classList.remove("has-update");
+              if (versionLabel) versionLabel.textContent = "v" + res.version;
               if (icon) icon.classList.remove("spinning");
               btnUpdate.disabled = false;
             }

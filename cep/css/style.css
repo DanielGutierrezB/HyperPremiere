@@ -1084,3 +1084,31 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* En la pestaña, la cola ocupa todo (sin el look de "strip") */
 .queue-view .queue-panel { max-height: none; margin: 0; border: 0; background: transparent; box-shadow: none; padding: 12px 16px; }
 .queue-empty { color: var(--text-muted); font-size: 12px; text-align: center; padding: 28px 16px; line-height: 1.5; }
+
+/* v1.0.4 — jobs que quedaron sin tokens / límite alcanzado (reactivables) */
+.queue-job.is-waiting { border-left: 3px solid var(--warn); padding-left: 7px; }
+.queue-job.is-waiting .qj-title { color: var(--warn); }
+.marker-status.is-warn { color: var(--warn); }
+.tab-badge.is-waiting { background: var(--warn); color: #1a1400; }
+/* Botón "↻ Reactivar" por job y "Reactivar todos" en la cabecera de la cola */
+.qbtn-react { width: auto; font-size: 10px; color: var(--warn); border-color: rgba(251,191,36,0.45); padding: 2px 7px; letter-spacing: 0.02em; }
+.qbtn-react:hover { color: var(--warn); border-color: var(--warn); background: rgba(251,191,36,0.12); }
+.queue-react {
+  margin-left: auto; font: inherit; font-size: 11px; cursor: pointer;
+  background: rgba(251,191,36,0.12); color: var(--warn);
+  border: 1px solid rgba(251,191,36,0.5); border-radius: var(--radius-sm);
+  padding: 3px 10px;
+}
+.queue-react:hover { background: rgba(251,191,36,0.2); border-color: var(--warn); }
+
+/* v1.0.4 — aviso de versión nueva en GitHub (botón ⟳ resaltado) */
+.btn-update.has-update {
+  color: var(--warn); border-color: var(--warn);
+  background: rgba(251,191,36,0.12);
+  animation: hp-update-pulse 2s ease-in-out infinite;
+}
+.btn-update.has-update:hover { background: rgba(251,191,36,0.2); }
+@keyframes hp-update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(251,191,36,0); }
+}
