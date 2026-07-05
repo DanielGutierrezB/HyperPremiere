@@ -21,8 +21,8 @@
       <span id="hdr-status" class="hdr-chip is-idle" title="Estado de la secuencia">sin secuencia</span>
       <button id="btn-log" class="icon-btn" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log">⬇</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
-      <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.0.12</span>
+      <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
+        <span class="update-icon">⟳</span> <span id="version-label">v1.0.13</span>
       </button>
     </div>
   </header>
@@ -32,7 +32,7 @@
     <div class="help-card">
       <div class="help-head">
         <span>¿Cómo funciona?</span>
-        <button id="btn-help-close" class="icon-btn" type="button" aria-label="Cerrar">✕</button>
+        <button id="btn-help-close" class="icon-btn" type="button" title="Cerrar esta ayuda" aria-label="Cerrar">✕</button>
       </div>
       <div class="help-body">
         <p><strong>1. Cargá marcadores.</strong> Poné marcadores con duración en tu secuencia de Premiere y pulsá <em>Cargar marcadores</em>. Cada marcador se vuelve una tarjeta.</p>
@@ -48,11 +48,11 @@
   </div>
 
   <div class="actions">
-    <button id="btn-load-markers" type="button" class="btn-primary">
+    <button id="btn-load-markers" type="button" class="btn-primary" title="Lee los marcadores de la secuencia activa de Premiere y crea una tarjeta por cada uno">
       <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4h11l-2.6 4 2.6 4H6"/></svg>
       <span>Cargar marcadores</span>
     </button>
-    <button id="btn-generate-all" type="button">
+    <button id="btn-generate-all" type="button" title="Encola y procesa de una todos los marcadores que tengan instrucción">
       <svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13h5l-1 8 8-10h-5z"/></svg>
       <span>Generar listos</span>
     </button>
@@ -75,8 +75,8 @@
 
   <!-- Pestañas: vista de marcadores / vista de cola (para colas largas). -->
   <div class="tabs">
-    <button id="tab-markers" class="tab is-active" type="button">Marcadores</button>
-    <button id="tab-queue" class="tab" type="button">Cola <span id="tab-queue-count" class="tab-badge" data-hidden="true"></span></button>
+    <button id="tab-markers" class="tab is-active" type="button" title="Ver las tarjetas de los marcadores de la secuencia">Marcadores</button>
+    <button id="tab-queue" class="tab" type="button" title="Ver la cola de generación/render (en proceso, en espera y terminados)">Cola <span id="tab-queue-count" class="tab-badge" data-hidden="true"></span></button>
   </div>
 
   <main id="view-markers" class="panel-body">
@@ -90,7 +90,7 @@
         <label class="field-label" for="objective">Objetivo de la clase</label>
         <textarea id="objective" rows="3" placeholder="Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."></textarea>
         <div class="transcript-row">
-          <button id="btn-load-transcript" type="button">Cargar transcript (JSON)</button>
+          <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar transcript (JSON)</button>
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
         </div>
@@ -118,7 +118,7 @@
         </div>
 
         <div id="row-login" class="config-actions cfg-row">
-          <button id="btn-login-claude" type="button">Iniciar sesión en Claude</button>
+          <button id="btn-login-claude" type="button" title="Abre el navegador para autorizar tu cuenta de Claude; guarda el token solo (no hay que pegar nada)">Iniciar sesión en Claude</button>
           <span id="login-status" class="muted"></span>
         </div>
 
@@ -134,7 +134,7 @@
         </div>
 
         <div class="config-actions">
-          <button id="btn-save-config" type="button" class="btn-primary">Guardar</button>
+          <button id="btn-save-config" type="button" class="btn-primary" title="Guarda la configuración del modelo (proveedor, modelo y credenciales)">Guardar</button>
           <span id="config-status" class="muted"></span>
         </div>
       </div>

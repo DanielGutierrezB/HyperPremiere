@@ -502,6 +502,7 @@
         remove.type = "button";
         remove.className = "still-remove";
         remove.textContent = "x";
+        remove.title = "Quitar esta imagen del marcador";
         remove.addEventListener("click", function () {
           HPStore.removeMarkerStill(markerKey, index);
           renderStills(container, markerKey);
@@ -532,6 +533,7 @@
         remove.type = "button";
         remove.className = "resource-remove";
         remove.textContent = "×";
+        remove.title = "Quitar este recurso del marcador";
         remove.addEventListener("click", function () {
           HPStore.removeMarkerResource(markerKey, index);
           renderResources(container, markerKey);
@@ -597,6 +599,7 @@
     captureBtn.type = "button";
     captureBtn.className = "btn-add-still";
     captureBtn.textContent = "📸 Capturar del programa";
+    captureBtn.title = "Toma el frame actual del monitor de programa como imagen de referencia para este marcador";
 
     var stillStatus = document.createElement("div");
     stillStatus.className = "still-status";
@@ -1130,16 +1133,19 @@
     if (HPQueue.hasActive()) {
       var pauseBtn = document.createElement("button"); pauseBtn.type = "button"; pauseBtn.className = "queue-clear";
       pauseBtn.textContent = HPQueue.isPaused() ? "⏸ pausada" : "⏸ pausar";
+      pauseBtn.title = "Pausa la cola: no arranca nuevos jobs (el que corre termina)";
       pauseBtn.addEventListener("click", function () { HPQueue.pause(); });
       head.appendChild(pauseBtn);
     } else if (HPQueue.hasQueued()) {
       var startBtn = document.createElement("button"); startBtn.type = "button"; startBtn.className = "queue-start";
       startBtn.textContent = "▶ Iniciar cola";
+      startBtn.title = "Empieza a procesar los marcadores en espera, uno a la vez";
       startBtn.addEventListener("click", function () { HPQueue.start(); });
       head.appendChild(startBtn);
     }
     var clr = document.createElement("button"); clr.type = "button"; clr.className = "queue-clear";
     clr.textContent = "limpiar terminados";
+    clr.title = "Quita de la lista los jobs terminados y con error (conserva en cola, en proceso y los que esperan tokens)";
     clr.addEventListener("click", function () { HPQueue.clearFinished(); });
     head.appendChild(clr); panel.appendChild(head);
 
@@ -1341,6 +1347,7 @@
     regenBtn.type = "button";
     regenBtn.className = "btn-secondary";
     regenBtn.textContent = "Regenerar desde cero";
+    regenBtn.title = "Descarta lo anterior y crea una versión nueva solo con la instrucción y recursos actuales";
     var queueBtn = document.createElement("button");
     queueBtn.type = "button";
     queueBtn.className = "btn-secondary";
@@ -1355,6 +1362,9 @@
     function syncUI() {
       var generated = HPStore.getMarkerData(markerKey).generated;
       genBtn.textContent = generated ? "Generar (refinar)" : "Generar";
+      genBtn.title = generated
+        ? "Ajusta sobre la última versión usando tu nueva instrucción (mantiene lo que funciona)"
+        : "Genera el gráfico animado de este marcador con la IA y lo coloca en el timeline";
       regenBtn.style.display = generated ? "" : "none";
       sBadge.textContent = generated ? "✓" : "";
     }
@@ -1481,6 +1491,7 @@
     openBtn.type = "button";
     openBtn.className = "btn-secondary";
     openBtn.textContent = "Abrir";
+    openBtn.title = "Carga el HTML de la versión elegida en el editor para retocarlo a mano";
     verRow.appendChild(verMount);
     verRow.appendChild(openBtn);
 
@@ -1490,6 +1501,7 @@
     renderBtn.type = "button";
     renderBtn.className = "btn-generate";
     renderBtn.textContent = "Guardar y renderizar (nueva versión)";
+    renderBtn.title = "Renderiza el HTML editado como una versión nueva [manual], sin gastar IA, y la coloca en el timeline";
 
     var eStatus = document.createElement("div");
     eStatus.className = "marker-status";
