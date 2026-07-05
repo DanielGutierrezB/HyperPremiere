@@ -686,6 +686,39 @@ function engineStatus() {
 }
 // Corre `npm install` en bridge/ (trae hyperframes + su Chromium). Reporta
 // progreso por onProgress({ pct, msg }). Devuelve { ok } o { ok:false, error }.
+// Poda onnxruntime-node (~258 MB): hyperframes SOLO lo import()-a dinámicamente
+// dentro de "remove-background" (que HyperPremiere no usa) → el render nunca lo
+// toca. NO tocamos sharp: aunque también es import() dinámico y guardado por
+// try/catch, participa en rutas de captions/descripciones que podrían afectar el
+// resultado; 16 MB no valen ese riesgo. Devuelve MB liberados.
+function pruneUnusedEngineDeps() {
+  const nm = path.join(__dirname, 'node_modules');
+  const targets = ['onnxruntime-node'];
+  let freed = 0; const removed = [];
+  for (const t of targets) {
+    const dir = path.join(nm, t);
+    try {
+      if (!fs.existsSync(dir)) continue;
+      freed += dirSizeBytes(dir);
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(t);
+    } catch (e) {}
+  }
+  return { ok: true, removed, freedBytes: freed };
+}
+function dirSizeBytes(dir) {
+  let total = 0;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name);
+      let st; try { st = fs.lstatSync(p); } catch (e) { continue; }
+      if (st.isDirectory()) total += dirSizeBytes(p);
+      else total += st.size;
+    }
+  } catch (e) {}
+  return total;
+}
+
 function prepareEngine(_arg, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   return new Promise((resolve) => {
@@ -710,8 +743,12 @@ function prepareEngine(_arg, onProgress) {
     child.stderr.on('data', push);
     child.on('error', (e) => resolve({ ok: false, error: 'No se pudo ejecutar npm (¿Node instalado en el equipo?): ' + ((e && e.message) || e) }));
     child.on('close', (code) => {
-      if (code === 0 && engineDepsReady()) { report({ pct: 100, msg: 'Motor listo.' }); resolve({ ok: true }); }
-      else resolve({ ok: false, error: 'npm install terminó con código ' + code + '.\n' + tail.slice(-400) });
+      if (code === 0 && engineDepsReady()) {
+        report({ pct: 92, msg: 'Podando dependencias que no se usan…' });
+        var pr = pruneUnusedEngineDeps();
+        report({ pct: 100, msg: 'Motor listo (liberados ' + (pr.freedBytes / 1048576).toFixed(0) + ' MB no usados).' });
+        resolve({ ok: true, pruned: pr });
+      } else resolve({ ok: false, error: 'npm install terminó con código ' + code + '.\n' + tail.slice(-400) });
     });
   });
 }
@@ -757,6 +794,7 @@ module.exports = {
   cleanOldVersions,
   engineStatus,
   prepareEngine,
+  pruneUnusedEngineDeps,
   renderVersionHQ,
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   // Etapas separadas para el pipeline de la cola (solapar modelo/render):
