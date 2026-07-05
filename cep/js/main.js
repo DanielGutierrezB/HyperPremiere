@@ -3,6 +3,11 @@
 
   var DEBOUNCE_MS = 300;
 
+  // Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
+  // café (marrón) = borrador; magenta = procesado en alta calidad.
+  var HP_COLOR_BROWN = 14;
+  var HP_COLOR_MAGENTA = 11;
+
   // ── Log en memoria (para el botón "Descargar log") ──────────────────
   // Todo lo relevante (carga del motor, cola, errores) se escribe acá con
   // timestamp. El usuario lo baja a Descargas y nos lo manda ante una falla.
@@ -803,20 +808,33 @@
     function finishPlace(job, res) {
       job.version = res.version;
       if (res.usage && !job._usageCounted) { job.usage = res.usage; HPStore.addSessionUsage(res.usage); updateSessionUsageBar(); job._usageCounted = true; }
+      var seqArg = JSON.stringify(job.seqName);
+      function done(msgTxt) {
+        var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
+        var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
+        job.status = "done"; job.pct = 100;
+        job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur;
+        hpLog("Job DONE [" + job.label + "] v" + job.version + " · " + msgTxt + " · " + dur);
+        markGenerated(job);
+        renderBusy = false; emit(); pump();
+      }
+      // Render HQ = reemplazo en su lugar: el archivo ya se sobrescribió en disco;
+      // NO colocamos clip nuevo, solo recoloreamos el clip existente a MAGENTA.
+      if (res.replaced || job.kind === "renderVersionHQ") {
+        job.pct = 98; job.msg = "Marcando como HQ (magenta)…"; emit();
+        csInterface.evalScript(
+          "hp_recolorClipAt(" + seqArg + ", " + job.markerStart + ", " + HP_COLOR_MAGENTA + ")",
+          function (r) { done(r === "ok" ? "✓ HQ reemplazado (magenta)" : "HQ hecho; recoloreá a mano: " + r); }
+        );
+        return;
+      }
+      // Colocación normal: café si fue borrador, magenta si fue alta calidad.
+      var color = (job.payload && job.payload.draft) ? HP_COLOR_BROWN : HP_COLOR_MAGENTA;
       job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
-      var movArg = JSON.stringify(res.movPath), seqArg = JSON.stringify(job.seqName);
+      var movArg = JSON.stringify(res.movPath);
       csInterface.evalScript(
-        "hp_placeClipInSequence(" + movArg + ", " + seqArg + ", " + job.markerStart + ", " + job.markerDuration + ")",
-        function (place) {
-          var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
-          var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
-          job.status = "done"; job.pct = 100;
-          job.msg = (place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place) +
-            " (v" + job.version + ")" + tok + " · " + dur;
-          hpLog("Job DONE [" + job.label + "] v" + job.version + " · colocación=" + place + " · " + dur);
-          markGenerated(job);
-          renderBusy = false; emit(); pump();
-        }
+        "hp_placeClipInSequence(" + movArg + ", " + seqArg + ", " + job.markerStart + ", " + job.markerDuration + ", " + color + ")",
+        function (place) { done(place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place); }
       );
     }
     // Rehidrata lo pesado del payload (stills/transcript/recursos/objetivo) desde

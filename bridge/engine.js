@@ -626,18 +626,16 @@ async function renderVersionHQ(body, onProgress) {
 
   const withBackground = body.background === true;
   const videoExt = withBackground ? 'mp4' : 'mov';
-  const version = nextVersion(baseDir, markerSlug);
-  const outPaths = paths(baseDir, markerSlug, version, 'hq', videoExt);
+  // REEMPLAZAR en su lugar: renderizamos sobre el .mov de la ÚLTIMA versión (el
+  // que ya está en el timeline) en alta calidad. No creamos versión nueva; el
+  // panel recolorea el clip a magenta para marcar "procesado en HQ".
+  let movPath = versionFile(baseDir, markerSlug, latest, '.' + videoExt) ||
+    versionFile(baseDir, markerSlug, latest, '.mov') || versionFile(baseDir, markerSlug, latest, '.mp4');
+  if (!movPath) throw new Error('No se encontró el archivo de video de v' + latest + ' para reemplazar');
 
-  report({ pct: 30, msg: 'Render HQ (alta calidad) de v' + latest + '…' });
-  fs.writeFileSync(outPaths.html, html, 'utf8');
-  await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report, format: videoExt, quality: 'high' });
-  saveMeta(outPaths.meta, {
-    instruction: '(render HQ de v' + latest + ')', marker, version, model: 'hq', provider: 'hq',
-    mode: 'hq', background: withBackground, format: videoExt,
-    createdAt: new Date(Date.now()).toISOString(), history: [],
-  });
-  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, background: withBackground };
+  report({ pct: 30, msg: 'Render HQ (reemplazando v' + latest + ' en alta)…' });
+  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality: 'high' });
+  return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground, replaced: true };
 }
 
 // ── Preparación del motor (autocontenido) ───────────────────────────────

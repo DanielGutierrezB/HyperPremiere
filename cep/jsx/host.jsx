@@ -194,7 +194,9 @@ function hp_findSequenceByName(name) {
 // Coloca el .mov en una secuencia ESPECÍFICA (por nombre), aunque no sea la
 // activa — necesario para la cola: un trabajo de la secuencia A puede terminar
 // mientras el editor está en la secuencia B. Devuelve "ok" o "error: ...".
-function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec) {
+// Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
+// 11 = Magenta, 14 = Marrón (café). Ver hp_recolorClipAt / colorLabel.
+function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorLabel) {
     try {
         var active = app.project.activeSequence;
         var isActive = active && active.name === seqName;
@@ -241,7 +243,42 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec) {
         }
 
         target.overwriteClip(item, start);
+        // Color de etiqueta (café=borrador / magenta=HQ) sobre el projectItem.
+        try {
+            var cl = Number(colorLabel);
+            if (!isNaN(cl) && cl >= 0 && item.setColorLabel) item.setColorLabel(cl);
+        } catch (eColor) {}
         return "ok";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
+// Recolorea el clip de HyperPremiere que está en `atSeconds` (busca en las pistas
+// de video, de arriba hacia abajo, el clip cuyo inicio coincide). Sirve para
+// marcar como HQ (magenta) tras reemplazar el archivo, sin colocar un clip nuevo.
+// Devuelve "ok" o "error: ...".
+function hp_recolorClipAt(seqName, atSeconds, colorLabel) {
+    try {
+        var seq = (app.project.activeSequence && app.project.activeSequence.name === seqName)
+            ? app.project.activeSequence : hp_findSequenceByName(seqName);
+        if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\"";
+        var cl = Number(colorLabel);
+        if (isNaN(cl) || cl < 0) return "error: color inválido";
+        var start = Number(atSeconds) || 0;
+        var tol = 0.25; // tolerancia en segundos para ubicar el clip
+        var vTracks = seq.videoTracks;
+        for (var t = vTracks.numTracks - 1; t >= 0; t--) {
+            var track = vTracks[t];
+            for (var i = 0; i < track.clips.numItems; i++) {
+                var c = track.clips[i];
+                if (Math.abs(c.start.seconds - start) <= tol && c.projectItem && c.projectItem.setColorLabel) {
+                    c.projectItem.setColorLabel(cl);
+                    return "ok";
+                }
+            }
+        }
+        return "error: no se encontró un clip en " + start + "s";
     } catch (e) {
         return "error: " + e.toString();
     }
