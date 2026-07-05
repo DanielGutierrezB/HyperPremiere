@@ -163,8 +163,9 @@
 
   function downloadLog() {
     var text = buildLogText();
-    var stampFile = hpStamp().replace(/[:\s]/g, "-");
-    var fileName = "hyperpremiere-log-" + stampFile + ".md";
+    // Nombre único: Hyperpremiere_log_YYYY-MM-DD_HH-MM-SS.md
+    var stampFile = hpStamp().replace(/:/g, "-").replace(/\s/g, "_");
+    var fileName = "Hyperpremiere_log_" + stampFile + ".md";
     // 1) Vía Node fs → carpeta Descargas del usuario (lo más confiable en CEP).
     try {
       var r = HP_REQ || (typeof require === "function" ? require : null);
