@@ -987,6 +987,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .hdr-chip.is-ok { color: var(--ok); border-color: rgba(10, 233, 141, 0.4); background: rgba(10, 233, 141, 0.08); }
 .hdr-chip.is-error { color: var(--error); border-color: rgba(224, 138, 138, 0.45); background: rgba(224, 138, 138, 0.08); }
 .hdr-chip.is-idle { color: var(--text-muted); }
+.hdr-chip.is-warn { color: var(--warn); border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.10); }
 
 /* Botón de ícono cuadrado (? y ✕) — no estira como los demás */
 .icon-btn {
@@ -1088,6 +1089,18 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* v1.0.4 — jobs que quedaron sin tokens / límite alcanzado (reactivables) */
 .queue-job.is-waiting { border-left: 3px solid var(--warn); padding-left: 7px; }
 .queue-job.is-waiting .qj-title { color: var(--warn); }
+/* Banner de preparación del motor (1ª corrida en instalación limpia) */
+.engine-prep[data-hidden="true"] { display: none; }
+.engine-prep {
+  margin: 8px 0; padding: 10px 12px; border-radius: 8px;
+  background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.35);
+}
+.engine-prep .ep-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.engine-prep .ep-text { font-size: 12px; color: var(--text-primary); }
+.engine-prep .ep-msg { margin-top: 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.engine-prep .hp-bar { margin-top: 8px; }
+.engine-prep .hp-bar[data-hidden="true"] { display: none; }
+
 /* Caja de feedback inline en un job terminado */
 .qj-feedback { display: flex; gap: 6px; align-items: flex-end; margin-top: 5px; }
 .qj-fb-input {

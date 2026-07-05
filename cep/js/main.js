@@ -217,6 +217,14 @@
       return Promise.reject(e);
     }
   }
+  // Igual que hpCall pero pasa un callback de progreso (para prepareEngine, etc.).
+  function hpCallProg(method, arg, prog) {
+    if (!HP_ENGINE || typeof HP_ENGINE[method] !== "function") {
+      return Promise.reject(new Error(engineErrMsg()));
+    }
+    try { return Promise.resolve(HP_ENGINE[method](arg, prog)); }
+    catch (e) { return Promise.reject(e); }
+  }
 
   var csInterface = new CSInterface();
 
@@ -2279,5 +2287,54 @@
   } else {
     setHeaderStatus("motor OK", "ok");
     hpLog("Panel listo — motor OK desde " + ENGINE_PATH);
+    checkEngineDeps();
+  }
+
+  // ── Preparación del motor (autocontenido, 1ª corrida) ───────────────
+  // Si el código del motor cargó pero faltan sus dependencias (instalación
+  // limpia del ZXP), mostramos el banner para instalarlas una sola vez.
+  var epBanner = document.getElementById("engine-prep");
+  var epMsg = document.getElementById("ep-msg");
+  var epProg = document.getElementById("ep-progress");
+  var epFill = document.getElementById("ep-fill");
+  var btnPrepare = document.getElementById("btn-prepare-engine");
+  function showEnginePrep(show) { if (epBanner) epBanner.setAttribute("data-hidden", show ? "false" : "true"); }
+  function checkEngineDeps() {
+    hpCall("engineStatus").then(function (st) {
+      if (st && st.ok && st.depsReady === false) {
+        hpLog("Motor SIN dependencias (instalación limpia) — mostrando 'Preparar motor'.", "WARN");
+        showEnginePrep(true);
+        setHeaderStatus("preparar motor", "warn");
+      } else {
+        showEnginePrep(false);
+      }
+    }).catch(function () {});
+  }
+  if (btnPrepare) {
+    btnPrepare.addEventListener("click", function () {
+      btnPrepare.disabled = true;
+      if (epProg) epProg.setAttribute("data-hidden", "false");
+      if (epMsg) epMsg.textContent = "Preparando…";
+      hpLog("Usuario tocó 'Preparar motor'.");
+      hpCallProg("prepareEngine", null, function (p) {
+        if (!p) return;
+        if (typeof p.pct === "number" && epFill) epFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+        if (p.msg && epMsg) epMsg.textContent = p.msg;
+      }).then(function (res) {
+        if (res && res.ok) {
+          if (epFill) epFill.style.width = "100%";
+          if (epMsg) epMsg.textContent = "✓ Motor listo.";
+          hpLog("Motor preparado OK.");
+          setHeaderStatus("motor OK", "ok");
+          setTimeout(function () { showEnginePrep(false); }, 1500);
+        } else {
+          throw new Error((res && res.error) || "falló la preparación");
+        }
+      }).catch(function (e) {
+        if (epMsg) epMsg.textContent = "Error: " + ((e && e.message) || "no se pudo preparar");
+        hpLog("prepareEngine falló: " + ((e && e.message) || e), "ERROR");
+        btnPrepare.disabled = false;
+      });
+    });
   }
 })();

@@ -640,6 +640,51 @@ async function renderVersionHQ(body, onProgress) {
   return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, background: withBackground };
 }
 
+// ── Preparación del motor (autocontenido) ───────────────────────────────
+// El ZXP trae el CÓDIGO del motor (bridge/) pero NO node_modules (410 MB,
+// binarios nativos por plataforma). En la 1ª corrida de una instalación limpia
+// instalamos las deps una sola vez con el npm del sistema, dentro de bridge/.
+function engineDepsReady() {
+  try {
+    const bin = path.join(__dirname, 'node_modules', '.bin', IS_WIN ? 'hyperframes.cmd' : 'hyperframes');
+    return fs.existsSync(bin);
+  } catch (e) { return false; }
+}
+function engineStatus() {
+  return { ok: true, depsReady: engineDepsReady(), bridgeDir: __dirname, platform: process.platform };
+}
+// Corre `npm install` en bridge/ (trae hyperframes + su Chromium). Reporta
+// progreso por onProgress({ pct, msg }). Devuelve { ok } o { ok:false, error }.
+function prepareEngine(_arg, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
+  return new Promise((resolve) => {
+    if (engineDepsReady()) { resolve({ ok: true, alreadyReady: true }); return; }
+    const { spawn } = require('child_process');
+    report({ pct: 4, msg: 'Instalando el motor (una sola vez, puede tardar varios minutos)…' });
+    let child;
+    try {
+      child = spawn('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'],
+        { cwd: __dirname, shell: IS_WIN, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      resolve({ ok: false, error: 'No se pudo ejecutar npm (¿Node instalado?): ' + ((e && e.message) || e) });
+      return;
+    }
+    let tail = '';
+    function push(chunk) {
+      const s = String(chunk); tail = (tail + s).slice(-2000);
+      const line = s.split('\n').map((l) => l.trim()).filter(Boolean).pop();
+      if (line) report({ msg: line.slice(0, 140) });
+    }
+    child.stdout.on('data', push);
+    child.stderr.on('data', push);
+    child.on('error', (e) => resolve({ ok: false, error: 'No se pudo ejecutar npm (¿Node instalado en el equipo?): ' + ((e && e.message) || e) }));
+    child.on('close', (code) => {
+      if (code === 0 && engineDepsReady()) { report({ pct: 100, msg: 'Motor listo.' }); resolve({ ok: true }); }
+      else resolve({ ok: false, error: 'npm install terminó con código ' + code + '.\n' + tail.slice(-400) });
+    });
+  });
+}
+
 // ── Persistencia de la cola por proyecto ────────────────────────────────
 // Guardamos la cola (liviana) en "<dir .prproj>/HyperPremiere/queue.json" para
 // que al reabrir el proyecto se recargue lo que había. Si el proyecto no está
@@ -678,6 +723,8 @@ module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
   saveQueue,
   loadQueue,
+  engineStatus,
+  prepareEngine,
   renderVersionHQ,
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   // Etapas separadas para el pipeline de la cola (solapar modelo/render):
