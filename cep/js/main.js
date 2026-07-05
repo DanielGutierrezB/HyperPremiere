@@ -129,23 +129,42 @@
   // Descargas. Funciona aunque el motor NO haya cargado (usa fs directo o, si no
   // hay Node, un blob de descarga del navegador).
   function buildLogText() {
-    var head = [];
-    head.push("HyperPremiere — log de diagnóstico");
-    head.push("Generado: " + hpStamp());
-    try { head.push("Versión panel: " + (document.getElementById("version-label") ? document.getElementById("version-label").textContent : "?")); } catch (e) {}
-    head.push("Motor cargado: " + (HP_ENGINE ? "SÍ (" + ENGINE_PATH + ")" : "NO"));
-    if (HP_ENGINE_ERR) head.push("Motor error: " + HP_ENGINE_ERR.replace(/\n/g, "\n  "));
-    try { head.push("UserAgent: " + navigator.userAgent); } catch (e) {}
-    try { head.push("Plataforma: " + (typeof process !== "undefined" && process.platform ? process.platform : "?")); } catch (e) {}
-    head.push("Entradas de log: " + HP_LOG.length);
-    head.push("".padEnd ? "".padEnd(60, "─") : "------------------------------------------------------------");
-    return head.join("\n") + "\n" + HP_LOG.join("\n") + "\n";
+    var version = "?";
+    try { version = document.getElementById("version-label") ? document.getElementById("version-label").textContent : "?"; } catch (e) {}
+    var ua = "?"; try { ua = navigator.userAgent; } catch (e) {}
+    var plat = "?"; try { plat = (typeof process !== "undefined" && process.platform) ? process.platform : "?"; } catch (e) {}
+    var md = [];
+    md.push("# HyperPremiere — log de diagnóstico");
+    md.push("");
+    md.push("- **Generado:** " + hpStamp());
+    md.push("- **Versión panel:** " + version);
+    md.push("- **Motor cargado:** " + (HP_ENGINE ? "✅ SÍ" : "❌ NO"));
+    if (HP_ENGINE) md.push("- **Ruta del motor:** `" + ENGINE_PATH + "`");
+    md.push("- **Plataforma:** " + plat);
+    md.push("- **Entradas de log:** " + HP_LOG.length);
+    md.push("- **UserAgent:** " + ua);
+    if (HP_ENGINE_ERR) {
+      md.push("");
+      md.push("## Error del motor");
+      md.push("");
+      md.push("```");
+      md.push(HP_ENGINE_ERR);
+      md.push("```");
+    }
+    md.push("");
+    md.push("## Entradas");
+    md.push("");
+    md.push("```log");
+    md.push(HP_LOG.join("\n"));
+    md.push("```");
+    md.push("");
+    return md.join("\n");
   }
 
   function downloadLog() {
     var text = buildLogText();
     var stampFile = hpStamp().replace(/[:\s]/g, "-");
-    var fileName = "hyperpremiere-log-" + stampFile + ".txt";
+    var fileName = "hyperpremiere-log-" + stampFile + ".md";
     // 1) Vía Node fs → carpeta Descargas del usuario (lo más confiable en CEP).
     try {
       var r = HP_REQ || (typeof require === "function" ? require : null);
@@ -165,7 +184,7 @@
     }
     // 2) Fallback: blob + <a download> (si el panel lo permite).
     try {
-      var blob = new Blob([text], { type: "text/plain" });
+      var blob = new Blob([text], { type: "text/markdown" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url; a.download = fileName;
