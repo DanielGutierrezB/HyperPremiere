@@ -3,6 +3,28 @@
 
   var DEBOUNCE_MS = 300;
 
+  // ── Log en memoria (para el botón "Descargar log") ──────────────────
+  // Todo lo relevante (carga del motor, cola, errores) se escribe acá con
+  // timestamp. El usuario lo baja a Descargas y nos lo manda ante una falla.
+  var HP_LOG = [];
+  var HP_LOG_MAX = 5000;
+  var HP_REQ = null; // require de Node capturado por loadEngine (para escribir el archivo).
+  function hpPad(n) { return n < 10 ? "0" + n : "" + n; }
+  function hpStamp() {
+    try {
+      var d = new Date();
+      return d.getFullYear() + "-" + hpPad(d.getMonth() + 1) + "-" + hpPad(d.getDate()) + " " +
+        hpPad(d.getHours()) + ":" + hpPad(d.getMinutes()) + ":" + hpPad(d.getSeconds());
+    } catch (e) { return "?"; }
+  }
+  function hpLog(msg, level) {
+    var line = "[" + hpStamp() + "]" + (level ? " [" + level + "]" : "") + " " + msg;
+    HP_LOG.push(line);
+    if (HP_LOG.length > HP_LOG_MAX) HP_LOG.shift();
+    try { if (typeof console !== "undefined" && console.log) console.log("[HyperPremiere]", msg); } catch (e) {}
+  }
+  hpLog("Panel iniciando…");
+
   // Motor "todo en uno": corre dentro del panel vía Node (CEP --enable-nodejs).
   // La ruta se deriva de la carpeta de la extensión (cross-platform: mac/Windows),
   // el bridge vive en <extensión>/../bridge. Fallback dev por si CEP no la da.
@@ -13,14 +35,17 @@
   var ENGINE_PATH = "/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/bridge/engine.js";
   (function loadEngine() {
     try {
+      hpLog("loadEngine: buscando motor Node…");
       var req = (typeof window !== "undefined" && window.cep_node && window.cep_node.require)
         ? window.cep_node.require
         : (typeof require === "function" ? require : null);
+      HP_REQ = req;
       if (!req) {
         // Node no está habilitado en el panel: --enable-nodejs no tomó efecto.
         HP_ENGINE_ERR = "Node NO está habilitado en el panel (no hay require ni window.cep_node). " +
           "Revisá que el manifest tenga --enable-nodejs y reiniciá Premiere. " +
           "typeof require=" + (typeof require) + ", cep_node=" + (typeof window !== "undefined" && !!window.cep_node);
+        hpLog(HP_ENGINE_ERR, "ERROR");
         return;
       }
       // fs para calcular el realpath del symlink (probamos ambos requires: en
@@ -50,6 +75,7 @@
         }
       } catch (e) {}
       candidates.push(ENGINE_PATH); // fallback dev (repo de Daniel)
+      hpLog("loadEngine: fs=" + (!!_fs) + " · candidatas:\n  " + candidates.join("\n  "));
 
       // Vaciar cache del bridge para que ⟳ traiga cambios del motor.
       try {
@@ -68,22 +94,88 @@
         if (!cand) continue;
         try {
           var mod = req(cand);
-          if (mod) { HP_ENGINE = mod; ENGINE_PATH = cand; }
+          if (mod) { HP_ENGINE = mod; ENGINE_PATH = cand; hpLog("loadEngine: ✓ motor cargado desde " + cand); }
         } catch (e) {
           errors.push(cand + "  →  " + (e && (e.message || e)));
+          hpLog("loadEngine: ✗ " + cand + " → " + (e && (e.message || e)), "WARN");
         }
       }
       if (!HP_ENGINE) {
         HP_ENGINE_ERR = "No pude cargar el motor. Rutas probadas:\n- " + errors.join("\n- ");
+        hpLog(HP_ENGINE_ERR, "ERROR");
       }
     } catch (e) {
       HP_ENGINE = null;
       // Capturar la causa REAL (stack completo) para no andar adivinando.
       var detail = (e && (e.stack || e.message)) ? String(e.stack || e.message) : String(e);
       HP_ENGINE_ERR = "El motor falló al cargar (loadEngine).\n" + detail;
+      hpLog(HP_ENGINE_ERR, "ERROR");
       try { if (typeof console !== "undefined" && console.error) console.error("[HyperPremiere] loadEngine:", e); } catch (e2) {}
     }
   })();
+
+  // Handler global de errores no atrapados → al log (así el botón los captura).
+  try {
+    window.addEventListener("error", function (ev) {
+      hpLog("window.onerror: " + (ev && ev.message) + " @ " + (ev && ev.filename) + ":" + (ev && ev.lineno), "ERROR");
+    });
+    window.addEventListener("unhandledrejection", function (ev) {
+      var r = ev && ev.reason;
+      hpLog("promesa sin atrapar: " + (r && (r.stack || r.message) ? (r.stack || r.message) : r), "ERROR");
+    });
+  } catch (e) {}
+
+  // Construye el texto del log (encabezado con contexto + entradas) y lo baja a
+  // Descargas. Funciona aunque el motor NO haya cargado (usa fs directo o, si no
+  // hay Node, un blob de descarga del navegador).
+  function buildLogText() {
+    var head = [];
+    head.push("HyperPremiere — log de diagnóstico");
+    head.push("Generado: " + hpStamp());
+    try { head.push("Versión panel: " + (document.getElementById("version-label") ? document.getElementById("version-label").textContent : "?")); } catch (e) {}
+    head.push("Motor cargado: " + (HP_ENGINE ? "SÍ (" + ENGINE_PATH + ")" : "NO"));
+    if (HP_ENGINE_ERR) head.push("Motor error: " + HP_ENGINE_ERR.replace(/\n/g, "\n  "));
+    try { head.push("UserAgent: " + navigator.userAgent); } catch (e) {}
+    try { head.push("Plataforma: " + (typeof process !== "undefined" && process.platform ? process.platform : "?")); } catch (e) {}
+    head.push("Entradas de log: " + HP_LOG.length);
+    head.push("".padEnd ? "".padEnd(60, "─") : "------------------------------------------------------------");
+    return head.join("\n") + "\n" + HP_LOG.join("\n") + "\n";
+  }
+
+  function downloadLog() {
+    var text = buildLogText();
+    var stampFile = hpStamp().replace(/[:\s]/g, "-");
+    var fileName = "hyperpremiere-log-" + stampFile + ".txt";
+    // 1) Vía Node fs → carpeta Descargas del usuario (lo más confiable en CEP).
+    try {
+      var r = HP_REQ || (typeof require === "function" ? require : null);
+      if (r) {
+        var fs = r("fs"), os = r("os"), path = r("path");
+        if (fs && os && path) {
+          var dl = path.join(os.homedir(), "Downloads");
+          try { if (fs.existsSync && !fs.existsSync(dl)) dl = os.homedir(); } catch (e) { dl = os.homedir(); }
+          var outPath = path.join(dl, fileName);
+          fs.writeFileSync(outPath, text, "utf8");
+          hpLog("Log descargado en " + outPath);
+          return { ok: true, path: outPath };
+        }
+      }
+    } catch (e) {
+      hpLog("downloadLog: fs falló (" + (e && e.message) + "), intento blob", "WARN");
+    }
+    // 2) Fallback: blob + <a download> (si el panel lo permite).
+    try {
+      var blob = new Blob([text], { type: "text/plain" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = fileName;
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+      return { ok: true, path: "(descarga del navegador: " + fileName + ")" };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || "no se pudo descargar" };
+    }
+  }
 
   // Mensaje de error del motor: real si lo tenemos, genérico si no.
   function engineErrMsg() {
@@ -235,6 +327,7 @@
   var currentSequenceName = "";
   // Proveedor local (Ollama): la cola NO solapa modelo+render (ambos usan la máquina).
   var currentProviderIsLocal = false;
+  var currentModelName = ""; // para el log de diagnóstico
   // Modo borrador (render rápido, menor calidad) — preferencia global de sesión.
   var draftMode = false;
   try { draftMode = window.localStorage.getItem("hyperpremiere::draft") === "1"; } catch (e) {}
@@ -646,6 +739,7 @@
           job.status = "done"; job.pct = 100;
           job.msg = (place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place) +
             " (v" + job.version + ")" + tok + " · " + dur;
+          hpLog("Job DONE [" + job.label + "] v" + job.version + " · colocación=" + place + " · " + dur);
           markGenerated(job);
           renderBusy = false; emit(); pump();
         }
@@ -654,11 +748,13 @@
     function startModel(job) {
       modelBusy = true; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now(); emit();
       var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
+      hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (currentModelName || "?"));
       callEngine(method, job.payload, onP(job)).then(function (prep) {
         if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
         job.prepared = prep;
         if (prep.usage) { job.usage = prep.usage; HPStore.addSessionUsage(prep.usage); updateSessionUsageBar(); job._usageCounted = true; }
         job.status = "ready"; job.msg = "En espera de render…";
+        hpLog("Job MODELO ok [" + job.label + "] → listo para render");
         modelBusy = false; emit(); pump();
       }).catch(function (err) {
         var f = classifyFailure(err);
@@ -668,12 +764,14 @@
         } else {
           job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
         }
+        hpLog("Job MODELO FALLÓ [" + job.label + "] · rate=" + !!f.rate + " · " + f.msg, "ERROR");
         modelBusy = false; emit(); pump();
       });
     }
     function startRender(job) {
       renderBusy = true; job.status = "running"; if (!job.startedAt) job.startedAt = Date.now();
       job.msg = "Renderizando…"; emit();
+      hpLog("Job RENDER [" + job.label + "] · kind=" + job.kind);
       var p = (job.kind === "renderManualHtml")
         ? callEngine("renderManualHtml", job.payload, onP(job))
         : (job.kind === "renderVersionHQ")
@@ -690,6 +788,7 @@
         } else {
           job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
         }
+        hpLog("Job RENDER FALLÓ [" + job.label + "] · rate=" + !!f.rate + " · " + f.msg, "ERROR");
         renderBusy = false; emit(); pump();
       });
     }
@@ -742,6 +841,7 @@
       job.id = "j" + (++counter);
       job.status = "queued"; job.pct = 0; job.msg = "En cola…";
       jobs.push(job);
+      hpLog("Encolado " + job.id + " [" + job.label + "] · kind=" + job.kind + " · seq=" + job.seqName);
       return job.id;
     }
     return {
@@ -1770,6 +1870,7 @@
     if (!cfg) return;
     if (cfg.provider) cfgProviderSel.value = cfg.provider;
     currentProviderIsLocal = (cfg.provider === "ollama");
+    currentModelName = cfg.model || "";
     currentHasSession = Boolean(cfg.hasSession);
     cfgBaseUrl.value = cfg.baseUrl || "";
     cfgApiKey.value = "";
@@ -2009,6 +2110,20 @@
     if (!helpPanel) return;
     helpPanel.setAttribute("data-hidden", show ? "false" : "true");
   }
+  // Botón "Descargar log": baja el log de diagnóstico a Descargas.
+  var btnLog = document.getElementById("btn-log");
+  if (btnLog) {
+    btnLog.addEventListener("click", function () {
+      hpLog("Usuario pidió descargar el log.");
+      var res = downloadLog();
+      if (res && res.ok) {
+        setOutput("Log descargado en:\n" + res.path + "\nMandámelo para revisar la falla.", false);
+      } else {
+        setOutput("No pude descargar el log: " + (res && res.error), true);
+      }
+    });
+  }
+
   if (btnHelp) btnHelp.addEventListener("click", function () { toggleHelp(helpPanel.getAttribute("data-hidden") !== "false" ? true : false); });
   if (btnHelpClose) btnHelpClose.addEventListener("click", function () { toggleHelp(false); });
   if (helpPanel) helpPanel.addEventListener("click", function (e) { if (e.target === helpPanel) toggleHelp(false); });
@@ -2025,8 +2140,10 @@
   // causa REAL, para no andar adivinando "Motor no disponible".
   if (!HP_ENGINE) {
     setHeaderStatus("motor no cargó", "error");
-    setOutput(engineErrMsg(), true);
+    setOutput(engineErrMsg() + "\n\n(Tocá ⬇ en el header para descargar el log y mandámelo.)", true);
+    hpLog("Panel listo — MOTOR NO CARGÓ.", "ERROR");
   } else {
     setHeaderStatus("motor OK", "ok");
+    hpLog("Panel listo — motor OK desde " + ENGINE_PATH);
   }
 })();
