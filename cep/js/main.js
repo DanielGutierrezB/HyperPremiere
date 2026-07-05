@@ -2001,34 +2001,50 @@
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
 
+  // Recarga COMPLETA del panel (re-ejecuta main.js → loadEngine, reloadHostJsx,
+  // busteo de cache del bridge). Sirve tanto para traer código nuevo como para
+  // reintentar la carga del motor si quedó caído. Varias vías por si alguna no
+  // está disponible en esta versión de CEP.
+  function reloadPanel() {
+    hpLog("Recargando el panel completo…");
+    try { window.location.reload(); return; } catch (e) {}
+    try { window.location.href = window.location.href; return; } catch (e) {}
+    try { csInterface.evalScript(""); } catch (e) {}
+  }
+
   if (btnUpdate) {
     btnUpdate.addEventListener("click", function () {
       btnUpdate.disabled = true;
       var icon = btnUpdate.querySelector(".update-icon");
       if (icon) icon.classList.add("spinning");
+      btnUpdate.title = "Buscando actualización y recargando el panel…";
+      hpLog("Botón ⟳: buscar update + recargar panel.");
+
+      // Recargamos SIEMPRE, haya o no update (y aunque el motor esté caído).
+      // Failsafe: si el git fetch se cuelga, recargamos igual a los 12s.
+      var reloaded = false;
+      function goReload() {
+        if (reloaded) return; reloaded = true;
+        setTimeout(reloadPanel, 350);
+      }
+      setTimeout(goReload, 12000);
+
       hpCall("selfUpdate")
         .then(function (res) {
-          if (res && res.ok) {
+          if (res && res.ok && res.changed) {
+            hpLog("Update aplicado v" + (res.previous || "?") + " → v" + res.version + " (GitHub).");
             if (versionLabel) versionLabel.textContent = "v" + res.version;
-            if (res.changed) {
-              btnUpdate.title = "Actualizado v" + (res.previous || "?") + " → v" + res.version + " (GitHub) — recargando…";
-              setTimeout(function () { window.location.reload(); }, 700);
-            } else {
-              btnUpdate.title = "Ya estás en la última (v" + res.version + ", igual a GitHub)";
-              btnUpdate.classList.remove("has-update");
-              if (versionLabel) versionLabel.textContent = "v" + res.version;
-              if (icon) icon.classList.remove("spinning");
-              btnUpdate.disabled = false;
-            }
+          } else if (res && res.ok) {
+            hpLog("Ya en la última (v" + res.version + "). Recargo igual.");
           } else {
-            throw new Error((res && res.error) || "error");
+            hpLog("selfUpdate sin cambios: " + ((res && res.error) || "?") + ". Recargo igual.", "WARN");
           }
         })
         .catch(function (e) {
-          btnUpdate.title = "Error al actualizar: " + ((e && e.message) || "");
-          if (icon) icon.classList.remove("spinning");
-          btnUpdate.disabled = false;
-        });
+          // Motor caído / offline: recargamos igual (la recarga puede revivir el motor).
+          hpLog("selfUpdate falló: " + ((e && e.message) || "") + " — recargo igual.", "WARN");
+        })
+        .then(goReload);
     });
   }
 
