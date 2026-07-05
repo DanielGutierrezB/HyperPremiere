@@ -1125,11 +1125,18 @@
         kids[i].className = "hps-option" + (kids[i].getAttribute("data-value") === value ? " is-sel" : "");
       }
     }
-    function close() { menu.hidden = true; root.classList.remove("is-open"); }
-    function toggle(e) { e.stopPropagation(); if (menu.hidden) { menu.hidden = false; root.classList.add("is-open"); } else { close(); } }
+    function close() { menu.hidden = true; root.classList.remove("is-open"); if (_hpOpenSelect && _hpOpenSelect.root === root) _hpOpenSelect = null; }
+    function toggle(e) {
+      e.stopPropagation();
+      if (menu.hidden) {
+        // Cerrar cualquier otro desplegable abierto (solo uno a la vez).
+        if (_hpOpenSelect && _hpOpenSelect.root !== root) _hpOpenSelect.close();
+        menu.hidden = false; root.classList.add("is-open");
+        _hpOpenSelect = { root: root, close: close };
+      } else { close(); }
+    }
 
     trigger.addEventListener("click", toggle);
-    document.addEventListener("click", function (e) { if (!root.contains(e.target)) close(); });
 
     api.setOptions = function (list, selected) {
       opts = (list || []).map(function (o) { return { value: String(o.value), label: String(o.label) }; });
@@ -1160,6 +1167,13 @@
     });
     return api;
   }
+
+  // Un único listener global cierra el desplegable abierto al clicar afuera
+  // (evita acumular un listener por cada HPSelect creado al recargar marcadores).
+  var _hpOpenSelect = null;
+  document.addEventListener("click", function (e) {
+    if (_hpOpenSelect && !_hpOpenSelect.root.contains(e.target)) _hpOpenSelect.close();
+  });
 
   var cfgProviderSel = HPSelect(document.getElementById("cfg-provider"));
   var cfgModelSel = HPSelect(document.getElementById("cfg-model"));
