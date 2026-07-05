@@ -545,6 +545,9 @@
     // actual renderiza — SOLO si el proveedor es cloud (en local no se solapa,
     // porque el modelo también usa la máquina).
     var modelBusy = false, renderBusy = false;
+    // paused: la cola no ARRANCA nuevos jobs (los que corren terminan). Sirve
+    // para "Enviar a la cola" (staging) sin que empiece a procesar.
+    var paused = false;
     function onP(job) {
       return function (p) {
         if (!p) return;
@@ -608,6 +611,7 @@
       });
     }
     function pump() {
+      if (paused) return; // staging: no arrancar nuevos jobs
       // En local (Ollama) NO se solapa: modelo y render usan la misma máquina.
       var overlap = !currentProviderIsLocal;
       // Carril RENDER (uno a la vez; en local, además, no mientras el modelo corre).
@@ -651,13 +655,33 @@
       reorderQueued(ids);
     }
 
+    function enqueue(job) {
+      job.id = "j" + (++counter);
+      job.status = "queued"; job.pct = 0; job.msg = "En cola…";
+      jobs.push(job);
+      return job.id;
+    }
     return {
+      // Encola Y arranca (Generar / Regenerar / render manual).
       add: function (job) {
-        job.id = "j" + (++counter);
-        job.status = "queued"; job.pct = 0; job.msg = "En cola…";
-        jobs.push(job); emit(); pump();
-        return job.id;
+        var id = enqueue(job); paused = false; emit(); pump();
+        return id;
       },
+      // Encola SIN arrancar (Enviar a la cola). NO llama a pump: si la cola ya
+      // está corriendo, el propio ciclo lo tomará al terminar el actual; si está
+      // quieta, queda en espera hasta que toques Iniciar (o Generar).
+      addStaged: function (job) {
+        var id = enqueue(job); emit();
+        return id;
+      },
+      start: function () { paused = false; emit(); pump(); },
+      pause: function () { paused = true; emit(); },
+      isPaused: function () { return paused; },
+      hasActive: function () {
+        for (var i = 0; i < jobs.length; i++) { var s = jobs[i].status; if (s === "modeling" || s === "ready" || s === "running") return true; }
+        return false;
+      },
+      hasQueued: function () { for (var i = 0; i < jobs.length; i++) if (jobs[i].status === "queued") return true; return false; },
       on: function (cb) { subs.push(cb); },
       jobs: function () { return jobs; },
       latestFor: function (seqName, markerKey) {
@@ -701,8 +725,8 @@
     };
   })();
 
-  // Encola la generación IA de un marcador (no corre al instante: la cola serializa).
-  function enqueueMarkerGeneration(marker, mode) {
+  // Encola la generación IA de un marcador. staged=true → solo encola (no arranca).
+  function enqueueMarkerGeneration(marker, mode, staged) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
     var segments = HPStore.getTranscript() || [];
@@ -717,12 +741,13 @@
       markerSlug: markerKey, mode: mode
     };
     if (mode === "adjust") payload.adjustment = data.instruction || "";
-    HPQueue.add({
+    var job = {
       kind: mode === "generate" ? "generate" : "feedback",
       payload: payload, seqName: currentSequenceName, projectPath: currentProjectPath,
       markerKey: markerKey, label: markerKey + (marker.name ? " · " + marker.name : ""),
       markerStart: marker.start, markerDuration: marker.duration
-    });
+    };
+    if (staged) HPQueue.addStaged(job); else HPQueue.add(job);
   }
 
   // Refleja el estado de los jobs en las tarjetas de la secuencia ACTUAL.
@@ -758,10 +783,23 @@
     var head = document.createElement("div"); head.className = "queue-head";
     var title = document.createElement("span");
     title.textContent = "Cola" + (pending ? " · " + pending + " en proceso/espera" : " · sin pendientes");
+    head.appendChild(title);
+    // Iniciar (si hay en espera y nada activo) / Pausar (si algo activo).
+    if (HPQueue.hasActive()) {
+      var pauseBtn = document.createElement("button"); pauseBtn.type = "button"; pauseBtn.className = "queue-clear";
+      pauseBtn.textContent = HPQueue.isPaused() ? "⏸ pausada" : "⏸ pausar";
+      pauseBtn.addEventListener("click", function () { HPQueue.pause(); });
+      head.appendChild(pauseBtn);
+    } else if (HPQueue.hasQueued()) {
+      var startBtn = document.createElement("button"); startBtn.type = "button"; startBtn.className = "queue-start";
+      startBtn.textContent = "▶ Iniciar cola";
+      startBtn.addEventListener("click", function () { HPQueue.start(); });
+      head.appendChild(startBtn);
+    }
     var clr = document.createElement("button"); clr.type = "button"; clr.className = "queue-clear";
     clr.textContent = "limpiar terminados";
     clr.addEventListener("click", function () { HPQueue.clearFinished(); });
-    head.appendChild(title); head.appendChild(clr); panel.appendChild(head);
+    head.appendChild(clr); panel.appendChild(head);
 
     // Agrupar por secuencia preservando el orden de proceso.
     var groups = [], map = {};
@@ -904,9 +942,14 @@
     regenBtn.type = "button";
     regenBtn.className = "btn-secondary";
     regenBtn.textContent = "Regenerar desde cero";
+    var queueBtn = document.createElement("button");
+    queueBtn.type = "button";
+    queueBtn.className = "btn-secondary";
+    queueBtn.textContent = "＋ Enviar a la cola";
+    queueBtn.title = "Encola sin empezar a procesar (arrancá con Iniciar cola)";
     var status = document.createElement("div");
     status.className = "marker-status";
-    var buttons = [genBtn, regenBtn];
+    var buttons = [genBtn, regenBtn, queueBtn];
 
     // Refleja el estado: sin generar → solo "Generar"; ya generado → "Generar"
     // (refina) + "Regenerar desde cero", y badge ✓.
@@ -925,9 +968,17 @@
     regenBtn.addEventListener("click", function () {
       enqueueMarkerGeneration(marker, "regen");
     });
+    queueBtn.addEventListener("click", function () {
+      var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
+      enqueueMarkerGeneration(marker, mode, true); // staged: no arranca
+    });
 
-    // Para el botón global "Generar listos".
+    // Para los botones globales "Generar listos" / "Agregar listos a la cola".
     card._runGen = doGenerate;
+    card._runGenStaged = function () {
+      var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
+      enqueueMarkerGeneration(marker, mode, true);
+    };
     card._isReady = function () {
       return !!(HPStore.getMarkerData(markerKey).instruction || "").trim();
     };
@@ -996,6 +1047,7 @@
 
     actions.appendChild(genBtn);
     actions.appendChild(regenBtn);
+    actions.appendChild(queueBtn);
     body.appendChild(actions);
     body.appendChild(estimate);
     body.appendChild(status);
@@ -1582,19 +1634,26 @@
   // Generar todos los marcadores listos (con instrucción), en secuencia.
   var btnGenerateAll = document.getElementById("btn-generate-all");
   var batchStatus = document.getElementById("batch-status");
-  function generateAllReady() {
+  function enqueueAllReady(staged) {
     var cards = markersContainer.querySelectorAll("details.marker-card");
     var n = 0;
     for (var i = 0; i < cards.length; i++) {
-      if (cards[i]._isReady && cards[i]._isReady()) { cards[i]._runGen(); n++; }
+      if (cards[i]._isReady && cards[i]._isReady()) {
+        if (staged) cards[i]._runGenStaged(); else cards[i]._runGen();
+        n++;
+      }
     }
     if (batchStatus) {
       batchStatus.textContent = n
-        ? "Encolados " + n + " marcador(es) — se procesan uno a uno (mirá la Cola arriba)."
+        ? (staged
+            ? "Encolados " + n + " marcador(es) en espera — tocá “Iniciar cola” cuando quieras."
+            : "Encolados " + n + " marcador(es) — se procesan uno a uno (mirá la Cola arriba).")
         : "No hay marcadores listos (poné una instrucción en al menos uno).";
     }
   }
-  if (btnGenerateAll) btnGenerateAll.addEventListener("click", generateAllReady);
+  if (btnGenerateAll) btnGenerateAll.addEventListener("click", function () { enqueueAllReady(false); });
+  var btnQueueReady = document.getElementById("btn-queue-ready");
+  if (btnQueueReady) btnQueueReady.addEventListener("click", function () { enqueueAllReady(true); });
 
   // ── Estado en el header (verde OK / rojo error) ─────────────────────
   var hdrStatus = document.getElementById("hdr-status");

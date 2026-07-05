@@ -1043,3 +1043,12 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   background: var(--bg-panel); border-bottom: 1px solid var(--hairline);
 }
 .draft-toggle input { flex: none; width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
+
+/* v1.0.1 — botón Iniciar cola (verde) en el head de la cola */
+.queue-start {
+  flex: none; width: auto; text-transform: none; letter-spacing: 0;
+  font-size: 11px; color: var(--ok);
+  background: rgba(10, 233, 141, 0.1); border: 1px solid rgba(10, 233, 141, 0.4);
+  border-radius: var(--radius-sm); padding: 3px 9px; cursor: pointer;
+}
+.queue-start:hover { background: rgba(10, 233, 141, 0.18); border-color: var(--ok); color: var(--ok); }
