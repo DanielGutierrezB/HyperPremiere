@@ -195,7 +195,7 @@ async function prepareGeneration(body, mode, onProgress) {
   const systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
   let userPrompt = buildUserPrompt({
     objective, transcriptSegments: transcript, marker, markerTranscript,
-    instruction, stillsCount: stillsList.length,
+    instruction, generalInstruction: body.generalInstruction, stillsCount: stillsList.length,
   });
 
   // Config activa (necesitamos el modelo antes de armar los nombres de archivo).

@@ -8,6 +8,11 @@
   var HP_COLOR_BROWN = 14;
   var HP_COLOR_MAGENTA = 11;
 
+  // Clave especial de HPStore para el "Prompt general" (instrucción + stills +
+  // recursos que aplican a TODOS los marcadores). Reusa toda la maquinaria de
+  // marcador (getMarkerData/addMarkerStill/…) sin ser un marcador real.
+  var GEN_KEY = "__general__";
+
   // ── Log en memoria (para el botón "Descargar log") ──────────────────
   // Todo lo relevante (carga del motor, cola, errores) se escribe acá con
   // timestamp. El usuario lo baja a Descargas y nos lo manda ante una falla.
@@ -390,6 +395,32 @@
   function hydrateObjective() {
     if (!objectiveInput) return;
     objectiveInput.value = HPStore.getObjective();
+  }
+
+  // ── Prompt general (aplica a todos los marcadores) ──────────────────
+  var generalInput = document.getElementById("general-instruction");
+  var generalMount = document.getElementById("general-stills-mount");
+  var generalSummary = document.getElementById("general-summary");
+  function updateGeneralSummary() {
+    if (!generalSummary) return;
+    var g = HPStore.getMarkerData(GEN_KEY);
+    var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
+    var hasTxt = (g.instruction || "").trim().length > 0;
+    generalSummary.textContent = (hasTxt || n) ? ("✓" + (n ? " · " + n + " adj." : "")) : "";
+  }
+  function hydrateGeneral() {
+    if (generalInput) generalInput.value = HPStore.getMarkerData(GEN_KEY).instruction || "";
+    if (generalMount) {
+      generalMount.innerHTML = "";
+      generalMount.appendChild(createStillsControl(GEN_KEY));
+    }
+    updateGeneralSummary();
+  }
+  if (generalInput) {
+    generalInput.addEventListener("input", debounce(function () {
+      HPStore.setMarkerInstruction(GEN_KEY, generalInput.value);
+      updateGeneralSummary();
+    }, DEBOUNCE_MS));
   }
 
   if (objectiveInput) {
@@ -846,10 +877,13 @@
         HPStore.setContext(job.projectPath, job.seqName);
         var segments = HPStore.getTranscript() || [];
         var md = HPStore.getMarkerData(job.markerKey) || {};
+        var gen = HPStore.getMarkerData(GEN_KEY) || {}; // prompt general
         job.payload.transcript = segments;
         job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
-        if (!job.payload.stills || !job.payload.stills.length) job.payload.stills = md.stills || [];
-        if (!job.payload.resources || !job.payload.resources.length) job.payload.resources = md.resources || [];
+        // Stills/recursos = marcador + generales (siempre recompuesto para jobs restaurados).
+        job.payload.stills = (md.stills || []).concat(gen.stills || []);
+        job.payload.resources = (md.resources || []).concat(gen.resources || []);
+        if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
         if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
         if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
       } catch (e) { hpLog("rehydratePayload falló [" + job.label + "]: " + ((e && e.message) || e), "WARN"); }
@@ -1099,6 +1133,7 @@
   function enqueueMarkerGeneration(marker, mode, staged) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
+    var gen = HPStore.getMarkerData(GEN_KEY); // prompt general (aplica a todos)
     var segments = HPStore.getTranscript() || [];
     var markerTranscript = HPTranscript.sliceByRange(segments, marker.start, marker.start + marker.duration);
     var payload = {
@@ -1106,7 +1141,10 @@
       objective: HPStore.getObjective(), transcript: segments,
       marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
-      stills: data.stills || [], resources: data.resources || [],
+      generalInstruction: gen.instruction || "",
+      // Stills/recursos del marcador + los generales (contexto compartido).
+      stills: (data.stills || []).concat(gen.stills || []),
+      resources: (data.resources || []).concat(gen.resources || []),
       background: !!data.background, draft: draftMode,
       markerSlug: markerKey, mode: mode
     };
@@ -1721,6 +1759,7 @@
     // proyecto o secuencia, las tarjetas deben rehidratarse del namespace nuevo.
     loadContext(function () {
       hydrateObjective();
+      hydrateGeneral();
       updateTranscriptStatus();
 
       csInterface.evalScript("hp_getMarkers()", function (result) {
@@ -2293,6 +2332,7 @@
   // Arranque: fijar contexto y rehidratar objetivo + estado del transcript.
   loadContext(function () {
     hydrateObjective();
+    hydrateGeneral();
     updateTranscriptStatus();
   });
 

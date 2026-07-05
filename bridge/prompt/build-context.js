@@ -68,6 +68,7 @@ function buildUserPrompt(ctx) {
     marker,
     markerTranscript,
     instruction,
+    generalInstruction,
     stillsCount,
   } = ctx || {};
 
@@ -90,7 +91,14 @@ function buildUserPrompt(ctx) {
   );
   parts.push(formatMarkerTranscript(markerTranscript, markerStart));
 
-  parts.push('\n## Instrucción del editor');
+  const generalTxt = (generalInstruction || '').trim();
+  if (generalTxt) {
+    parts.push('\n## Indicaciones generales (aplican a TODOS los recursos de esta clase)');
+    parts.push('Estilo, marca, tono y reglas comunes a todos los marcadores. Respetalas siempre, y sobre esta base aplicá la instrucción específica de abajo:');
+    parts.push(generalTxt);
+  }
+
+  parts.push('\n## Instrucción del editor (específica de este marcador)');
   parts.push((instruction || '').trim() || '(sin instrucción específica: proponé el recurso que mejor refuerce el objetivo)');
 
   parts.push('\n## Duración objetivo');

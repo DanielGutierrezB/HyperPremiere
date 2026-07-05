@@ -22,7 +22,7 @@
       <button id="btn-log" class="icon-btn" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log">⬇</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.0.17</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.0.18</span>
       </button>
     </div>
   </header>
@@ -104,6 +104,16 @@
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
         </div>
+      </div>
+    </details>
+
+    <details id="general-section" class="context-section">
+      <summary>Prompt general <span class="cfg-summary" id="general-summary"></span></summary>
+      <div class="context-body">
+        <label class="field-label" for="general-instruction">Indicaciones para TODOS los marcadores</label>
+        <textarea id="general-instruction" rows="3" placeholder="Estilo, marca, tipografía, colores, tono… lo que aplique a toda la clase. Se combina con la instrucción de cada marcador (no tenés que repetirlo)."></textarea>
+        <label class="field-label">Referencias generales (capturas, logos, PDFs)</label>
+        <div id="general-stills-mount"></div>
       </div>
     </details>
 
