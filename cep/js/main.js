@@ -1205,6 +1205,39 @@
     });
   }
 
+  // Limpia videos de versiones viejas de todas las secuencias que aparecen en la
+  // cola (+ la secuencia actual). Conserva HTMLs. Muestra cuánto liberó.
+  function cleanOldVersionsFromQueue() {
+    var seen = {}, targets = [];
+    function addTarget(pp, sn) {
+      if (!sn) return;
+      var k = String(pp) + "::" + String(sn);
+      if (seen[k]) return; seen[k] = true;
+      targets.push({ projectPath: pp, sequenceName: sn });
+    }
+    var jobs = HPQueue.jobs();
+    for (var i = 0; i < jobs.length; i++) addTarget(jobs[i].projectPath, jobs[i].seqName);
+    addTarget(currentProjectPath, currentSequenceName);
+    if (!targets.length) { setOutput("No hay secuencias en la cola para limpiar.", false); return; }
+    hpLog("Limpiando versiones viejas en " + targets.length + " secuencia(s)…");
+    var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
+    targets.forEach(function (t) {
+      hpCall("cleanOldVersions", t).then(function (res) {
+        if (res && res.ok) { totalDeleted += res.deleted || 0; totalBytes += res.freedBytes || 0; }
+        else errs.push((res && res.error) || "error");
+      }).catch(function (e) { errs.push((e && e.message) || "error"); })
+        .then(function () {
+          if (--pending === 0) {
+            var mb = (totalBytes / (1024 * 1024)).toFixed(1);
+            var msg = "🧹 Limpieza lista: " + totalDeleted + " video(s) viejos borrados · " + mb + " MB liberados. (Los HTMLs se conservan.)";
+            if (errs.length) msg += " · " + errs.length + " error(es)";
+            setOutput(msg, errs.length > 0);
+            hpLog(msg);
+          }
+        });
+    });
+  }
+
   // Re-renderiza en HQ la última versión de cada marcador de una secuencia
   // (según los jobs de esa secuencia en la cola). Encola y arranca.
   function renderSeqHQ(seqName) {
@@ -1297,7 +1330,15 @@
     clr.textContent = "limpiar terminados";
     clr.title = "Quita de la lista los jobs terminados y con error (conserva en cola, en proceso y los que esperan tokens)";
     clr.addEventListener("click", function () { HPQueue.clearFinished(); });
-    head.appendChild(clr); panel.appendChild(head);
+    head.appendChild(clr);
+    // Limpiar versiones viejas: borra del disco los videos de versiones NO-últimas
+    // de cada marcador (conserva HTMLs). Corre sobre todas las secuencias de la cola.
+    var cleanBtn = document.createElement("button"); cleanBtn.type = "button"; cleanBtn.className = "queue-clear";
+    cleanBtn.textContent = "🧹 limpiar versiones viejas";
+    cleanBtn.title = "Borra del disco los videos de versiones anteriores de cada marcador (deja solo la última). Conserva los HTMLs y el historial.";
+    cleanBtn.addEventListener("click", function () { cleanOldVersionsFromQueue(); });
+    head.appendChild(cleanBtn);
+    panel.appendChild(head);
 
     // Agrupar por secuencia preservando el orden de proceso.
     var groups = [], map = {};

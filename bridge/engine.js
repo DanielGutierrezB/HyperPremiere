@@ -638,6 +638,39 @@ async function renderVersionHQ(body, onProgress) {
   return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground, replaced: true };
 }
 
+// Limpia VIDEOS de versiones viejas de una secuencia: por cada marcador deja
+// solo el video (.mov/.mp4) de la ÚLTIMA versión y borra los anteriores.
+// NO toca los .html (historial/editor) ni stills/recursos. Devuelve cuánto liberó.
+function cleanOldVersions(body) {
+  try {
+    body = body || {};
+    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+    let entries = [];
+    try { entries = fs.readdirSync(baseDir); } catch (e) { return { ok: true, deleted: 0, freedBytes: 0, names: [] }; }
+    const re = /^(.+) v(\d+)(?: \[.+?\])?\.(mov|mp4)$/;
+    const bySlug = {};
+    for (const name of entries) {
+      const m = name.match(re);
+      if (!m) continue;
+      const slug = m[1], ver = parseInt(m[2], 10);
+      const full = path.join(baseDir, name);
+      let size = 0; try { size = fs.statSync(full).size; } catch (e) {}
+      (bySlug[slug] = bySlug[slug] || []).push({ name, version: ver, path: full, size });
+    }
+    let deleted = 0, freed = 0; const names = [];
+    Object.keys(bySlug).forEach((slug) => {
+      const list = bySlug[slug];
+      let maxV = 0; list.forEach((x) => { if (x.version > maxV) maxV = x.version; });
+      list.forEach((x) => {
+        if (x.version < maxV) {
+          try { fs.unlinkSync(x.path); deleted++; freed += x.size; names.push(x.name); } catch (e) {}
+        }
+      });
+    });
+    return { ok: true, deleted, freedBytes: freed, names };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+
 // ── Preparación del motor (autocontenido) ───────────────────────────────
 // El ZXP trae el CÓDIGO del motor (bridge/) pero NO node_modules (410 MB,
 // binarios nativos por plataforma). En la 1ª corrida de una instalación limpia
@@ -721,6 +754,7 @@ module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
   saveQueue,
   loadQueue,
+  cleanOldVersions,
   engineStatus,
   prepareEngine,
   renderVersionHQ,
