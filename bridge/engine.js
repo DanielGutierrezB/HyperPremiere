@@ -652,9 +652,15 @@ function projectQueueRoot(projectPath) {
 function saveQueue(body) {
   try {
     const root = projectQueueRoot(body && body.projectPath);
-    fs.mkdirSync(root, { recursive: true });
     const file = path.join(root, 'queue.json');
     const jobs = (body && Array.isArray(body.jobs)) ? body.jobs : [];
+    // Cola vacía: NO crear la carpeta solo por abrir el panel. Si ya existía un
+    // queue.json (p.ej. limpiaste la cola), lo actualizamos a vacío; si no, nada.
+    if (!jobs.length) {
+      if (fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({ version: 1, jobs: [] }, null, 2), 'utf8');
+      return { ok: true, path: file, count: 0, created: false };
+    }
+    fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ version: 1, jobs }, null, 2), 'utf8');
     return { ok: true, path: file, count: jobs.length };
   } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
