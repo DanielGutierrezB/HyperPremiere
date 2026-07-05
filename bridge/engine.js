@@ -429,26 +429,45 @@ function getVersion() {
   } catch (e) { return '0.0.0'; }
 }
 
-// Actualiza el plugin: git pull --ff-only de la última versión publicada.
-// Devuelve { ok, version, changed, log }. Tras esto, el panel se recarga.
-function selfUpdate() {
+// Corre un comando git dentro del repo. Devuelve { code, out, err } (nunca lanza).
+function gitRun(args) {
   const { spawn } = require('child_process');
-  return new Promise((resolve, reject) => {
-    const before = getVersion();
-    const child = spawn('git', ['-C', REPO_ROOT, 'pull', '--ff-only', 'origin', 'main'],
-      { stdio: ['ignore', 'pipe', 'pipe'] });
+  return new Promise((resolve) => {
+    const child = spawn('git', ['-C', REPO_ROOT].concat(args), { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('update: timeout')); }, 60000);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve({ code: -1, out, err: 'timeout' }); }, 90000);
     child.stdout.on('data', (c) => { out += c; });
     child.stderr.on('data', (c) => { err += c; });
-    child.on('error', (e) => { clearTimeout(timer); reject(new Error('no se pudo ejecutar git: ' + e.message)); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) return reject(new Error((err.trim() || out.trim() || 'git pull falló').slice(0, 300)));
-      const after = getVersion();
-      resolve({ ok: true, version: after, changed: after !== before || !/Already up to date/i.test(out), log: (out + err).trim().slice(0, 300) });
-    });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: (e && e.message) || String(e) }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
   });
+}
+
+// Chequea GitHub SIN aplicar: compara la versión local con origin/main.
+// Devuelve { ok, current, remote, behind, changed }.
+async function checkUpdate() {
+  const current = getVersion();
+  const f = await gitRun(['fetch', 'origin', 'main']);
+  if (f.code !== 0) return { ok: false, error: 'No se pudo consultar GitHub: ' + (f.err.trim() || 'fetch falló').slice(0, 200), current };
+  const rv = await gitRun(['show', 'origin/main:version.json']);
+  let remote = current;
+  try { remote = JSON.parse(rv.out).version || remote; } catch (e) {}
+  const cnt = await gitRun(['rev-list', '--count', 'HEAD..origin/main']);
+  const behind = parseInt((cnt.out || '0').trim(), 10) || 0;
+  return { ok: true, current, remote, behind, changed: behind > 0 };
+}
+
+// Actualiza el plugin comparando con GitHub y aplicando la versión remota.
+// Usa reset --hard a origin/main → SIEMPRE queda igual a GitHub (soporta que el
+// repo remoto haya sido reescrito por otro agente). Devuelve { ok, changed, version, previous, remoteVersion }.
+async function selfUpdate() {
+  const before = getVersion();
+  const chk = await checkUpdate();
+  if (!chk.ok) return { ok: false, error: chk.error };
+  if (!chk.changed) return { ok: true, changed: false, version: before, remoteVersion: chk.remote };
+  const r = await gitRun(['reset', '--hard', 'origin/main']);
+  if (r.code !== 0) return { ok: false, error: 'No se pudo aplicar la actualización: ' + (r.err.trim() || 'reset falló').slice(0, 200) };
+  return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
 }
 
 function escapeReg(s) {
@@ -547,6 +566,7 @@ module.exports = {
   listOllamaModels,
   loginClaude,
   getVersion,
+  checkUpdate,
   selfUpdate,
   readStill,
 };

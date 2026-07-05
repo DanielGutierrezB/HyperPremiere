@@ -1034,14 +1034,16 @@
 
     if (markers.length === 0) {
       setOutput("La secuencia activa no tiene marcadores.", false);
+      setHeaderStatus((currentSequenceName || "secuencia") + " · sin marcadores", "idle");
       return;
     }
 
     for (var i = 0; i < markers.length; i++) {
       markersContainer.appendChild(createMarkerCard(markers[i]));
     }
-    var seqTxt = currentSequenceName ? "Secuencia: " + currentSequenceName + "\n" : "";
-    setOutput(seqTxt + "Marcadores cargados: " + markers.length + " · estado guardado ✓", false);
+    setOutput(markers.length + " marcador(es) cargados · estado guardado ✓", false);
+    // Estado de secuencia arriba, en verde.
+    setHeaderStatus((currentSequenceName || "secuencia") + " ✓", "ok");
     // Flujo progresivo: al tener marcadores, colapsar contexto para dar aire.
     var ctx = document.getElementById("context-section");
     if (ctx && objectiveInput && objectiveInput.value.trim()) ctx.open = false;
@@ -1339,7 +1341,7 @@
     cfgApiKey.value = "";
     if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
     else { cfgApiKey.removeAttribute("data-has"); cfgApiKey.setAttribute("placeholder", "Pegá tu API key"); }
-    if (cfg.hasSession && loginStatus) loginStatus.textContent = "✓ Sesión de Claude activa";
+    if (cfg.hasSession && loginStatus) { loginStatus.textContent = "✓ Sesión de Claude activa"; loginStatus.className = "muted login-ok"; }
     populateModels(cfgProviderSel.value, cfg.model || defaultModelFor(cfgProviderSel.value));
     applyProviderUI();
     updateSummary();
@@ -1435,10 +1437,10 @@
           if (res && res.ok) {
             if (versionLabel) versionLabel.textContent = "v" + res.version;
             if (res.changed) {
-              btnUpdate.title = "Actualizado a v" + res.version + " — recargando…";
+              btnUpdate.title = "Actualizado v" + (res.previous || "?") + " → v" + res.version + " (GitHub) — recargando…";
               setTimeout(function () { window.location.reload(); }, 700);
             } else {
-              btnUpdate.title = "Ya estás en la última (v" + res.version + ")";
+              btnUpdate.title = "Ya estás en la última (v" + res.version + ", igual a GitHub)";
               if (icon) icon.classList.remove("spinning");
               btnUpdate.disabled = false;
             }
@@ -1465,7 +1467,8 @@
       hpCall("loginClaude")
         .then(function (data) {
           if (data && data.ok) {
-            loginStatus.textContent = "✓ Sesión de Claude lista";
+            loginStatus.textContent = "✓ Sesión de Claude activa";
+            loginStatus.className = "muted login-ok";
             cfgProviderSel.value = "claude-cli";
             currentHasSession = true;
             populateModels(cfgProviderSel.value, effectiveModel());
@@ -1473,10 +1476,12 @@
             autoSave();
           } else {
             loginStatus.textContent = "Error: " + ((data && data.error) || "desconocido");
+            loginStatus.className = "muted login-err";
           }
         })
         .catch(function (e) {
           loginStatus.textContent = "Error: " + ((e && e.message) || "login falló");
+          loginStatus.className = "muted login-err";
         })
         .then(function () { btnLoginClaude.disabled = false; });
     });
@@ -1500,6 +1505,26 @@
     }
   }
   if (btnGenerateAll) btnGenerateAll.addEventListener("click", generateAllReady);
+
+  // ── Estado en el header (verde OK / rojo error) ─────────────────────
+  var hdrStatus = document.getElementById("hdr-status");
+  function setHeaderStatus(text, state) {
+    if (!hdrStatus) return;
+    hdrStatus.textContent = text;
+    hdrStatus.className = "hdr-chip is-" + (state || "idle");
+  }
+
+  // ── "¿Cómo funciona?" como overlay ──────────────────────────────────
+  var helpPanel = document.getElementById("help-panel");
+  var btnHelp = document.getElementById("btn-help");
+  var btnHelpClose = document.getElementById("btn-help-close");
+  function toggleHelp(show) {
+    if (!helpPanel) return;
+    helpPanel.setAttribute("data-hidden", show ? "false" : "true");
+  }
+  if (btnHelp) btnHelp.addEventListener("click", function () { toggleHelp(helpPanel.getAttribute("data-hidden") !== "false" ? true : false); });
+  if (btnHelpClose) btnHelpClose.addEventListener("click", function () { toggleHelp(false); });
+  if (helpPanel) helpPanel.addEventListener("click", function (e) { if (e.target === helpPanel) toggleHelp(false); });
 
   loadConfig();
 
