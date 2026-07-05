@@ -7,6 +7,9 @@
   // La ruta se deriva de la carpeta de la extensión (cross-platform: mac/Windows),
   // el bridge vive en <extensión>/../bridge. Fallback dev por si CEP no la da.
   var HP_ENGINE = null;
+  // Diagnóstico de por qué el motor no cargó (se muestra al usuario en vez del
+  // mensaje genérico). Lo llena loadEngine().
+  var HP_ENGINE_ERR = "";
   var ENGINE_PATH = "/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/bridge/engine.js";
   (function loadEngine() {
     try {
@@ -20,7 +23,13 @@
       var req = (typeof window !== "undefined" && window.cep_node && window.cep_node.require)
         ? window.cep_node.require
         : (typeof require === "function" ? require : null);
-      if (!req) return;
+      if (!req) {
+        // Node no está habilitado en el panel: --enable-nodejs no tomó efecto.
+        HP_ENGINE_ERR = "Node NO está habilitado en el panel (no hay require ni window.cep_node). " +
+          "Revisá que el manifest tenga --enable-nodejs y reiniciá Premiere. " +
+          "typeof require=" + (typeof require) + ", cep_node=" + (typeof window !== "undefined" && !!window.cep_node);
+        return;
+      }
       // Node cachea los require: sin esto, recargar el panel (⟳) NO trae los
       // cambios del motor. Vaciamos la caché del bridge (separador-agnóstico:
       // normalizamos \ a / para que funcione también en Windows).
@@ -31,18 +40,39 @@
           });
         }
       } catch (e) {}
+      // Chequeo previo: ¿existe el archivo del motor en la ruta calculada?
+      try {
+        var _fs = req("fs");
+        if (_fs && _fs.existsSync && !_fs.existsSync(ENGINE_PATH)) {
+          HP_ENGINE_ERR = "No se encontró engine.js en: " + ENGINE_PATH +
+            " — la ruta de la extensión no apunta al repo. Revisá el symlink.";
+          return;
+        }
+      } catch (e) {}
       HP_ENGINE = req(ENGINE_PATH);
+      if (!HP_ENGINE) HP_ENGINE_ERR = "require(engine.js) devolvió vacío (sin error).";
     } catch (e) {
       HP_ENGINE = null;
+      // Capturar la causa REAL (stack completo) para no andar adivinando.
+      var detail = (e && (e.stack || e.message)) ? String(e.stack || e.message) : String(e);
+      HP_ENGINE_ERR = "El motor falló al cargar (require de engine.js):\n" + detail;
+      try { if (typeof console !== "undefined" && console.error) console.error("[HyperPremiere] loadEngine:", e); } catch (e2) {}
     }
   })();
+
+  // Mensaje de error del motor: real si lo tenemos, genérico si no.
+  function engineErrMsg() {
+    return HP_ENGINE_ERR
+      ? ("Motor no disponible.\n" + HP_ENGINE_ERR)
+      : "Motor no disponible. Cerrá y reabrí Premiere para activar Node en el panel.";
+  }
 
   // Llama a un método del motor y devuelve SIEMPRE una Promise (los métodos
   // sync como getConfig también quedan envueltos). Si Node no está disponible,
   // rechaza con un mensaje claro.
   function hpCall(method, arg) {
     if (!HP_ENGINE || typeof HP_ENGINE[method] !== "function") {
-      return Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere para activar Node en el panel."));
+      return Promise.reject(new Error(HP_ENGINE ? ("El motor cargó pero no tiene el método '" + method + "'.") : engineErrMsg()));
     }
     try {
       return Promise.resolve(HP_ENGINE[method](arg));
@@ -576,7 +606,7 @@
         try { return Promise.resolve(HP_ENGINE[method](arg, prog)); }
         catch (e) { return Promise.reject(e); }
       }
-      return Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
+      return Promise.reject(new Error(engineErrMsg()));
     }
     function finishPlace(job, res) {
       job.version = res.version;
@@ -1965,4 +1995,13 @@
     hydrateObjective();
     updateTranscriptStatus();
   });
+
+  // Si el motor no cargó, avisar de una (sin esperar a que corra la cola) con la
+  // causa REAL, para no andar adivinando "Motor no disponible".
+  if (!HP_ENGINE) {
+    setHeaderStatus("motor no cargó", "error");
+    setOutput(engineErrMsg(), true);
+  } else {
+    setHeaderStatus("motor OK", "ok");
+  }
 })();
