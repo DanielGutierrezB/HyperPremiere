@@ -21,7 +21,7 @@
       <span id="hdr-status" class="hdr-chip is-idle" title="Estado de la secuencia">sin secuencia</span>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.0.2</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.0.3</span>
       </button>
     </div>
   </header>
@@ -72,10 +72,13 @@
     <button id="su-reset" type="button" class="su-reset" title="Reiniciar contador">reiniciar</button>
   </div>
 
-  <!-- Cola global de generación/render (visible desde cualquier secuencia). -->
-  <div id="queue-panel" class="queue-panel" data-hidden="true"></div>
+  <!-- Pestañas: vista de marcadores / vista de cola (para colas largas). -->
+  <div class="tabs">
+    <button id="tab-markers" class="tab is-active" type="button">Marcadores</button>
+    <button id="tab-queue" class="tab" type="button">Cola <span id="tab-queue-count" class="tab-badge" data-hidden="true"></span></button>
+  </div>
 
-  <main class="panel-body">
+  <main id="view-markers" class="panel-body">
     <div id="output" class="output" aria-live="polite">
       <span class="placeholder">Pulsá "Cargar marcadores" para leer la secuencia activa.</span>
     </div>
@@ -136,6 +139,11 @@
       </div>
     </details>
   </main>
+
+  <!-- Vista de Cola (pestaña): ocupa todo el panel para ver colas largas. -->
+  <div id="view-queue" class="queue-view" data-hidden="true">
+    <div id="queue-panel" class="queue-panel"></div>
+  </div>
 
   <script src="js/CSInterface.js"></script>
   <script src="js/vendor/prism.js"></script>

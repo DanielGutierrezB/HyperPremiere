@@ -801,10 +801,20 @@
   function renderQueue(jobs) {
     var panel = document.getElementById("queue-panel");
     if (!panel) return;
-    if (!jobs.length) { panel.setAttribute("data-hidden", "true"); panel.innerHTML = ""; return; }
+    var scroller = document.getElementById("view-queue");
+    var savedScroll = scroller ? scroller.scrollTop : 0;
     var pending = 0, i;
     for (i = 0; i < jobs.length; i++) { var st = jobs[i].status; if (st === "queued" || st === "modeling" || st === "ready" || st === "running") pending++; }
-    panel.setAttribute("data-hidden", "false");
+    // Badge de la pestaña Cola.
+    var badge = document.getElementById("tab-queue-count");
+    if (badge) {
+      if (pending) { badge.textContent = pending; badge.setAttribute("data-hidden", "false"); }
+      else { badge.setAttribute("data-hidden", "true"); }
+    }
+    if (!jobs.length) {
+      panel.innerHTML = '<div class="queue-empty">La cola está vacía. Encolá marcadores con “Enviar a la cola” o arrancá con “Generar”.</div>';
+      return;
+    }
     panel.innerHTML = "";
 
     var head = document.createElement("div"); head.className = "queue-head";
@@ -886,6 +896,8 @@
         panel.appendChild(row);
       });
     });
+    // Preservar el scroll de la vista de cola (se refresca seguido durante el proceso).
+    if (scroller) scroller.scrollTop = savedScroll;
   }
 
   HPQueue.on(function () { renderQueue(HPQueue.jobs()); reflectQueueOnCards(); });
@@ -1715,6 +1727,21 @@
       try { window.localStorage.setItem("hyperpremiere::draft", draftMode ? "1" : "0"); } catch (e) {}
     });
   }
+
+  // ── Pestañas: Marcadores / Cola ─────────────────────────────────────
+  var tabMarkers = document.getElementById("tab-markers");
+  var tabQueue = document.getElementById("tab-queue");
+  var viewMarkers = document.getElementById("view-markers");
+  var viewQueue = document.getElementById("view-queue");
+  function selectTab(which) {
+    var q = which === "queue";
+    if (viewMarkers) viewMarkers.setAttribute("data-hidden", q ? "true" : "false");
+    if (viewQueue) viewQueue.setAttribute("data-hidden", q ? "false" : "true");
+    if (tabMarkers) tabMarkers.className = "tab" + (q ? "" : " is-active");
+    if (tabQueue) tabQueue.className = "tab" + (q ? " is-active" : "");
+  }
+  if (tabMarkers) tabMarkers.addEventListener("click", function () { selectTab("markers"); });
+  if (tabQueue) tabQueue.addEventListener("click", function () { selectTab("queue"); });
 
   // ── "¿Cómo funciona?" como overlay ──────────────────────────────────
   var helpPanel = document.getElementById("help-panel");

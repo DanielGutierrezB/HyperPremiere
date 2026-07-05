@@ -1056,3 +1056,31 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* v1.0.2 — botón Render HQ por secuencia en la cola */
 .qbtn-hq { width: auto; font-size: 10px; color: var(--ok); border-color: rgba(10,233,141,0.4); padding: 2px 7px; letter-spacing: 0.02em; }
 .qbtn-hq:hover { color: var(--ok); border-color: var(--ok); background: rgba(10,233,141,0.1); }
+
+/* v1.0.3 — pestañas Marcadores / Cola (vistas conmutables) */
+.tabs {
+  flex: none; display: flex; gap: 6px;
+  padding: 6px 12px 0; background: var(--bg-panel);
+  border-bottom: 1px solid var(--hairline);
+}
+.tab {
+  flex: 0 0 auto; width: auto;
+  font-size: 12px; color: var(--text-secondary);
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 7px 12px 8px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.tab:hover { color: var(--text-primary); background: transparent; border-color: transparent; }
+.tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-badge {
+  min-width: 16px; text-align: center; font-size: 10px; line-height: 16px;
+  color: #0e1116; background: var(--accent); border-radius: 999px; padding: 0 5px;
+}
+.tab-badge[data-hidden="true"] { display: none; }
+
+/* Vistas conmutables */
+.panel-body[data-hidden="true"], .queue-view[data-hidden="true"] { display: none; }
+.queue-view { flex: 1; min-height: 0; overflow-y: auto; }
+/* En la pestaña, la cola ocupa todo (sin el look de "strip") */
+.queue-view .queue-panel { max-height: none; margin: 0; border: 0; background: transparent; box-shadow: none; padding: 12px 16px; }
+.queue-empty { color: var(--text-muted); font-size: 12px; text-align: center; padding: 28px 16px; line-height: 1.5; }
