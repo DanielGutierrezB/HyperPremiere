@@ -90,6 +90,29 @@ function hp_seekToTime(seconds) {
     }
 }
 
+// Abre/activa una secuencia por nombre y mueve el playhead a `seconds`.
+// Sirve para revisar un marcador recién terminado desde la Cola aunque el
+// editor esté en otra secuencia. Devuelve "ok" o "error: ...".
+function hp_openSequenceAndSeek(seqName, seconds) {
+    try {
+        var seq = hp_findSequenceByName(seqName);
+        if (!seq) return "error: no se encontró la secuencia '" + seqName + "'";
+        var active = app.project.activeSequence;
+        if (!active || active.name !== seqName) {
+            // openSequence(sequenceID) la abre en el timeline y la hace activa.
+            try { app.project.openSequence(seq.sequenceID); } catch (e1) {}
+        }
+        var tgt = (app.project.activeSequence && app.project.activeSequence.name === seqName)
+            ? app.project.activeSequence : seq;
+        var TICKS_PER_SECOND = 254016000000;
+        var ticks = Math.round(Number(seconds) * TICKS_PER_SECOND);
+        tgt.setPlayerPosition(String(ticks));
+        return "ok";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 function hp_getProjectPath() {
     try {
         return app.project && app.project.path ? app.project.path : "";

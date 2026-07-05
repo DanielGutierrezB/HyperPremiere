@@ -736,6 +736,28 @@
         }
         paused = false; emit(); pump(); return n;
       },
+      // Regenera un job YA terminado (o cualquiera) manteniendo su MISMO puesto
+      // en el array de la cola: se muta en su lugar y vuelve a "queued", así el
+      // pipeline lo retoma en la posición original (no al final). Si viene texto
+      // de feedback, se regenera en modo "ajustar" (toma la versión previa como
+      // base); si no, es una regeneración total.
+      regenerate: function (id, adjustmentText) {
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          if (j.id !== id) continue;
+          if (j.kind !== "generate" && j.kind !== "feedback") return; // solo IA
+          var txt = (adjustmentText || "").trim();
+          j.payload = j.payload || {};
+          if (txt) { j.payload.adjustment = txt; j.payload.mode = "adjust"; j.kind = "feedback"; }
+          else { j.payload.mode = "generate"; j.kind = "generate"; }
+          j.status = "queued"; j.pct = 0;
+          j.msg = txt ? "Reencolado con feedback, esperando turno…" : "Reencolado, esperando turno…";
+          j.prepared = null; j._usageCounted = false; j.version = undefined;
+          j.startedAt = 0; j.usage = null;
+          break;
+        }
+        paused = false; emit(); pump();
+      },
       on: function (cb) { subs.push(cb); },
       jobs: function () { return jobs; },
       latestFor: function (seqName, markerKey) {
@@ -828,6 +850,33 @@
     return b;
   }
 
+  // Abre la secuencia del job y salta el playhead a su marcador para revisar,
+  // aunque el editor esté en otra secuencia. Usado desde la Cola (job terminado).
+  function openJobInPremiere(job) {
+    if (!job) return;
+    var seqArg = JSON.stringify(job.seqName);
+    csInterface.evalScript(
+      "hp_openSequenceAndSeek(" + seqArg + ", " + Number(job.markerStart) + ")",
+      function () {}
+    );
+  }
+
+  // Re-renderiza en alta calidad la última versión de UN marcador (un job).
+  // Se usa desde la Cola cuando el job se hizo en borrador y a Daniel le gustó.
+  function renderJobHQ(job) {
+    if (!job) return;
+    HPQueue.add({
+      kind: "renderVersionHQ",
+      payload: {
+        projectPath: job.projectPath, sequenceName: job.seqName, markerSlug: job.markerKey,
+        marker: { start: job.markerStart, end: job.markerStart + job.markerDuration, duration: job.markerDuration },
+        background: !!(job.payload && job.payload.background)
+      },
+      seqName: job.seqName, projectPath: job.projectPath, markerKey: job.markerKey,
+      label: job.label + " (Render HQ)", markerStart: job.markerStart, markerDuration: job.markerDuration
+    });
+  }
+
   // Re-renderiza en HQ la última versión de cada marcador de una secuencia
   // (según los jobs de esa secuencia en la cola). Encola y arranca.
   function renderSeqHQ(seqName) {
@@ -851,6 +900,11 @@
       });
     });
   }
+
+  // Estado UI de la caja de feedback por job (id → abierto?) y borrador de texto
+  // (id → texto), para que sobreviva a los re-render frecuentes de la cola.
+  var feedbackOpen = {};
+  var feedbackDraft = {};
 
   // Panel de cola global: agrupado por secuencia, con reordenamiento
   // (secuencia arriba/abajo y marcador arriba/abajo dentro de su secuencia).
@@ -967,10 +1021,49 @@
           wc.appendChild(rb);
           wc.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
           line.appendChild(wc);
+        } else if (j.status === "done") {
+          // Job terminado: revisar en Premiere, subir a HQ si fue borrador, o
+          // dar feedback y regenerar (retomando el mismo puesto en la cola).
+          var dc = document.createElement("span"); dc.className = "qj-ctrls";
+          dc.appendChild(iconBtn("👁 Ver", "Abrir esta secuencia y saltar al marcador para revisar",
+            (function (job) { return function () { openJobInPremiere(job); }; })(j)));
+          // Render HQ solo si el job se hizo en borrador (aún no está en alta).
+          if (j.kind !== "renderVersionHQ" && j.payload && j.payload.draft) {
+            var hqb = iconBtn("Render HQ", "Re-renderizar este marcador en alta calidad",
+              (function (job) { return function () { renderJobHQ(job); }; })(j));
+            hqb.className = "qbtn qbtn-hq"; dc.appendChild(hqb);
+          }
+          if (j.kind === "generate" || j.kind === "feedback") {
+            dc.appendChild(iconBtn("✎ Feedback", "Dar feedback y regenerar (mantiene el puesto en la cola)",
+              (function (id) { return function () { feedbackOpen[id] = !feedbackOpen[id]; renderQueue(HPQueue.jobs()); }; })(j.id)));
+          }
+          line.appendChild(dc);
         }
         row.appendChild(line);
         var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
         row.appendChild(msg);
+        // Caja de feedback inline (solo en jobs terminados y si el usuario la abrió).
+        if (j.status === "done" && feedbackOpen[j.id]) {
+          var fb = document.createElement("div"); fb.className = "qj-feedback";
+          var ta = document.createElement("textarea"); ta.className = "qj-fb-input"; ta.rows = 2;
+          ta.placeholder = "Qué ajustar… (se regenera manteniendo el puesto en la cola)";
+          ta.value = feedbackDraft[j.id] || "";
+          ta.addEventListener("input", (function (id) { return function (e) { feedbackDraft[id] = e.target.value; }; })(j.id));
+          ta.addEventListener("click", function (e) { e.stopPropagation(); });
+          fb.appendChild(ta);
+          var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
+          go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
+          go.addEventListener("click", (function (id) {
+            return function (e) {
+              e.stopPropagation();
+              var t = feedbackDraft[id] || "";
+              feedbackOpen[id] = false; feedbackDraft[id] = "";
+              HPQueue.regenerate(id, t);
+            };
+          })(j.id));
+          fb.appendChild(go);
+          row.appendChild(fb);
+        }
         if (j.status === "running" || j.status === "modeling") {
           var bar = document.createElement("div"); bar.className = "hp-bar";
           var fill = document.createElement("div"); fill.className = "hp-bar-fill"; fill.style.width = (j.pct || 0) + "%"; bar.appendChild(fill);
