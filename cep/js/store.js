@@ -150,8 +150,17 @@
         instruction: typeof entry.instruction === 'string' ? entry.instruction : '',
         stills: isArray(entry.stills) ? entry.stills : [],
         resources: isArray(entry.resources) ? entry.resources : [],
-        generated: Boolean(entry.generated)
+        generated: Boolean(entry.generated),
+        background: Boolean(entry.background)
       };
+    },
+
+    /** Activa/desactiva el fondo (mp4 HD opaco) para el marcador. */
+    setMarkerBackground: function (markerKey, value) {
+      var state = readState();
+      var entry = ensureMarker(state, markerKey);
+      entry.background = Boolean(value);
+      writeState(state);
     },
 
     /** Marca si el marcador ya tuvo al menos una generación exitosa. */

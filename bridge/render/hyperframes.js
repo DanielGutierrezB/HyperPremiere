@@ -45,7 +45,7 @@ function removeGhostFiles(dir) {
  *                                    la duración real la define la composición HTML).
  * @returns {Promise<{movPath: string, htmlPath: string}>}
  */
-async function renderComposition({ html, outMovPath, durationSec, onProgress }) {
+async function renderComposition({ html, outMovPath, durationSec, onProgress, format }) {
   var report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!html || typeof html !== 'string') {
     throw new Error('renderComposition: falta el HTML de la composición');
@@ -53,6 +53,7 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress }) 
   if (!outMovPath) {
     throw new Error('renderComposition: falta outMovPath');
   }
+  var fmt = format === 'mp4' ? 'mp4' : 'mov';
 
   // Directorio temporal propio para esta render (cwd del CLI).
   // hyperframes espera un PROYECTO: index.html + hyperframes.json en la raíz.
@@ -82,14 +83,18 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress }) 
   // reusan el diagrama anterior) revientan con workers en paralelo ("Parallel capture
   // timed out" / "Navigation timeout of 60000 ms exceeded") porque varios Chrome compiten
   // por RAM/GPU. Secuencial es más lento pero estable — es la solución que sugiere el CLI.
+  // mov => ProRes 4444 con alpha (overlay transparente).
+  // mp4 => H.264 opaco HD 1080p con buen bitrate (crf 18) para lectura, cuando
+  //         el marcador se genera CON fondo (no necesita canal alpha).
   const args = baseArgs.concat([
     'render',
     workDir,
     '-o', outMovPath,
-    '--format', 'mov',
+    '--format', fmt,
     '--quality', 'high',
     '--workers', '1',
   ]);
+  if (fmt === 'mp4') args.push('--crf', '18');
   void durationSec; // informativo; la duración vive en el HTML.
 
   await new Promise((resolve, reject) => {

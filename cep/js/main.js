@@ -656,6 +656,7 @@
       marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
       stills: data.stills || [], resources: data.resources || [],
+      background: !!data.background,
       markerSlug: markerKey, mode: mode
     };
     if (mode === "adjust") payload.adjustment = data.instruction || "";
@@ -808,6 +809,22 @@
     body.appendChild(instruction);
 
     body.appendChild(createStillsControl(markerKey));
+
+    // Toggle de fondo: con fondo → mp4 HD opaco; sin fondo → mov con alpha.
+    var bgRow = document.createElement("label");
+    bgRow.className = "bg-toggle";
+    var bgCheck = document.createElement("input");
+    bgCheck.type = "checkbox";
+    bgCheck.checked = !!HPStore.getMarkerData(markerKey).background;
+    bgCheck.addEventListener("change", function () {
+      HPStore.setMarkerBackground(markerKey, bgCheck.checked);
+      updateEstimate();
+    });
+    var bgLbl = document.createElement("span");
+    bgLbl.textContent = "Con fondo (mp4 HD opaco, temático) — sin fondo = alpha";
+    bgRow.appendChild(bgCheck);
+    bgRow.appendChild(bgLbl);
+    body.appendChild(bgRow);
 
     // Transcript del marcador: colapsado (la herramienta ya lo tiene, es solo referencia).
     var sliceEl = createTranscriptSlice(marker);

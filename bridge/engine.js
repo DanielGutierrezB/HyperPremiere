@@ -192,9 +192,12 @@ async function runGeneration(body, mode, onProgress) {
 
   // Config activa (necesitamos el modelo antes de armar los nombres de archivo).
   const config = loadConfig();
+  // Fondo opcional: con fondo => mp4 opaco HD; sin fondo => mov con alpha.
+  const withBackground = body.background === true;
+  const videoExt = withBackground ? 'mp4' : 'mov';
   const baseDir = ensureOutputDir(projectPath, sequenceName);
   const version = nextVersion(baseDir, markerSlug);
-  const outPaths = paths(baseDir, markerSlug, version, config.model);
+  const outPaths = paths(baseDir, markerSlug, version, config.model, videoExt);
 
   // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
   // Si el panel no mandó el HTML previo, lo leemos del disco (versión anterior).
@@ -227,6 +230,17 @@ async function runGeneration(body, mode, onProgress) {
         'El editor subió estos archivos como referencia. Abrilos/leelos antes de diseñar la composición:\n' +
         savedResPaths.map((p) => '- ' + p).join('\n');
     }
+  }
+
+  // Fondo: si el marcador se genera CON fondo, instruir un fondo opaco de
+  // pantalla completa (minimalista, con textura, temático y con buen contraste).
+  if (withBackground) {
+    userPrompt += '\n\n## Fondo (esta composición LLEVA FONDO — NO es transparente)\n' +
+      '- Cubrí TODO el #stage (1920×1080) con un fondo OPACO de pantalla completa; sin zonas transparentes.\n' +
+      '- Estilo MINIMALISTA con algo de TEXTURA sutil (grano fino, gradiente suave, patrón geométrico tenue o ruido leve). Nada recargado.\n' +
+      '- La temática del fondo debe relacionarse con el OBJETIVO de la clase y el tema de este tramo del transcript (evocá el concepto, no lo hagas literal).\n' +
+      '- CONTRASTE: lo que va al frente (texto/gráficos) debe leerse con claridad sobre el fondo. Asegurá suficiente diferencia de luminosidad; si hace falta, poné un velo/oscurecido detrás del texto.\n' +
+      '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
   }
 
   // Continuidad: exponer los otros recursos ya generados en la clase, por si la
@@ -271,7 +285,7 @@ async function runGeneration(body, mode, onProgress) {
   fs.writeFileSync(outPaths.html, html, 'utf8');
 
   report({ pct: 55, msg: 'Renderizando el video con alpha…' });
-  await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report });
+  await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report, format: videoExt });
   report({
     pct: 96,
     msg: 'Tokens: ↑' + usageAcc.inputTokens + ' ↓' + usageAcc.outputTokens +
@@ -291,10 +305,11 @@ async function runGeneration(body, mode, onProgress) {
   saveMeta(outPaths.meta, {
     instruction, marker, version, model: config.model, provider: config.provider,
     mode, adjustment: mode === 'adjust' ? adjustment : undefined,
+    background: withBackground, format: videoExt,
     createdAt: new Date(Date.now()).toISOString(), history,
   });
 
-  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, usage: usageAcc };
+  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, usage: usageAcc, background: withBackground };
 }
 
 // Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al

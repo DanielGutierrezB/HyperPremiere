@@ -1026,3 +1026,11 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   color: var(--text-primary); padding-bottom: 8px; margin-bottom: 4px;
   border-bottom: 1px solid var(--hairline);
 }
+
+/* v0.1.31 — toggle de fondo por marcador */
+.bg-toggle {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--text-secondary); cursor: pointer;
+  padding: 2px 0; user-select: none;
+}
+.bg-toggle input { flex: none; width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
