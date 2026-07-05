@@ -23,44 +23,35 @@
           "typeof require=" + (typeof require) + ", cep_node=" + (typeof window !== "undefined" && !!window.cep_node);
         return;
       }
-      var _fs = null; try { _fs = req("fs"); } catch (e) {}
+      // fs para calcular el realpath del symlink (probamos ambos requires: en
+      // algunos CEP window.cep_node.require no resuelve builtins pero el global sí).
+      function tryReq(r, m) { try { return r(m); } catch (e) { return null; } }
+      var _fs = tryReq(req, "fs");
+      if (!_fs && typeof require === "function" && require !== req) _fs = tryReq(require, "fs");
 
-      // Armar rutas CANDIDATAS al motor y quedarnos con la primera que exista.
-      // La extensión suele ser un symlink al repo: si CEP nos da la ruta del
-      // symlink SIN resolver, "<ext>/../bridge" apunta a la carpeta de
-      // extensiones (no al repo) y no existe. Por eso probamos también la ruta
-      // REAL (realpath) y el fallback dev hardcodeado.
+      // Armar rutas CANDIDATAS al motor. La extensión suele ser un symlink al
+      // repo: si CEP nos da la ruta del symlink SIN resolver, "<ext>/../bridge"
+      // apunta a la carpeta de extensiones (no al repo) y no existe. Por eso
+      // probamos también la ruta REAL (realpath) y el fallback dev hardcodeado.
       var candidates = [];
       try {
         var _cs = new CSInterface();
         var extDir = _cs.getSystemPath(SystemPath.EXTENSION);
         if (extDir) {
-          candidates.push(extDir + "/../bridge/engine.js");
+          candidates.push(extDir + "/bridge/engine.js");    // bridge DENTRO de la extensión (empaquetado)
+          candidates.push(extDir + "/../bridge/engine.js"); // bridge hermano (symlink resuelto)
           if (_fs && _fs.realpathSync) {
-            try { candidates.push(_fs.realpathSync(extDir) + "/../bridge/engine.js"); } catch (e) {}
+            try {
+              var real = _fs.realpathSync(extDir);
+              candidates.push(real + "/bridge/engine.js");
+              candidates.push(real + "/../bridge/engine.js"); // symlink → repo/cep → repo/bridge
+            } catch (e) {}
           }
         }
       } catch (e) {}
       candidates.push(ENGINE_PATH); // fallback dev (repo de Daniel)
 
-      var found = null;
-      if (_fs && _fs.existsSync) {
-        for (var ci = 0; ci < candidates.length; ci++) {
-          if (candidates[ci] && _fs.existsSync(candidates[ci])) { found = candidates[ci]; break; }
-        }
-      } else {
-        found = candidates[0]; // sin fs no podemos chequear; probamos la primera
-      }
-      if (!found) {
-        HP_ENGINE_ERR = "No se encontró engine.js en ninguna ruta candidata:\n- " +
-          candidates.join("\n- ") + "\nLa extensión no apunta al bridge del repo (¿symlink roto?).";
-        return;
-      }
-      ENGINE_PATH = found;
-
-      // Node cachea los require: sin esto, recargar el panel (⟳) NO trae los
-      // cambios del motor. Vaciamos la caché del bridge (separador-agnóstico:
-      // normalizamos \ a / para que funcione también en Windows).
+      // Vaciar cache del bridge para que ⟳ traiga cambios del motor.
       try {
         if (req.cache) {
           Object.keys(req.cache).forEach(function (k) {
@@ -68,13 +59,28 @@
           });
         }
       } catch (e) {}
-      HP_ENGINE = req(ENGINE_PATH);
-      if (!HP_ENGINE) HP_ENGINE_ERR = "require(engine.js) devolvió vacío (sin error). Ruta: " + ENGINE_PATH;
+
+      // Intentar requerir cada candidata DE VERDAD (no dependemos de existsSync:
+      // algunos CEP no exponen fs por este require). La primera que cargue gana.
+      var errors = [];
+      for (var ci = 0; ci < candidates.length && !HP_ENGINE; ci++) {
+        var cand = candidates[ci];
+        if (!cand) continue;
+        try {
+          var mod = req(cand);
+          if (mod) { HP_ENGINE = mod; ENGINE_PATH = cand; }
+        } catch (e) {
+          errors.push(cand + "  →  " + (e && (e.message || e)));
+        }
+      }
+      if (!HP_ENGINE) {
+        HP_ENGINE_ERR = "No pude cargar el motor. Rutas probadas:\n- " + errors.join("\n- ");
+      }
     } catch (e) {
       HP_ENGINE = null;
       // Capturar la causa REAL (stack completo) para no andar adivinando.
       var detail = (e && (e.stack || e.message)) ? String(e.stack || e.message) : String(e);
-      HP_ENGINE_ERR = "El motor falló al cargar (require de engine.js).\nRuta: " + ENGINE_PATH + "\n" + detail;
+      HP_ENGINE_ERR = "El motor falló al cargar (loadEngine).\n" + detail;
       try { if (typeof console !== "undefined" && console.error) console.error("[HyperPremiere] loadEngine:", e); } catch (e2) {}
     }
   })();
