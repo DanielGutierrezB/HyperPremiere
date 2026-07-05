@@ -604,8 +604,45 @@ async function renderManualHtml(body, onProgress) {
   return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
 }
 
+// Re-renderiza la ÚLTIMA versión de un marcador en ALTA calidad, sin llamar al
+// modelo (reusa el HTML ya generado). Crea una versión nueva tagueada [hq].
+// Sirve para "Render HQ": previsualizás en borrador y luego pasás todo a HD.
+async function renderVersionHQ(body, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
+  body = body || {};
+  const markerSlug = String(body.markerSlug || '').trim();
+  if (!markerSlug) throw new Error('renderVersionHQ: falta markerSlug');
+  const marker = body.marker || {};
+  const durationSec = Number(marker.duration) || 0;
+  if (durationSec <= 0) throw new Error('renderVersionHQ: marker.duration debe ser > 0');
+
+  const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+  const list = listMarkerVersions({ projectPath: body.projectPath, sequenceName: body.sequenceName, markerSlug });
+  if (!list.ok || !list.versions.length) throw new Error('No hay versiones para ' + markerSlug);
+  const latest = list.versions[list.versions.length - 1].version;
+  const srcHtmlPath = versionFile(baseDir, markerSlug, latest, '.html');
+  const html = srcHtmlPath ? fs.readFileSync(srcHtmlPath, 'utf8') : '';
+  if (!html) throw new Error('No se encontró el HTML de la última versión (v' + latest + ')');
+
+  const withBackground = body.background === true;
+  const videoExt = withBackground ? 'mp4' : 'mov';
+  const version = nextVersion(baseDir, markerSlug);
+  const outPaths = paths(baseDir, markerSlug, version, 'hq', videoExt);
+
+  report({ pct: 30, msg: 'Render HQ (alta calidad) de v' + latest + '…' });
+  fs.writeFileSync(outPaths.html, html, 'utf8');
+  await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report, format: videoExt, quality: 'high' });
+  saveMeta(outPaths.meta, {
+    instruction: '(render HQ de v' + latest + ')', marker, version, model: 'hq', provider: 'hq',
+    mode: 'hq', background: withBackground, format: videoExt,
+    createdAt: new Date(Date.now()).toISOString(), history: [],
+  });
+  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, background: withBackground };
+}
+
 module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
+  renderVersionHQ,
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   // Etapas separadas para el pipeline de la cola (solapar modelo/render):
   prepareGenerate: (body, onProgress) => prepareGeneration(body, 'generate', onProgress),

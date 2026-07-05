@@ -1052,3 +1052,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   border-radius: var(--radius-sm); padding: 3px 9px; cursor: pointer;
 }
 .queue-start:hover { background: rgba(10, 233, 141, 0.18); border-color: var(--ok); color: var(--ok); }
+
+/* v1.0.2 — botón Render HQ por secuencia en la cola */
+.qbtn-hq { width: auto; font-size: 10px; color: var(--ok); border-color: rgba(10,233,141,0.4); padding: 2px 7px; letter-spacing: 0.02em; }
+.qbtn-hq:hover { color: var(--ok); border-color: var(--ok); background: rgba(10,233,141,0.1); }

@@ -601,7 +601,9 @@
       job.msg = "Renderizando…"; emit();
       var p = (job.kind === "renderManualHtml")
         ? callEngine("renderManualHtml", job.payload, onP(job))
-        : callEngine("renderPrepared", job.prepared, onP(job));
+        : (job.kind === "renderVersionHQ")
+          ? callEngine("renderVersionHQ", job.payload, onP(job))
+          : callEngine("renderPrepared", job.prepared, onP(job));
       p.then(function (res) {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
         finishPlace(job, res);
@@ -618,7 +620,7 @@
       if (!renderBusy && (overlap || !modelBusy)) {
         for (var i = 0; i < jobs.length; i++) {
           var j = jobs[i];
-          if (j.status === "ready" || (j.status === "queued" && j.kind === "renderManualHtml")) { startRender(j); break; }
+          if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ"))) { startRender(j); break; }
         }
       }
       // Carril MODELO (en local, no mientras el render corre).
@@ -759,6 +761,7 @@
       if (!c._markerKey || !c._applyJob) continue;
       var job = HPQueue.latestFor(currentSequenceName, c._markerKey);
       if (job) c._applyJob(job);
+      else if (c._clearJob) c._clearJob(); // sin job (ej. borrado de la cola) → re-habilitar
     }
   }
 
@@ -767,6 +770,30 @@
     b.type = "button"; b.className = "qbtn"; b.textContent = txt; b.title = title;
     b.addEventListener("click", function (e) { e.stopPropagation(); cb(); });
     return b;
+  }
+
+  // Re-renderiza en HQ la última versión de cada marcador de una secuencia
+  // (según los jobs de esa secuencia en la cola). Encola y arranca.
+  function renderSeqHQ(seqName) {
+    var jobs = HPQueue.jobs();
+    var byMarker = {};
+    for (var i = 0; i < jobs.length; i++) {
+      var j = jobs[i];
+      if (j.seqName === seqName && j.markerKey) byMarker[j.markerKey] = j; // el último gana
+    }
+    Object.keys(byMarker).forEach(function (mk) {
+      var j = byMarker[mk];
+      HPQueue.add({
+        kind: "renderVersionHQ",
+        payload: {
+          projectPath: j.projectPath, sequenceName: seqName, markerSlug: mk,
+          marker: { start: j.markerStart, end: j.markerStart + j.markerDuration, duration: j.markerDuration },
+          background: !!(j.payload && j.payload.background)
+        },
+        seqName: seqName, projectPath: j.projectPath, markerKey: mk,
+        label: mk + " (Render HQ)", markerStart: j.markerStart, markerDuration: j.markerDuration
+      });
+    });
   }
 
   // Panel de cola global: agrupado por secuencia, con reordenamiento
@@ -814,13 +841,22 @@
       var gh = document.createElement("div"); gh.className = "queue-seq";
       var gname = document.createElement("span"); gname.className = "qs-name"; gname.textContent = g.seqName;
       gh.appendChild(gname);
+      var ctrls = document.createElement("span"); ctrls.className = "qs-ctrls";
       // Reordenar la secuencia completa (solo si tiene jobs en cola).
       if (queuedInGroup > 0) {
-        var ctrls = document.createElement("span"); ctrls.className = "qs-ctrls";
         if (gi > 0) ctrls.appendChild(iconBtn("▲", "Subir esta secuencia", function () { HPQueue.moveSeq(g.seqName, -1); }));
         if (gi < groups.length - 1) ctrls.appendChild(iconBtn("▼", "Bajar esta secuencia", function () { HPQueue.moveSeq(g.seqName, 1); }));
-        gh.appendChild(ctrls);
       }
+      // Render HQ: re-renderiza en alta calidad la última versión de cada marcador
+      // de esta secuencia (útil tras previsualizar en borrador). Si hay ≥1 hecho.
+      var doneInGroup = g.jobs.filter(function (j) { return j.status === "done"; }).length;
+      if (doneInGroup > 0) {
+        var hqSeq = g.seqName;
+        var hq = iconBtn("Render HQ", "Re-renderiza en alta calidad la última versión de cada marcador de esta secuencia", function () { renderSeqHQ(hqSeq); });
+        hq.className = "qbtn qbtn-hq";
+        ctrls.appendChild(hq);
+      }
+      if (ctrls.childNodes.length) gh.appendChild(ctrls);
       panel.appendChild(gh);
 
       var qIdx = 0, qCount = g.jobs.filter(function (j) { return j.status === "queued"; }).length;
@@ -1010,6 +1046,13 @@
         status.textContent = job.msg || "Error";
         sBadge.textContent = "⚠";
       }
+    };
+    // Sin job asociado (ej. se borró de la cola): re-habilita los botones.
+    card._clearJob = function () {
+      setButtonsDisabled(buttons, false);
+      status.className = "marker-status";
+      status.textContent = "";
+      syncUI();
     };
 
     var estimate = document.createElement("div");
