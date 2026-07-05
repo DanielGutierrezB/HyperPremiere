@@ -115,7 +115,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
     const stdout = await new Promise((resolve, reject) => {
       // shell: false (default) + args por array => sin interpretacion de shell.
-      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv });
+      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv, shell: process.platform === 'win32' });
 
       let out = '';
       let err = '';

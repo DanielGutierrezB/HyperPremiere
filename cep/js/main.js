@@ -4,22 +4,30 @@
   var DEBOUNCE_MS = 300;
 
   // Motor "todo en uno": corre dentro del panel vía Node (CEP --enable-nodejs).
-  // No hay servidor ni proceso externo. Ruta absoluta al módulo del repo.
-  var ENGINE_PATH = "/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/bridge/engine.js";
+  // La ruta se deriva de la carpeta de la extensión (cross-platform: mac/Windows),
+  // el bridge vive en <extensión>/../bridge. Fallback dev por si CEP no la da.
   var HP_ENGINE = null;
+  var ENGINE_PATH = "/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/bridge/engine.js";
   (function loadEngine() {
     try {
+      // Ruta de la extensión (cep/) para ubicar el bridge sin hardcodear el SO.
+      try {
+        var _cs = new CSInterface();
+        var extDir = _cs.getSystemPath(SystemPath.EXTENSION);
+        if (extDir) ENGINE_PATH = extDir + "/../bridge/engine.js";
+      } catch (e) {}
+
       var req = (typeof window !== "undefined" && window.cep_node && window.cep_node.require)
         ? window.cep_node.require
         : (typeof require === "function" ? require : null);
       if (!req) return;
       // Node cachea los require: sin esto, recargar el panel (⟳) NO trae los
-      // cambios del motor (seguiría el módulo viejo en memoria hasta reiniciar
-      // Premiere). Vaciamos la caché de todo el bridge para cargarlo fresco.
+      // cambios del motor. Vaciamos la caché del bridge (separador-agnóstico:
+      // normalizamos \ a / para que funcione también en Windows).
       try {
         if (req.cache) {
           Object.keys(req.cache).forEach(function (k) {
-            if (k.indexOf("/HyperPremiere/bridge/") !== -1) delete req.cache[k];
+            if (k.replace(/\\/g, "/").indexOf("/bridge/") !== -1) delete req.cache[k];
           });
         }
       } catch (e) {}
@@ -170,6 +178,11 @@
 
   var currentProjectPath = "";
   var currentSequenceName = "";
+  // Proveedor local (Ollama): la cola NO solapa modelo+render (ambos usan la máquina).
+  var currentProviderIsLocal = false;
+  // Modo borrador (render rápido, menor calidad) — preferencia global de sesión.
+  var draftMode = false;
+  try { draftMode = window.localStorage.getItem("hyperpremiere::draft") === "1"; } catch (e) {}
 
   function loadContext(done) {
     csInterface.evalScript("hp_getProjectPath()", function (projectPath) {
@@ -529,49 +542,90 @@
         HPStore.setContext(currentProjectPath, currentSequenceName);
       } catch (e) {}
     }
-    function tick() {
-      if (running) return;
-      var job = nextQueued();
-      if (!job) return;
-      running = true;
-      job.status = "running"; job.pct = 3; job.msg = "Preparando…"; job.startedAt = Date.now();
-      emit();
-      function onP(p) {
+    // Pipeline de 2 carriles: MODELO (nube) y RENDER (local). El render corre de
+    // a uno (es lo pesado en RAM); el modelo del siguiente puede ir mientras el
+    // actual renderiza — SOLO si el proveedor es cloud (en local no se solapa,
+    // porque el modelo también usa la máquina).
+    var modelBusy = false, renderBusy = false;
+    function onP(job) {
+      return function (p) {
         if (!p) return;
         if (typeof p.pct === "number") job.pct = Math.max(0, Math.min(100, p.pct));
         if (p.msg) job.msg = p.msg;
+        if (p.usage) job.usage = p.usage;
         emit();
+      };
+    }
+    function callEngine(method, arg, prog) {
+      if (HP_ENGINE && typeof HP_ENGINE[method] === "function") {
+        try { return Promise.resolve(HP_ENGINE[method](arg, prog)); }
+        catch (e) { return Promise.reject(e); }
       }
-      var call;
-      if (HP_ENGINE && typeof HP_ENGINE[job.kind] === "function") {
-        try { call = Promise.resolve(HP_ENGINE[job.kind](job.payload, onP)); }
-        catch (e) { call = Promise.reject(e); }
-      } else {
-        call = Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
-      }
-      call.then(function (res) {
-        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
-        job.version = res.version; job.usage = res.usage || null;
-        if (job.usage) { HPStore.addSessionUsage(job.usage); updateSessionUsageBar(); }
-        job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
-        var movArg = JSON.stringify(res.movPath), seqArg = JSON.stringify(job.seqName);
-        csInterface.evalScript(
-          "hp_placeClipInSequence(" + movArg + ", " + seqArg + ", " + job.markerStart + ", " + job.markerDuration + ")",
-          function (place) {
-            var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
-            var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
-            job.status = "done"; job.pct = 100;
-            job.msg = (place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place) +
-              " (v" + job.version + ")" + tok + " · " + dur;
-            markGenerated(job);
-            emit(); running = false; tick();
-          }
-        );
+      return Promise.reject(new Error("Motor no disponible. Cerrá y reabrí Premiere."));
+    }
+    function finishPlace(job, res) {
+      job.version = res.version;
+      if (res.usage && !job._usageCounted) { job.usage = res.usage; HPStore.addSessionUsage(res.usage); updateSessionUsageBar(); job._usageCounted = true; }
+      job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
+      var movArg = JSON.stringify(res.movPath), seqArg = JSON.stringify(job.seqName);
+      csInterface.evalScript(
+        "hp_placeClipInSequence(" + movArg + ", " + seqArg + ", " + job.markerStart + ", " + job.markerDuration + ")",
+        function (place) {
+          var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
+          var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
+          job.status = "done"; job.pct = 100;
+          job.msg = (place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place) +
+            " (v" + job.version + ")" + tok + " · " + dur;
+          markGenerated(job);
+          renderBusy = false; emit(); pump();
+        }
+      );
+    }
+    function startModel(job) {
+      modelBusy = true; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now(); emit();
+      var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
+      callEngine(method, job.payload, onP(job)).then(function (prep) {
+        if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
+        job.prepared = prep;
+        if (prep.usage) { job.usage = prep.usage; HPStore.addSessionUsage(prep.usage); updateSessionUsageBar(); job._usageCounted = true; }
+        job.status = "ready"; job.msg = "En espera de render…";
+        modelBusy = false; emit(); pump();
       }).catch(function (err) {
-        job.status = "error";
-        job.msg = "Error: " + (err && err.message ? err.message : String(err));
-        emit(); running = false; tick();
+        job.status = "error"; job.msg = "Error: " + (err && err.message ? err.message : String(err));
+        modelBusy = false; emit(); pump();
       });
+    }
+    function startRender(job) {
+      renderBusy = true; job.status = "running"; if (!job.startedAt) job.startedAt = Date.now();
+      job.msg = "Renderizando…"; emit();
+      var p = (job.kind === "renderManualHtml")
+        ? callEngine("renderManualHtml", job.payload, onP(job))
+        : callEngine("renderPrepared", job.prepared, onP(job));
+      p.then(function (res) {
+        if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
+        finishPlace(job, res);
+      }).catch(function (err) {
+        job.status = "error"; job.msg = "Error: " + (err && err.message ? err.message : String(err));
+        renderBusy = false; emit(); pump();
+      });
+    }
+    function pump() {
+      // En local (Ollama) NO se solapa: modelo y render usan la misma máquina.
+      var overlap = !currentProviderIsLocal;
+      // Carril RENDER (uno a la vez; en local, además, no mientras el modelo corre).
+      if (!renderBusy && (overlap || !modelBusy)) {
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          if (j.status === "ready" || (j.status === "queued" && j.kind === "renderManualHtml")) { startRender(j); break; }
+        }
+      }
+      // Carril MODELO (en local, no mientras el render corre).
+      if (!modelBusy && (overlap || !renderBusy)) {
+        for (var k = 0; k < jobs.length; k++) {
+          var m = jobs[k];
+          if (m.status === "queued" && (m.kind === "generate" || m.kind === "feedback")) { startModel(m); break; }
+        }
+      }
     }
     // Reordenamiento: solo afecta a los jobs EN COLA (el que corre no se mueve).
     // Reescribe el orden de las ranuras "queued" en el array según orderIds.
@@ -603,7 +657,7 @@
       add: function (job) {
         job.id = "j" + (++counter);
         job.status = "queued"; job.pct = 0; job.msg = "En cola…";
-        jobs.push(job); emit(); tick();
+        jobs.push(job); emit(); pump();
         return job.id;
       },
       on: function (cb) { subs.push(cb); },
@@ -640,7 +694,12 @@
         jobs = jobs.filter(function (j) { return !(j.id === id && j.status === "queued"); });
         emit();
       },
-      clearFinished: function () { jobs = jobs.filter(function (j) { return j.status === "queued" || j.status === "running"; }); emit(); }
+      clearFinished: function () {
+        jobs = jobs.filter(function (j) {
+          return j.status === "queued" || j.status === "modeling" || j.status === "ready" || j.status === "running";
+        });
+        emit();
+      }
     };
   })();
 
@@ -656,7 +715,7 @@
       marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
       stills: data.stills || [], resources: data.resources || [],
-      background: !!data.background,
+      background: !!data.background, draft: draftMode,
       markerSlug: markerKey, mode: mode
     };
     if (mode === "adjust") payload.adjustment = data.instruction || "";
@@ -694,7 +753,7 @@
     if (!panel) return;
     if (!jobs.length) { panel.setAttribute("data-hidden", "true"); panel.innerHTML = ""; return; }
     var pending = 0, i;
-    for (i = 0; i < jobs.length; i++) if (jobs[i].status === "queued" || jobs[i].status === "running") pending++;
+    for (i = 0; i < jobs.length; i++) { var st = jobs[i].status; if (st === "queued" || st === "modeling" || st === "ready" || st === "running") pending++; }
     panel.setAttribute("data-hidden", "false");
     panel.innerHTML = "";
 
@@ -733,7 +792,7 @@
         var row = document.createElement("div"); row.className = "queue-job is-" + j.status;
         var line = document.createElement("div"); line.className = "qj-line";
         var top = document.createElement("div"); top.className = "qj-title";
-        var dot = j.status === "running" ? "▶ " : j.status === "queued" ? "• " : j.status === "done" ? "✓ " : "⚠ ";
+        var dot = (j.status === "running") ? "▶ " : (j.status === "modeling") ? "✎ " : (j.status === "ready") ? "◔ " : (j.status === "queued") ? "• " : (j.status === "done") ? "✓ " : "⚠ ";
         top.textContent = dot + j.label;
         line.appendChild(top);
         if (j.status === "queued") {
@@ -747,7 +806,7 @@
         row.appendChild(line);
         var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
         row.appendChild(msg);
-        if (j.status === "running") {
+        if (j.status === "running" || j.status === "modeling") {
           var bar = document.createElement("div"); bar.className = "hp-bar";
           var fill = document.createElement("div"); fill.className = "hp-bar-fill"; fill.style.width = (j.pct || 0) + "%"; bar.appendChild(fill);
           row.appendChild(bar);
@@ -880,7 +939,8 @@
     // status y un indicador en el summary (visible aunque esté colapsada).
     card._applyJob = function (job) {
       if (!job) return;
-      if (job.status === "queued" || job.status === "running") {
+      var active = job.status === "queued" || job.status === "modeling" || job.status === "ready" || job.status === "running";
+      if (active) {
         setButtonsDisabled(buttons, true);
         status.className = "marker-status is-busy";
         status.textContent = "";
@@ -889,7 +949,7 @@
         fill.style.width = (job.pct || 0) + "%"; bar.appendChild(fill);
         var m = document.createElement("div"); m.className = "hp-bar-msg"; m.textContent = job.msg || "";
         status.appendChild(bar); status.appendChild(m);
-        sBadge.textContent = job.status === "running" ? "⏳" : "…";
+        sBadge.textContent = (job.status === "running" || job.status === "modeling") ? "⏳" : "…";
       } else if (job.status === "done") {
         setButtonsDisabled(buttons, false);
         status.className = "marker-status is-ok";
@@ -1016,7 +1076,7 @@
         payload: {
           projectPath: currentProjectPath, sequenceName: currentSequenceName,
           marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
-          markerSlug: markerKey, html: html
+          markerSlug: markerKey, html: html, draft: draftMode
         },
         seqName: currentSequenceName, projectPath: currentProjectPath, markerKey: markerKey,
         label: markerKey + " (edición manual)", markerStart: marker.start, markerDuration: marker.duration
@@ -1367,6 +1427,7 @@
   function applyConfigToUI(cfg) {
     if (!cfg) return;
     if (cfg.provider) cfgProviderSel.value = cfg.provider;
+    currentProviderIsLocal = (cfg.provider === "ollama");
     currentHasSession = Boolean(cfg.hasSession);
     cfgBaseUrl.value = cfg.baseUrl || "";
     cfgApiKey.value = "";
@@ -1543,6 +1604,16 @@
     if (!hdrStatus) return;
     hdrStatus.textContent = text;
     hdrStatus.className = "hdr-chip is-" + (state || "idle");
+  }
+
+  // ── Toggle de modo borrador (global) ────────────────────────────────
+  var draftCheck = document.getElementById("draft-mode");
+  if (draftCheck) {
+    draftCheck.checked = draftMode;
+    draftCheck.addEventListener("change", function () {
+      draftMode = draftCheck.checked;
+      try { window.localStorage.setItem("hyperpremiere::draft", draftMode ? "1" : "0"); } catch (e) {}
+    });
   }
 
   // ── "¿Cómo funciona?" como overlay ──────────────────────────────────

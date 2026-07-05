@@ -45,7 +45,7 @@ function removeGhostFiles(dir) {
  *                                    la duración real la define la composición HTML).
  * @returns {Promise<{movPath: string, htmlPath: string}>}
  */
-async function renderComposition({ html, outMovPath, durationSec, onProgress, format }) {
+async function renderComposition({ html, outMovPath, durationSec, onProgress, format, quality }) {
   var report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!html || typeof html !== 'string') {
     throw new Error('renderComposition: falta el HTML de la composición');
@@ -54,6 +54,7 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     throw new Error('renderComposition: falta outMovPath');
   }
   var fmt = format === 'mp4' ? 'mp4' : 'mov';
+  var q = quality === 'draft' ? 'draft' : 'high'; // borrador rápido vs alta calidad
 
   // Directorio temporal propio para esta render (cwd del CLI).
   // hyperframes espera un PROYECTO: index.html + hyperframes.json en la raíz.
@@ -73,7 +74,9 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   removeGhostFiles(workDir);
 
   // Usar el binario LOCAL de hyperframes (evita que npx lo re-descargue).
-  const localBin = path.join(__dirname, '..', 'node_modules', '.bin', 'hyperframes');
+  // En Windows el shim es .cmd (requiere shell:true al lanzar).
+  const isWin = process.platform === 'win32';
+  const localBin = path.join(__dirname, '..', 'node_modules', '.bin', isWin ? 'hyperframes.cmd' : 'hyperframes');
   const bin = fs.existsSync(localBin) ? localBin : 'npx';
   const baseArgs = bin === 'npx' ? ['hyperframes'] : [];
 
@@ -91,10 +94,10 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     workDir,
     '-o', outMovPath,
     '--format', fmt,
-    '--quality', 'high',
+    '--quality', q,
     '--workers', '1',
   ]);
-  if (fmt === 'mp4') args.push('--crf', '18');
+  if (fmt === 'mp4') args.push('--crf', q === 'draft' ? '28' : '18');
   void durationSec; // informativo; la duración vive en el HTML.
 
   await new Promise((resolve, reject) => {
@@ -102,6 +105,7 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
       cwd: workDir,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: isWin, // Windows: el shim .cmd/npx necesita shell
     });
 
     let stderr = '';

@@ -65,7 +65,9 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: false, options: { num_ctx: NUM_CTX } }),
+      // keep_alive: deja el modelo residente 30 min → los marcadores siguientes
+      // no pagan el cold-load (~20-40s) de recargar 19-20GB cada vez.
+      body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m', options: { num_ctx: NUM_CTX } }),
       signal: controller.signal,
     });
   } catch (e) {

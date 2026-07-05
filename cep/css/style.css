@@ -1034,3 +1034,12 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   padding: 2px 0; user-select: none;
 }
 .bg-toggle input { flex: none; width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
+
+/* v1.0.0 — toggle de modo borrador (global, bajo la barra de acciones) */
+.draft-toggle {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 16px 8px; margin: 0;
+  font-size: 11px; color: var(--text-secondary); cursor: pointer; user-select: none;
+  background: var(--bg-panel); border-bottom: 1px solid var(--hairline);
+}
+.draft-toggle input { flex: none; width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }

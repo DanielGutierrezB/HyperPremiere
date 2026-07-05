@@ -108,6 +108,15 @@ function buildUserPrompt(ctx) {
     );
   }
 
+  // Recordatorio del contrato (reduce reintentos por HTML inválido).
+  parts.push('\n## Contrato obligatorio (verificá antes de responder)');
+  parts.push(
+    '- El <div id="stage"> DEBE tener: data-composition-id, data-width="1920", data-height="1080", ' +
+      'data-duration (número > 0 = duración en segundos) y data-fps="30".\n' +
+      '- El script DEBE terminar con window.__timelines[COMP_ID] = tl; (COMP_ID = data-composition-id).\n' +
+      '- Sin esos tres (data-composition-id, data-duration > 0, __timelines) el render falla.'
+  );
+
   parts.push('\nDevolvé SOLO el HTML completo de la composición.');
 
   return parts.join('\n');

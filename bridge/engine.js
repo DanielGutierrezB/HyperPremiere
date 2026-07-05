@@ -31,11 +31,16 @@ const {
   saveResources,
 } = require('./store/project-fs');
 
-// CEP corre Node con un PATH mínimo (apps de GUI en macOS no heredan el shell).
-// Prepend de las rutas donde viven claude, ffmpeg, node y demás, para que los
-// spawn (claude, hyperframes→ffmpeg) los encuentren dentro de Premiere.
+const IS_WIN = process.platform === 'win32';
+
+// CEP corre Node con un PATH mínimo (apps de GUI no heredan el shell).
+// En mac/Linux prependemos las rutas típicas de claude/ffmpeg/node/git. En
+// Windows el instalador ya deja esos binarios en el PATH del sistema, así que
+// no tocamos nada (evita romper el PATH de Windows con separadores unix).
 (function ensurePath() {
-  const extra = ['/opt/homebrew/bin', path.join(os.homedir(), '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  if (IS_WIN) return;
+  const home = os.homedir();
+  const extra = ['/opt/homebrew/bin', path.join(home, '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
   const current = (process.env.PATH || '').split(':').filter(Boolean);
   const merged = [];
   for (const p of extra.concat(current)) if (p && merged.indexOf(p) === -1) merged.push(p);
@@ -154,7 +159,10 @@ async function listOllamaModels(baseUrl) {
   }
 }
 
-async function runGeneration(body, mode, onProgress) {
+// Etapa 1 (MODELO): arma el prompt, llama al modelo y escribe el HTML.
+// NO renderiza. Devuelve un "prepared" que renderPrepared() consume después.
+// Separar modelo/render permite solapar (generar el siguiente mientras renderiza el actual).
+async function prepareGeneration(body, mode, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   const { projectPath, sequenceName, objective, transcript, marker, markerTranscript,
     instruction, stills, adjustment, previousHtml } = body || {};
@@ -243,13 +251,18 @@ async function runGeneration(body, mode, onProgress) {
       '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
   }
 
-  // Continuidad: exponer los otros recursos ya generados en la clase, por si la
-  // instrucción pide continuar/retomar otro marcador.
-  const others = listOtherResources(baseDir, markerSlug);
-  if (others.length) {
-    userPrompt += '\n\n## Otros recursos ya generados en esta clase (referencia de continuidad y estilo)\n' +
-      'Si tu instrucción pide continuar, retomar o mantener coherencia con otro marcador, usá estos como base:\n' +
-      others.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
+  // Continuidad: SOLO inyectar el HTML de otros marcadores si la instrucción
+  // realmente pide continuar/retomar/mantener estilo (ahorra tokens y latencia;
+  // antes se mandaba siempre, hasta 12k chars por generación).
+  const contHint = ((instruction || '') + ' ' + (adjustment || '')).toLowerCase();
+  const wantsContinuity = /(retom|continu|anterior|sigu|mism[oa]|coheren|igual que|como (el|la)|estilo|empalm|coincid|en línea con|misma línea)/.test(contHint);
+  if (wantsContinuity) {
+    const others = listOtherResources(baseDir, markerSlug);
+    if (others.length) {
+      userPrompt += '\n\n## Otros recursos ya generados en esta clase (referencia de continuidad y estilo)\n' +
+        'Mantené coherencia con estos (tu instrucción pide continuar/retomar):\n' +
+        others.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
+    }
   }
 
   const provider = getProvider(config.provider);
@@ -283,33 +296,56 @@ async function runGeneration(body, mode, onProgress) {
 
   if (!html) throw new Error(`El proveedor "${config.provider}" devolvió respuesta vacía`);
   fs.writeFileSync(outPaths.html, html, 'utf8');
-
-  report({ pct: 55, msg: 'Renderizando el video con alpha…' });
-  await renderComposition({ html, outMovPath: outPaths.mov, durationSec, onProgress: report, format: videoExt });
   report({
-    pct: 96,
-    msg: 'Tokens: ↑' + usageAcc.inputTokens + ' ↓' + usageAcc.outputTokens +
-      (typeof usageAcc.costUsd === 'number' ? ' · $' + usageAcc.costUsd.toFixed(4) : ''),
+    pct: 55,
+    msg: 'HTML listo · Tokens: ↑' + usageAcc.inputTokens + ' ↓' + usageAcc.outputTokens,
     usage: usageAcc,
   });
 
+  // "prepared": todo lo que renderPrepared necesita para renderizar + guardar meta.
+  return {
+    ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
+    durationSec, videoExt, draft: body.draft === true, version, markerSlug, baseDir,
+    usage: usageAcc, background: withBackground, instruction, marker,
+    model: config.model, provider: config.provider, mode, adjustment,
+  };
+}
+
+// Etapa 2 (RENDER): renderiza el HTML preparado y guarda la metadata.
+async function renderPrepared(prepared, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
+  if (!prepared || !prepared.ok) throw new Error('renderPrepared: prepared inválido');
+  report({ pct: 60, msg: prepared.background ? 'Renderizando video HD (con fondo)…' : 'Renderizando el video con alpha…' });
+  await renderComposition({
+    html: prepared.html, outMovPath: prepared.outMovPath, durationSec: prepared.durationSec,
+    onProgress: report, format: prepared.videoExt, quality: prepared.draft ? 'draft' : 'high',
+  });
+
   let history = [];
-  if (version > 1) {
-    const prevMetaPath = versionFile(baseDir, markerSlug, version - 1, '.meta.json');
+  if (prepared.version > 1) {
+    const prevMetaPath = versionFile(prepared.baseDir, prepared.markerSlug, prepared.version - 1, '.meta.json');
     const prevMeta = prevMetaPath ? readMeta(prevMetaPath) : null;
     if (prevMeta) {
       history = Array.isArray(prevMeta.history) ? prevMeta.history.slice() : [];
       history.push({ version: prevMeta.version, instruction: prevMeta.instruction, createdAt: prevMeta.createdAt });
     }
   }
-  saveMeta(outPaths.meta, {
-    instruction, marker, version, model: config.model, provider: config.provider,
-    mode, adjustment: mode === 'adjust' ? adjustment : undefined,
-    background: withBackground, format: videoExt,
+  saveMeta(prepared.metaPath, {
+    instruction: prepared.instruction, marker: prepared.marker, version: prepared.version,
+    model: prepared.model, provider: prepared.provider, mode: prepared.mode,
+    adjustment: prepared.mode === 'adjust' ? prepared.adjustment : undefined,
+    background: prepared.background, format: prepared.videoExt,
     createdAt: new Date(Date.now()).toISOString(), history,
   });
 
-  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, usage: usageAcc, background: withBackground };
+  return { ok: true, movPath: prepared.outMovPath, htmlPath: prepared.htmlPath, version: prepared.version, markerSlug: prepared.markerSlug, usage: prepared.usage, background: prepared.background };
+}
+
+// Atómico (modelo + render en una): compat / fallback sin pipeline.
+async function runGeneration(body, mode, onProgress) {
+  const prepared = await prepareGeneration(body, mode, onProgress);
+  if (!prepared || !prepared.ok) return prepared;
+  return renderPrepared(prepared, onProgress);
 }
 
 // Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al
@@ -372,7 +408,7 @@ async function deriveObjective(body) {
 function loginClaude() {
   const { spawn } = require('child_process');
   return new Promise((resolve, reject) => {
-    const child = spawn('claude', ['setup-token'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('claude', ['setup-token'], { stdio: ['ignore', 'pipe', 'pipe'], shell: IS_WIN });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('login: timeout (5 min)')); }, 300000);
     child.stdout.on('data', (c) => { out += c; });
@@ -409,7 +445,7 @@ function listOtherResources(baseDir, currentSlug) {
     if (slug === currentSlug) continue;
     if (!latest[slug] || ver > latest[slug].version) latest[slug] = { version: ver, file: name };
   }
-  let budget = 12000; // tope total de chars para no inflar tokens
+  let budget = 6000; // tope total de chars para no inflar tokens
   for (const slug in latest) {
     if (budget <= 0) break;
     try {
@@ -448,7 +484,7 @@ function getVersion() {
 function gitRun(args) {
   const { spawn } = require('child_process');
   return new Promise((resolve) => {
-    const child = spawn('git', ['-C', REPO_ROOT].concat(args), { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('git', ['-C', REPO_ROOT].concat(args), { stdio: ['ignore', 'pipe', 'pipe'], shell: IS_WIN });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); resolve({ code: -1, out, err: 'timeout' }); }, 90000);
     child.stdout.on('data', (c) => { out += c; });
@@ -549,7 +585,7 @@ async function renderManualHtml(body, onProgress) {
   fs.writeFileSync(outPaths.html, cleanHtml, 'utf8');
 
   report({ pct: 40, msg: 'Renderizando el video con alpha…' });
-  await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report });
+  await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high' });
 
   let history = [];
   if (version > 1) {
@@ -571,6 +607,10 @@ async function renderManualHtml(body, onProgress) {
 module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
+  // Etapas separadas para el pipeline de la cola (solapar modelo/render):
+  prepareGenerate: (body, onProgress) => prepareGeneration(body, 'generate', onProgress),
+  prepareFeedback: (body, onProgress) => prepareGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
+  renderPrepared,
   estimateTokens,
   listMarkerVersions,
   readMarkerHtml,
