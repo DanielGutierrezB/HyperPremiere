@@ -530,10 +530,8 @@
   var HPQueue = (function () {
     var jobs = [];
     var counter = 0;
-    var running = false;
     var subs = [];
     function emit() { for (var i = 0; i < subs.length; i++) { try { subs[i](jobs); } catch (e) {} } }
-    function nextQueued() { for (var i = 0; i < jobs.length; i++) if (jobs[i].status === "queued") return jobs[i]; return null; }
     function markGenerated(job) {
       // Persistir el flag en el namespace del job (aunque estés en otra secuencia).
       try {
