@@ -640,8 +640,38 @@ async function renderVersionHQ(body, onProgress) {
   return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug, background: withBackground };
 }
 
+// ── Persistencia de la cola por proyecto ────────────────────────────────
+// Guardamos la cola (liviana) en "<dir .prproj>/HyperPremiere/queue.json" para
+// que al reabrir el proyecto se recargue lo que había. Si el proyecto no está
+// guardado, usa ~/HyperPremiere (igual que las renders).
+function projectQueueRoot(projectPath) {
+  return projectPath
+    ? path.join(path.dirname(projectPath), 'HyperPremiere')
+    : path.join(os.homedir(), 'HyperPremiere');
+}
+function saveQueue(body) {
+  try {
+    const root = projectQueueRoot(body && body.projectPath);
+    fs.mkdirSync(root, { recursive: true });
+    const file = path.join(root, 'queue.json');
+    const jobs = (body && Array.isArray(body.jobs)) ? body.jobs : [];
+    fs.writeFileSync(file, JSON.stringify({ version: 1, jobs }, null, 2), 'utf8');
+    return { ok: true, path: file, count: jobs.length };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+function loadQueue(body) {
+  try {
+    const file = path.join(projectQueueRoot(body && body.projectPath), 'queue.json');
+    if (!fs.existsSync(file)) return { ok: true, jobs: [] };
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return { ok: true, jobs: Array.isArray(data.jobs) ? data.jobs : [] };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e), jobs: [] }; }
+}
+
 module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
+  saveQueue,
+  loadQueue,
   renderVersionHQ,
   feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   // Etapas separadas para el pipeline de la cola (solapar modelo/render):

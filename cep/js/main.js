@@ -352,12 +352,19 @@
   var draftMode = false;
   try { draftMode = window.localStorage.getItem("hyperpremiere::draft") === "1"; } catch (e) {}
 
+  var lastRestoredProject = null; // para restaurar la cola solo al cambiar de proyecto
   function loadContext(done) {
     csInterface.evalScript("hp_getProjectPath()", function (projectPath) {
       csInterface.evalScript("hp_getActiveSequenceName()", function (sequenceName) {
         currentProjectPath = projectPath || "";
         currentSequenceName = sequenceName || "";
         HPStore.setContext(currentProjectPath, currentSequenceName);
+        // Al abrir el panel o cambiar de proyecto, cargar la cola guardada de ESE
+        // proyecto (queue.json en su carpeta HyperPremiere).
+        if (currentProjectPath !== lastRestoredProject) {
+          lastRestoredProject = currentProjectPath;
+          HPQueue.restore(currentProjectPath);
+        }
         if (done) done();
       });
     });
@@ -716,7 +723,43 @@
     var jobs = [];
     var counter = 0;
     var subs = [];
-    function emit() { for (var i = 0; i < subs.length; i++) { try { subs[i](jobs); } catch (e) {} } }
+    function emit() { for (var i = 0; i < subs.length; i++) { try { subs[i](jobs); } catch (e) {} } persist(); }
+
+    // ── Persistencia por proyecto (queue.json) ────────────────────────
+    // Estados en curso (modeling/ready/running) se guardan como "queued": si
+    // cerraste a mitad, al reabrir quedan pendientes (no colgados).
+    function normStatus(s) {
+      return (s === "modeling" || s === "ready" || s === "running") ? "queued" : s;
+    }
+    // Copia liviana del job para el archivo: sin lo pesado ni regenerable
+    // (stills base64, transcript, prepared). Eso se rehidrata desde HPStore
+    // al momento de correr (los datos del marcador persisten por proyecto).
+    function serializeJob(j) {
+      var p = null;
+      if (j.payload) {
+        p = {};
+        for (var k in j.payload) if (Object.prototype.hasOwnProperty.call(j.payload, k)) p[k] = j.payload[k];
+        delete p.stills; delete p.transcript; delete p.markerTranscript; delete p.resources;
+      }
+      return {
+        id: j.id, status: normStatus(j.status), pct: (normStatus(j.status) === "done" ? 100 : 0),
+        msg: j.msg, kind: j.kind, seqName: j.seqName, projectPath: j.projectPath,
+        markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
+        markerDuration: j.markerDuration, version: j.version, usage: j.usage, payload: p
+      };
+    }
+    var persistTimer = null;
+    function persist() {
+      if (persistTimer) return; // debounce: 1 escritura por ventana; captura el estado al disparar
+      persistTimer = setTimeout(function () {
+        persistTimer = null;
+        if (!currentProjectPath) return; // proyecto sin guardar: no persistimos a carpeta
+        var lean = [];
+        for (var i = 0; i < jobs.length; i++) if (jobs[i].projectPath === currentProjectPath) lean.push(serializeJob(jobs[i]));
+        callEngine("saveQueue", { projectPath: currentProjectPath, jobs: lean })
+          .then(function () {}).catch(function (e) { hpLog("saveQueue falló: " + ((e && e.message) || e), "WARN"); });
+      }, 1000);
+    }
     function markGenerated(job) {
       // Persistir el flag en el namespace del job (aunque estés en otra secuencia).
       try {
@@ -768,8 +811,27 @@
         }
       );
     }
+    // Rehidrata lo pesado del payload (stills/transcript/recursos/objetivo) desde
+    // HPStore justo antes de correr. Necesario para jobs restaurados de queue.json
+    // (que se guardan livianos); en jobs frescos es idempotente.
+    function rehydratePayload(job) {
+      if (!job.payload) return;
+      try {
+        HPStore.setContext(job.projectPath, job.seqName);
+        var segments = HPStore.getTranscript() || [];
+        var md = HPStore.getMarkerData(job.markerKey) || {};
+        job.payload.transcript = segments;
+        job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
+        if (!job.payload.stills || !job.payload.stills.length) job.payload.stills = md.stills || [];
+        if (!job.payload.resources || !job.payload.resources.length) job.payload.resources = md.resources || [];
+        if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
+        if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
+      } catch (e) { hpLog("rehydratePayload falló [" + job.label + "]: " + ((e && e.message) || e), "WARN"); }
+      finally { try { HPStore.setContext(currentProjectPath, currentSequenceName); } catch (e2) {} }
+    }
     function startModel(job) {
-      modelBusy = true; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now(); emit();
+      modelBusy = true; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
+      rehydratePayload(job); emit();
       var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
       hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (currentModelName || "?"));
       callEngine(method, job.payload, onP(job)).then(function (prep) {
@@ -868,6 +930,30 @@
       return job.id;
     }
     return {
+      // Carga la cola guardada de un proyecto (queue.json). Reemplaza la cola en
+      // memoria. Queda PAUSADA si hay pendientes: los ves y arrancás con Iniciar
+      // (no auto-procesa al abrir, para no gastar tokens sin querer).
+      restore: function (projectPath) {
+        callEngine("loadQueue", { projectPath: projectPath }).then(function (res) {
+          var loaded = (res && res.jobs) || [];
+          jobs = [];
+          var hasPending = false;
+          for (var i = 0; i < loaded.length; i++) {
+            var lj = loaded[i];
+            lj.status = (lj.status === "modeling" || lj.status === "ready" || lj.status === "running") ? "queued" : lj.status;
+            lj.pct = (lj.status === "done") ? 100 : (lj.pct || 0);
+            lj.prepared = null;
+            lj._usageCounted = (lj.status === "done");
+            if (lj.status === "queued" || lj.status === "waiting") hasPending = true;
+            var num = parseInt(String(lj.id || "").replace(/^j/, ""), 10);
+            if (!isNaN(num) && num > counter) counter = num;
+            jobs.push(lj);
+          }
+          if (hasPending) paused = true; // no arrancar solo; que Daniel toque Iniciar
+          hpLog("Cola restaurada: " + jobs.length + " job(s)" + (hasPending ? " (pausada, tocá ▶ Iniciar)" : "") + ".");
+          emit();
+        }).catch(function (e) { hpLog("loadQueue falló: " + ((e && e.message) || e), "WARN"); });
+      },
       // Encola Y arranca (Generar / Regenerar / render manual).
       add: function (job) {
         var id = enqueue(job); paused = false; emit(); pump();
