@@ -1207,6 +1207,66 @@
 
   // Limpia videos de versiones viejas de todas las secuencias que aparecen en la
   // cola (+ la secuencia actual). Conserva HTMLs. Muestra cuánto liberó.
+  // Overlay de confirmación genérico (reusa estilos del overlay de ayuda).
+  function showConfirmOverlay(title, buildBody, okLabel, onOk) {
+    var ov = document.createElement("div"); ov.className = "help-overlay"; ov.setAttribute("data-hidden", "false");
+    var card = document.createElement("div"); card.className = "help-card";
+    var head = document.createElement("div"); head.className = "help-head";
+    var h = document.createElement("span"); h.textContent = title; head.appendChild(h);
+    var x = document.createElement("button"); x.type = "button"; x.className = "icon-btn"; x.textContent = "✕"; x.title = "Cancelar"; head.appendChild(x);
+    card.appendChild(head);
+    var body = document.createElement("div"); body.className = "help-body"; buildBody(body); card.appendChild(body);
+    var actions = document.createElement("div"); actions.className = "config-actions";
+    var cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancelar";
+    var ok = document.createElement("button"); ok.type = "button"; ok.className = "btn-primary"; ok.textContent = okLabel;
+    actions.appendChild(cancel); actions.appendChild(ok); card.appendChild(actions);
+    ov.appendChild(card); document.body.appendChild(ov);
+    function close() { try { document.body.removeChild(ov); } catch (e) {} }
+    x.addEventListener("click", close); cancel.addEventListener("click", close);
+    ov.addEventListener("click", function (e) { if (e.target === ov) close(); });
+    ok.addEventListener("click", function () { close(); onOk(); });
+  }
+
+  // Ejecuta la limpieza REAL (ya confirmada): secuencia → proyecto → disco.
+  function performCleanup(targets) {
+    setOutput("🧹 Limpiando versiones viejas…", false);
+    hpLog("Limpiando versiones viejas en " + targets.length + " secuencia(s)…");
+    var listPromises = targets.map(function (t) {
+      return hpCall("listOldVersions", t).then(function (r) { return (r && r.ok) ? (r.files || []) : []; }).catch(function () { return []; });
+    });
+    Promise.all(listPromises).then(function (lists) {
+      var names = [];
+      lists.forEach(function (files) { files.forEach(function (f) { if (f && f.name) names.push(f.name); }); });
+      if (!names.length) { setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
+      var namesJson = JSON.stringify(names);
+      // Paso 2: sacarlos de secuencia + proyecto ANTES de borrar (evita re-vincular).
+      csInterface.evalScript("hp_purgeClipsByName(" + JSON.stringify(namesJson) + ")", function (purge) {
+        hpLog("purge en Premiere: " + purge + " (" + names.length + " nombres)");
+        var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
+        targets.forEach(function (t) {
+          hpCall("cleanOldVersions", t).then(function (res) {
+            if (res && res.ok) { totalDeleted += res.deleted || 0; totalBytes += res.freedBytes || 0; }
+            else errs.push((res && res.error) || "error");
+          }).catch(function (e) { errs.push((e && e.message) || "error"); })
+            .then(function () {
+              if (--pending === 0) {
+                var mb = (totalBytes / (1024 * 1024)).toFixed(1);
+                var okPurge = String(purge || "").indexOf("ok|") === 0;
+                var msg = "🧹 Limpieza lista: " + totalDeleted + " video(s) borrados · " + mb + " MB liberados." +
+                  (okPurge ? " Quitados de la secuencia y del proyecto." : " (No pude quitarlos del proyecto: " + purge + ")") +
+                  " Los HTMLs se conservan.";
+                if (errs.length) msg += " · " + errs.length + " error(es) al borrar";
+                setOutput(msg, errs.length > 0 || !okPurge);
+                hpLog(msg);
+              }
+            });
+        });
+      });
+    });
+  }
+
+  // Botón "limpiar versiones viejas": PRIMERO muestra el detalle (qué se borra ↔
+  // qué se conserva) y pide confirmación; recién al aceptar borra.
   function cleanOldVersionsFromQueue() {
     var seen = {}, targets = [];
     function addTarget(pp, sn) {
@@ -1219,46 +1279,38 @@
     for (var i = 0; i < jobs.length; i++) addTarget(jobs[i].projectPath, jobs[i].seqName);
     addTarget(currentProjectPath, currentSequenceName);
     if (!targets.length) { setOutput("No hay secuencias en la cola para limpiar.", false); return; }
-    setOutput("🧹 Limpiando versiones viejas…", false);
-    hpLog("Limpiando versiones viejas en " + targets.length + " secuencia(s)…");
 
-    // Paso 1: juntar los nombres de archivo de las versiones viejas (SIN borrar).
-    var listPromises = targets.map(function (t) {
-      return hpCall("listOldVersions", t)
-        .then(function (r) { return (r && r.ok) ? (r.files || []) : []; })
-        .catch(function () { return []; });
+    var previewPromises = targets.map(function (t) {
+      return hpCall("cleanupPreview", t)
+        .then(function (r) { return (r && r.ok) ? r : { groups: [], totalDeletes: 0, totalBytes: 0, sequenceName: t.sequenceName }; })
+        .catch(function () { return { groups: [], totalDeletes: 0, totalBytes: 0, sequenceName: t.sequenceName }; });
     });
-    Promise.all(listPromises).then(function (lists) {
-      var names = [];
-      lists.forEach(function (files) { files.forEach(function (f) { if (f && f.name) names.push(f.name); }); });
-      if (!names.length) { setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
-
-      // Paso 2: sacar esos clips de la secuencia y del proyecto (bin) en Premiere,
-      // ANTES de borrar los archivos → así Premiere no pide re-vincular.
-      var namesJson = JSON.stringify(names);
-      csInterface.evalScript("hp_purgeClipsByName(" + JSON.stringify(namesJson) + ")", function (purge) {
-        hpLog("purge en Premiere: " + purge + " (" + names.length + " nombres)");
-        // Paso 3: borrar los archivos del disco.
-        var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
-        targets.forEach(function (t) {
-          hpCall("cleanOldVersions", t).then(function (res) {
-            if (res && res.ok) { totalDeleted += res.deleted || 0; totalBytes += res.freedBytes || 0; }
-            else errs.push((res && res.error) || "error");
-          }).catch(function (e) { errs.push((e && e.message) || "error"); })
-            .then(function () {
-              if (--pending === 0) {
-                var mb = (totalBytes / (1024 * 1024)).toFixed(1);
-                var okPurge = String(purge || "").indexOf("ok|") === 0;
-                var msg = "🧹 Limpieza lista: " + totalDeleted + " video(s) viejos borrados · " + mb + " MB liberados." +
-                  (okPurge ? " Quitados de la secuencia y del proyecto (sin re-vincular)." : " (Ojo: no pude quitarlos del proyecto: " + purge + ")") +
-                  " Los HTMLs se conservan.";
-                if (errs.length) msg += " · " + errs.length + " error(es) al borrar";
-                setOutput(msg, errs.length > 0 || !okPurge);
-                hpLog(msg);
-              }
+    Promise.all(previewPromises).then(function (previews) {
+      var totalDeletes = 0, totalBytes = 0;
+      previews.forEach(function (p) { totalDeletes += p.totalDeletes || 0; totalBytes += p.totalBytes || 0; });
+      if (!totalDeletes) { setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
+      showConfirmOverlay("Limpiar versiones viejas", function (body) {
+        var intro = document.createElement("p");
+        var strong = document.createElement("strong"); strong.textContent = totalDeletes + " video(s)";
+        intro.appendChild(document.createTextNode("Se van a borrar "));
+        intro.appendChild(strong);
+        intro.appendChild(document.createTextNode(" viejos (" + (totalBytes / 1048576).toFixed(1) + " MB). Se conserva la última versión de cada marcador. Los HTMLs no se tocan."));
+        body.appendChild(intro);
+        previews.forEach(function (p) {
+          if (!p.groups || !p.groups.length) return;
+          var sh = document.createElement("div"); sh.className = "section-label"; sh.textContent = p.sequenceName || "secuencia";
+          body.appendChild(sh);
+          p.groups.forEach(function (g) {
+            g.deletes.forEach(function (d) {
+              var row = document.createElement("div"); row.className = "cleanup-row";
+              var del = document.createElement("span"); del.className = "cl-del"; del.textContent = "🗑 " + d.name;
+              var keep = document.createElement("span"); keep.className = "cl-keep"; keep.textContent = "conserva: " + (g.keep ? g.keep.name : "?");
+              row.appendChild(del); row.appendChild(keep);
+              body.appendChild(row);
             });
+          });
         });
-      });
+      }, "Borrar " + totalDeletes + " video(s)", function () { performCleanup(targets); });
     });
   }
 

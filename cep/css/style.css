@@ -1089,6 +1089,11 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* v1.0.4 — jobs que quedaron sin tokens / límite alcanzado (reactivables) */
 .queue-job.is-waiting { border-left: 3px solid var(--warn); padding-left: 7px; }
 .queue-job.is-waiting .qj-title { color: var(--warn); }
+/* Confirmación de "limpiar versiones viejas": filas borra ↔ conserva */
+.cleanup-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); font-size: 12px; }
+.cleanup-row .cl-del { color: var(--error, #e08a8a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cleanup-row .cl-keep { color: var(--ok, #0ae98d); flex: none; opacity: 0.85; }
+
 /* Banner de preparación del motor (1ª corrida en instalación limpia) */
 .engine-prep[data-hidden="true"] { display: none; }
 .engine-prep {
