@@ -13,13 +13,6 @@
   var ENGINE_PATH = "/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/bridge/engine.js";
   (function loadEngine() {
     try {
-      // Ruta de la extensión (cep/) para ubicar el bridge sin hardcodear el SO.
-      try {
-        var _cs = new CSInterface();
-        var extDir = _cs.getSystemPath(SystemPath.EXTENSION);
-        if (extDir) ENGINE_PATH = extDir + "/../bridge/engine.js";
-      } catch (e) {}
-
       var req = (typeof window !== "undefined" && window.cep_node && window.cep_node.require)
         ? window.cep_node.require
         : (typeof require === "function" ? require : null);
@@ -30,6 +23,41 @@
           "typeof require=" + (typeof require) + ", cep_node=" + (typeof window !== "undefined" && !!window.cep_node);
         return;
       }
+      var _fs = null; try { _fs = req("fs"); } catch (e) {}
+
+      // Armar rutas CANDIDATAS al motor y quedarnos con la primera que exista.
+      // La extensión suele ser un symlink al repo: si CEP nos da la ruta del
+      // symlink SIN resolver, "<ext>/../bridge" apunta a la carpeta de
+      // extensiones (no al repo) y no existe. Por eso probamos también la ruta
+      // REAL (realpath) y el fallback dev hardcodeado.
+      var candidates = [];
+      try {
+        var _cs = new CSInterface();
+        var extDir = _cs.getSystemPath(SystemPath.EXTENSION);
+        if (extDir) {
+          candidates.push(extDir + "/../bridge/engine.js");
+          if (_fs && _fs.realpathSync) {
+            try { candidates.push(_fs.realpathSync(extDir) + "/../bridge/engine.js"); } catch (e) {}
+          }
+        }
+      } catch (e) {}
+      candidates.push(ENGINE_PATH); // fallback dev (repo de Daniel)
+
+      var found = null;
+      if (_fs && _fs.existsSync) {
+        for (var ci = 0; ci < candidates.length; ci++) {
+          if (candidates[ci] && _fs.existsSync(candidates[ci])) { found = candidates[ci]; break; }
+        }
+      } else {
+        found = candidates[0]; // sin fs no podemos chequear; probamos la primera
+      }
+      if (!found) {
+        HP_ENGINE_ERR = "No se encontró engine.js en ninguna ruta candidata:\n- " +
+          candidates.join("\n- ") + "\nLa extensión no apunta al bridge del repo (¿symlink roto?).";
+        return;
+      }
+      ENGINE_PATH = found;
+
       // Node cachea los require: sin esto, recargar el panel (⟳) NO trae los
       // cambios del motor. Vaciamos la caché del bridge (separador-agnóstico:
       // normalizamos \ a / para que funcione también en Windows).
@@ -40,22 +68,13 @@
           });
         }
       } catch (e) {}
-      // Chequeo previo: ¿existe el archivo del motor en la ruta calculada?
-      try {
-        var _fs = req("fs");
-        if (_fs && _fs.existsSync && !_fs.existsSync(ENGINE_PATH)) {
-          HP_ENGINE_ERR = "No se encontró engine.js en: " + ENGINE_PATH +
-            " — la ruta de la extensión no apunta al repo. Revisá el symlink.";
-          return;
-        }
-      } catch (e) {}
       HP_ENGINE = req(ENGINE_PATH);
-      if (!HP_ENGINE) HP_ENGINE_ERR = "require(engine.js) devolvió vacío (sin error).";
+      if (!HP_ENGINE) HP_ENGINE_ERR = "require(engine.js) devolvió vacío (sin error). Ruta: " + ENGINE_PATH;
     } catch (e) {
       HP_ENGINE = null;
       // Capturar la causa REAL (stack completo) para no andar adivinando.
       var detail = (e && (e.stack || e.message)) ? String(e.stack || e.message) : String(e);
-      HP_ENGINE_ERR = "El motor falló al cargar (require de engine.js):\n" + detail;
+      HP_ENGINE_ERR = "El motor falló al cargar (require de engine.js).\nRuta: " + ENGINE_PATH + "\n" + detail;
       try { if (typeof console !== "undefined" && console.error) console.error("[HyperPremiere] loadEngine:", e); } catch (e2) {}
     }
   })();
