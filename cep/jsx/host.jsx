@@ -254,6 +254,70 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
     }
 }
 
+// Saca de Premiere las versiones viejas ANTES de borrar sus archivos: (1) quita
+// sus clips de todas las secuencias, (2) elimina sus ítems del proyecto (bin) con
+// el truco mover-a-bin-temporal + deleteBin. `namesJson` = JSON array de nombres
+// de archivo (ej. "Marcador 1 v1 [modelo].mov"). Devuelve "ok|<n>" o "error: ...".
+function hp_purgeClipsByName(namesJson) {
+    try {
+        var arr = [];
+        try { arr = eval('(' + namesJson + ')'); } catch (ep) { return "error: nombres inválidos"; }
+        var names = {};
+        for (var a = 0; a < arr.length; a++) {
+            var nm = String(arr[a]);
+            names[nm] = true;
+            names[nm.replace(/\.[^.]+$/, "")] = true; // sin extensión
+        }
+        function matches(name) {
+            if (!name) return false;
+            return names[name] === true || names[String(name).replace(/\.[^.]+$/, "")] === true;
+        }
+
+        // 1) Quitar clips de TODAS las secuencias (de arriba hacia abajo).
+        var removedClips = 0;
+        try {
+            var seqs = app.project.sequences;
+            for (var s = 0; s < seqs.numSequences; s++) {
+                var seq = seqs[s];
+                var vt = seq.videoTracks;
+                for (var t = 0; t < vt.numTracks; t++) {
+                    var track = vt[t];
+                    for (var c = track.clips.numItems - 1; c >= 0; c--) {
+                        var clip = track.clips[c];
+                        var pn = clip && clip.projectItem ? clip.projectItem.name : (clip ? clip.name : "");
+                        if (matches(pn)) {
+                            try { clip.remove(false, false); removedClips++; } catch (er) {}
+                        }
+                    }
+                }
+            }
+        } catch (eseq) {}
+
+        // 2) Eliminar los ítems del proyecto: moverlos a un bin temporal y borrarlo.
+        var root = app.project.rootItem;
+        var trash = null;
+        try { trash = root.createBin("__hp_trash__"); } catch (eb) {}
+        var removedItems = 0;
+        function walk(item) {
+            if (!item || !item.children) return;
+            for (var i = item.children.numItems - 1; i >= 0; i--) {
+                var ch = item.children[i];
+                if (!ch) continue;
+                if (trash && ch === trash) continue;
+                if (ch.type === 2) { walk(ch); continue; } // bin → recursar
+                if (matches(ch.name)) {
+                    try { if (trash) { ch.moveBin(trash); removedItems++; } } catch (em) {}
+                }
+            }
+        }
+        walk(root);
+        if (trash) { try { trash.deleteBin(); } catch (ed) {} }
+        return "ok|" + removedClips + "|" + removedItems;
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // Recolorea el clip de HyperPremiere que está en `atSeconds` (busca en las pistas
 // de video, de arriba hacia abajo, el clip cuyo inicio coincide). Sirve para
 // marcar como HQ (magenta) tras reemplazar el archivo, sin colocar un clip nuevo.

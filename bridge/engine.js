@@ -641,31 +641,47 @@ async function renderVersionHQ(body, onProgress) {
 // Limpia VIDEOS de versiones viejas de una secuencia: por cada marcador deja
 // solo el video (.mov/.mp4) de la ÚLTIMA versión y borra los anteriores.
 // NO toca los .html (historial/editor) ni stills/recursos. Devuelve cuánto liberó.
+// Calcula los VIDEOS de versiones viejas (no-últimas) de una secuencia.
+// Devuelve [{ name, path, size }] SIN borrar nada.
+function oldVersionVideos(projectPath, sequenceName) {
+  const baseDir = ensureOutputDir(projectPath, sequenceName);
+  let entries = [];
+  try { entries = fs.readdirSync(baseDir); } catch (e) { return []; }
+  const re = /^(.+) v(\d+)(?: \[.+?\])?\.(mov|mp4)$/;
+  const bySlug = {};
+  for (const name of entries) {
+    const m = name.match(re);
+    if (!m) continue;
+    const slug = m[1], ver = parseInt(m[2], 10);
+    const full = path.join(baseDir, name);
+    let size = 0; try { size = fs.statSync(full).size; } catch (e) {}
+    (bySlug[slug] = bySlug[slug] || []).push({ name, version: ver, path: full, size });
+  }
+  const out = [];
+  Object.keys(bySlug).forEach((slug) => {
+    const list = bySlug[slug];
+    let maxV = 0; list.forEach((x) => { if (x.version > maxV) maxV = x.version; });
+    list.forEach((x) => { if (x.version < maxV) out.push({ name: x.name, path: x.path, size: x.size }); });
+  });
+  return out;
+}
+
+// Lista (sin borrar) los videos de versiones viejas → el panel primero saca esos
+// ítems de la secuencia/proyecto en Premiere y RECIÉN después borra los archivos.
+function listOldVersions(body) {
+  try {
+    body = body || {};
+    return { ok: true, files: oldVersionVideos(body.projectPath, body.sequenceName) };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e), files: [] }; }
+}
+
 function cleanOldVersions(body) {
   try {
     body = body || {};
-    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
-    let entries = [];
-    try { entries = fs.readdirSync(baseDir); } catch (e) { return { ok: true, deleted: 0, freedBytes: 0, names: [] }; }
-    const re = /^(.+) v(\d+)(?: \[.+?\])?\.(mov|mp4)$/;
-    const bySlug = {};
-    for (const name of entries) {
-      const m = name.match(re);
-      if (!m) continue;
-      const slug = m[1], ver = parseInt(m[2], 10);
-      const full = path.join(baseDir, name);
-      let size = 0; try { size = fs.statSync(full).size; } catch (e) {}
-      (bySlug[slug] = bySlug[slug] || []).push({ name, version: ver, path: full, size });
-    }
+    const list = oldVersionVideos(body.projectPath, body.sequenceName);
     let deleted = 0, freed = 0; const names = [];
-    Object.keys(bySlug).forEach((slug) => {
-      const list = bySlug[slug];
-      let maxV = 0; list.forEach((x) => { if (x.version > maxV) maxV = x.version; });
-      list.forEach((x) => {
-        if (x.version < maxV) {
-          try { fs.unlinkSync(x.path); deleted++; freed += x.size; names.push(x.name); } catch (e) {}
-        }
-      });
+    list.forEach((x) => {
+      try { fs.unlinkSync(x.path); deleted++; freed += x.size; names.push(x.name); } catch (e) {}
     });
     return { ok: true, deleted, freedBytes: freed, names };
   } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
@@ -792,6 +808,7 @@ module.exports = {
   saveQueue,
   loadQueue,
   cleanOldVersions,
+  listOldVersions,
   engineStatus,
   prepareEngine,
   pruneUnusedEngineDeps,

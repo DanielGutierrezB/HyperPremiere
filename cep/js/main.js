@@ -1219,22 +1219,46 @@
     for (var i = 0; i < jobs.length; i++) addTarget(jobs[i].projectPath, jobs[i].seqName);
     addTarget(currentProjectPath, currentSequenceName);
     if (!targets.length) { setOutput("No hay secuencias en la cola para limpiar.", false); return; }
+    setOutput("🧹 Limpiando versiones viejas…", false);
     hpLog("Limpiando versiones viejas en " + targets.length + " secuencia(s)…");
-    var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
-    targets.forEach(function (t) {
-      hpCall("cleanOldVersions", t).then(function (res) {
-        if (res && res.ok) { totalDeleted += res.deleted || 0; totalBytes += res.freedBytes || 0; }
-        else errs.push((res && res.error) || "error");
-      }).catch(function (e) { errs.push((e && e.message) || "error"); })
-        .then(function () {
-          if (--pending === 0) {
-            var mb = (totalBytes / (1024 * 1024)).toFixed(1);
-            var msg = "🧹 Limpieza lista: " + totalDeleted + " video(s) viejos borrados · " + mb + " MB liberados. (Los HTMLs se conservan.)";
-            if (errs.length) msg += " · " + errs.length + " error(es)";
-            setOutput(msg, errs.length > 0);
-            hpLog(msg);
-          }
+
+    // Paso 1: juntar los nombres de archivo de las versiones viejas (SIN borrar).
+    var listPromises = targets.map(function (t) {
+      return hpCall("listOldVersions", t)
+        .then(function (r) { return (r && r.ok) ? (r.files || []) : []; })
+        .catch(function () { return []; });
+    });
+    Promise.all(listPromises).then(function (lists) {
+      var names = [];
+      lists.forEach(function (files) { files.forEach(function (f) { if (f && f.name) names.push(f.name); }); });
+      if (!names.length) { setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
+
+      // Paso 2: sacar esos clips de la secuencia y del proyecto (bin) en Premiere,
+      // ANTES de borrar los archivos → así Premiere no pide re-vincular.
+      var namesJson = JSON.stringify(names);
+      csInterface.evalScript("hp_purgeClipsByName(" + JSON.stringify(namesJson) + ")", function (purge) {
+        hpLog("purge en Premiere: " + purge + " (" + names.length + " nombres)");
+        // Paso 3: borrar los archivos del disco.
+        var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
+        targets.forEach(function (t) {
+          hpCall("cleanOldVersions", t).then(function (res) {
+            if (res && res.ok) { totalDeleted += res.deleted || 0; totalBytes += res.freedBytes || 0; }
+            else errs.push((res && res.error) || "error");
+          }).catch(function (e) { errs.push((e && e.message) || "error"); })
+            .then(function () {
+              if (--pending === 0) {
+                var mb = (totalBytes / (1024 * 1024)).toFixed(1);
+                var okPurge = String(purge || "").indexOf("ok|") === 0;
+                var msg = "🧹 Limpieza lista: " + totalDeleted + " video(s) viejos borrados · " + mb + " MB liberados." +
+                  (okPurge ? " Quitados de la secuencia y del proyecto (sin re-vincular)." : " (Ojo: no pude quitarlos del proyecto: " + purge + ")") +
+                  " Los HTMLs se conservan.";
+                if (errs.length) msg += " · " + errs.length + " error(es) al borrar";
+                setOutput(msg, errs.length > 0 || !okPurge);
+                hpLog(msg);
+              }
+            });
         });
+      });
     });
   }
 
