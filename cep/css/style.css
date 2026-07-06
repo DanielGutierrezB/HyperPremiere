@@ -569,6 +569,12 @@ textarea:focus {
 }
 .still-tag:hover { background: rgba(0,0,0,.8); }
 .still-tag.is-use { background: rgba(10,233,141,0.85); color: #08160f; font-weight: 600; }
+/* Número de la imagen (arriba-izquierda) para referenciarla: "imagen 1/2…" */
+.still-num {
+  position: absolute; top: 2px; left: 2px; min-width: 16px; height: 16px; padding: 0 3px;
+  line-height: 16px; text-align: center; font-size: 10px; font-weight: 700;
+  color: #fff; background: rgba(0,0,0,.66); border-radius: var(--radius-sm);
+}
 .still-status { flex-basis: 100%; font-size: 11px; color: #8b97a8; margin-top: 4px; }
 .still-status.is-error { color: #f87171; }
 

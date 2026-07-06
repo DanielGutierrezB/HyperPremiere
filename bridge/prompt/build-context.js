@@ -108,11 +108,13 @@ function buildUserPrompt(ctx) {
   );
 
   if (stills > 0) {
-    parts.push('\n## Stills adjuntos');
+    parts.push('\n## Imágenes de referencia adjuntas');
     parts.push(
-      `Se adjuntan ${stills} still(s) del video en este punto, como imágenes aparte de este mensaje. ` +
-        'Usalos para leer la composición del frame (dónde está el sujeto, zonas libres, paleta) y ubicar ' +
-        'los elementos gráficos sin tapar lo importante.'
+      `Se adjuntan ${stills} imagen(es) de referencia, como imágenes aparte de este mensaje. ` +
+        'Están NUMERADAS en el orden en que se envían: la 1ª es "imagen 1", la 2ª "imagen 2", etc. ' +
+        'Si la instrucción del editor menciona "imagen 1", "imagen 2", etc., se refiere EXACTAMENTE a ese orden. ' +
+        'Usalas para leer composición/paleta/zonas libres y ubicar los gráficos sin tapar lo importante ' +
+        '(salvo que estén marcadas para incrustar, ver sección de assets).'
     );
   }
 

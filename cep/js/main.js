@@ -573,6 +573,12 @@
         var img = document.createElement("img");
         img.src = stillThumbSrc(stills[index]);
 
+        // Número de la imagen (1,2,3…) para poder referenciarla en la instrucción:
+        // "imagen 1 hacé X, imagen 2 revisá Y". El orden coincide con lo que ve el modelo.
+        var num = document.createElement("span");
+        num.className = "still-num"; num.textContent = (index + 1);
+        num.title = "Imagen " + (index + 1) + " — referila así en la instrucción (ej: \"imagen " + (index + 1) + "…\")";
+
         var remove = document.createElement("button");
         remove.type = "button";
         remove.className = "still-remove";
@@ -602,6 +608,7 @@
         });
 
         thumb.appendChild(img);
+        thumb.appendChild(num);
         thumb.appendChild(remove);
         thumb.appendChild(tag);
         container.appendChild(thumb);
@@ -785,7 +792,11 @@
           // localStorage. El engine la lee y la convierte a imagen al generar.
           HPStore.addMarkerStill(markerKey, res.savedPath || res.dataUrl);
           // Refrescar por el contenedor VIVO (robusto ante re-render) + fallback al closure.
-          if (!refreshStills(markerKey) && thumbs) renderStills(thumbs, markerKey);
+          // Refrescar el contenedor LOCAL (el que inició la captura, ej. la caja de
+          // feedback) SIEMPRE, y además la tarjeta si está visible. Antes solo
+          // refrescaba la tarjeta y la captura no se veía sumar en el feedback.
+          if (thumbs) renderStills(thumbs, markerKey);
+          refreshStills(markerKey);
           if (markerKey === GEN_KEY) updateGeneralSummary();
           if (statusEl) statusEl.textContent = "✓ guardada en la carpeta de la secuencia";
           hpLog("Captura OK → " + res.savedPath + " · agregada a [" + markerKey + "]");
