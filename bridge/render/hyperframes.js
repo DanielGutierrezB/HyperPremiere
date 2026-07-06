@@ -112,7 +112,15 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     // con "Set maximum size exceeded" (límite de Buffer de Node).
     '--low-memory-mode',
   ]);
-  if (fmt === 'mp4') args.push('--crf', q === 'draft' ? '28' : '18');
+  if (fmt === 'mp4') {
+    args.push('--crf', q === 'draft' ? '28' : '18');
+    // Encode H.264 por hardware (VideoToolbox). En Apple Silicon esto usa el
+    // motor de media dedicado, que es INDEPENDIENTE del GPU del browser (ANGLE
+    // Metal, el que crasheaba) → seguro y bastante más rápido en la etapa de
+    // codificación. Solo aplica a mp4/H.264: el ProRes .mov siempre encodea por
+    // software (prores_ks), ahí --gpu no cambia nada.
+    args.push('--gpu');
+  }
   void durationSec; // informativo; la duración vive en el HTML.
 
   await new Promise((resolve, reject) => {
