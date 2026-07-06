@@ -650,16 +650,24 @@ textarea:focus {
 }
 .queue-panel[data-hidden="true"] { display: none; }
 .queue-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted);
-  padding-bottom: 6px; border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
 }
+/* El título ("COLA · …") ocupa el espacio y empuja los botones a la derecha, agrupados. */
+.queue-head > span:first-child { margin-right: auto; }
+/* Botones de acción de la cabecera como pills claros (no links de texto). */
 .queue-clear {
-  flex: none; width: auto; font-size: 10px; color: var(--text-muted);
-  background: transparent; border: 0; padding: 2px 4px; cursor: pointer; text-decoration: underline;
-  text-transform: none; letter-spacing: 0;
+  flex: none; width: auto; font-size: 11px; line-height: 1;
+  color: var(--text-secondary); background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; text-decoration: none;
+  text-transform: none; letter-spacing: 0; transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.queue-clear:hover { color: var(--accent); background: transparent; border: 0; }
+.queue-clear:hover { color: var(--text-primary); background: rgba(255,255,255,0.1); border-color: var(--accent); }
+/* Variante destructiva (vaciar cola) en rojo suave. */
+.queue-clear.is-danger { color: var(--error, #e08a8a); border-color: rgba(224,138,138,0.4); background: rgba(224,138,138,0.08); }
+.queue-clear.is-danger:hover { color: var(--error, #e08a8a); border-color: var(--error, #e08a8a); background: rgba(224,138,138,0.16); }
 .queue-seq {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;

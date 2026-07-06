@@ -1500,7 +1500,7 @@
     clr.addEventListener("click", function () { HPQueue.clearFinished(); });
     head.appendChild(clr);
     // Vaciar cola: para TODO (incluido lo activo) y limpia la lista, para rehacer.
-    var wipe = document.createElement("button"); wipe.type = "button"; wipe.className = "queue-clear";
+    var wipe = document.createElement("button"); wipe.type = "button"; wipe.className = "queue-clear is-danger";
     wipe.textContent = "⏹ vaciar cola";
     wipe.title = "Para y quita TODOS los marcadores de la cola (incluido el que está corriendo) para rehacer el proceso.";
     wipe.addEventListener("click", function () {
