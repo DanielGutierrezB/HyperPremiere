@@ -144,15 +144,29 @@
       var state = readState();
       var entry = state.markers[String(markerKey)];
       if (!entry || typeof entry !== 'object') {
-        return { instruction: '', stills: [] };
+        return { instruction: '', stills: [], stillUse: [], resources: [] };
       }
+      // stillUse[i]: true = "recurso a usar/incrustar", false/ausente = "referencia".
       return {
         instruction: typeof entry.instruction === 'string' ? entry.instruction : '',
         stills: isArray(entry.stills) ? entry.stills : [],
+        stillUse: isArray(entry.stillUse) ? entry.stillUse : [],
         resources: isArray(entry.resources) ? entry.resources : [],
         generated: Boolean(entry.generated),
         background: Boolean(entry.background)
       };
+    },
+
+    /** Marca un still como "recurso a usar" (true) o "referencia" (false). */
+    setMarkerStillUse: function (markerKey, index, use) {
+      var state = readState();
+      var entry = ensureMarker(state, markerKey);
+      if (!isArray(entry.stillUse)) entry.stillUse = [];
+      var i = parseInt(index, 10);
+      if (isNaN(i) || i < 0) return;
+      while (entry.stillUse.length <= i) entry.stillUse.push(false);
+      entry.stillUse[i] = Boolean(use);
+      writeState(state);
     },
 
     /** Activa/desactiva el fondo (mp4 HD opaco) para el marcador. */
@@ -195,6 +209,7 @@
         return;
       }
       entry.stills.splice(i, 1);
+      if (isArray(entry.stillUse) && i < entry.stillUse.length) entry.stillUse.splice(i, 1);
       writeState(state);
     },
 

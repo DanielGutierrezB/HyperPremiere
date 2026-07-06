@@ -560,6 +560,15 @@ textarea:focus {
   border: 0; border-radius: var(--radius-sm); cursor: pointer; padding: 0;
 }
 .still-remove:hover { background: #f87171; }
+/* Etiqueta Referencia ⇄ Usar (abajo del thumbnail) */
+.still-tag {
+  position: absolute; left: 2px; right: 2px; bottom: 2px;
+  font-size: 9px; line-height: 1; padding: 3px 4px; border: 0; border-radius: var(--radius-sm);
+  color: #fff; background: rgba(0,0,0,.62); cursor: pointer; text-align: center;
+  letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.still-tag:hover { background: rgba(0,0,0,.8); }
+.still-tag.is-use { background: rgba(10,233,141,0.85); color: #08160f; font-weight: 600; }
 .still-status { flex-basis: 100%; font-size: 11px; color: #8b97a8; margin-top: 4px; }
 .still-status.is-error { color: #f87171; }
 

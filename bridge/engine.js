@@ -212,8 +212,10 @@ function imageDims(buf) {
 // [{name, w, h}] (dimensiones cuando se pudieron leer) para informarle al modelo.
 function saveAssets(dir, dataUrls) {
   const list = Array.isArray(dataUrls) ? dataUrls : [];
-  if (!list.length) return [];
+  // Limpiar SIEMPRE el dir (aunque no haya assets) para no arrastrar imágenes de
+  // una generación anterior que ya no están marcadas "usar".
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  if (!list.length) return [];
   fs.mkdirSync(dir, { recursive: true });
   const out = [];
   list.forEach((du, i) => {
@@ -303,8 +305,11 @@ async function prepareGeneration(body, mode, onProgress) {
   // Imágenes provistas también disponibles como ARCHIVO para INCRUSTAR (logo/icono/
   // foto). Se guardan en <base>/_assets/<slug> y se copian al render; el modelo las
   // referencia con <img src="assets/asset-NN.ext"> si la instrucción pide usarlas.
+  // Assets a INCRUSTAR = solo las imágenes que el editor marcó "usar" (body.assets),
+  // normalizadas a data URL. Las demás stills quedan solo como referencia visual.
+  const assetList = (Array.isArray(body.assets) ? body.assets : []).map(stillToDataUrl).filter(Boolean);
   const assetsDir = path.join(baseDir, '_assets', markerSlug);
-  const assetInfos = saveAssets(assetsDir, stillsList);
+  const assetInfos = saveAssets(assetsDir, assetList);
   if (assetInfos.length) {
     userPrompt += '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
       'Las imágenes que ves también están disponibles como archivos en la carpeta assets/ del proyecto ' +

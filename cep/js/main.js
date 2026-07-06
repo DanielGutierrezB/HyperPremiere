@@ -552,9 +552,16 @@
     if (/^data:/i.test(s) || /^file:\/\//i.test(s)) return s;
     return "file://" + encodeURI(s);
   }
+  // De un getMarkerData, devuelve solo las imágenes marcadas "usar" (recurso a incrustar).
+  function assetSrcsOf(d) {
+    var out = [], s = (d && d.stills) || [], u = (d && d.stillUse) || [];
+    for (var i = 0; i < s.length; i++) if (u[i]) out.push(s[i]);
+    return out;
+  }
   function renderStills(container, markerKey) {
     container.innerHTML = "";
-    var stills = HPStore.getMarkerData(markerKey).stills;
+    var data = HPStore.getMarkerData(markerKey);
+    var stills = data.stills, uses = data.stillUse || [];
 
     for (var i = 0; i < stills.length; i++) {
       (function (index) {
@@ -572,10 +579,29 @@
         remove.addEventListener("click", function () {
           HPStore.removeMarkerStill(markerKey, index);
           renderStills(container, markerKey);
+          if (markerKey === GEN_KEY) updateGeneralSummary();
+        });
+
+        // Etiqueta Referencia ⇄ Usar: define si la imagen se INCRUSTA (usar) o
+        // solo sirve de contexto visual (referencia, default). Evita que el modelo
+        // adivine y meta la imagen equivocada.
+        var isUse = !!uses[index];
+        var tag = document.createElement("button");
+        tag.type = "button";
+        tag.className = "still-tag" + (isUse ? " is-use" : "");
+        tag.textContent = isUse ? "✓ usar" : "referencia";
+        tag.title = isUse
+          ? "Se INCRUSTA en el gráfico (logo/icono/foto). Clic para volver a solo referencia."
+          : "Solo referencia visual (contexto). Clic para marcarla como recurso a INCRUSTAR.";
+        tag.addEventListener("click", function () {
+          HPStore.setMarkerStillUse(markerKey, index, !isUse);
+          renderStills(container, markerKey);
+          if (markerKey === GEN_KEY) updateGeneralSummary();
         });
 
         thumb.appendChild(img);
         thumb.appendChild(remove);
+        thumb.appendChild(tag);
         container.appendChild(thumb);
       })(i);
     }
@@ -933,8 +959,9 @@
         var gen = HPStore.getMarkerData(GEN_KEY) || {}; // prompt general
         job.payload.transcript = segments;
         job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
-        // Stills/recursos = marcador + generales (siempre recompuesto para jobs restaurados).
+        // Stills (visión) + assets (a incrustar) = marcador + generales.
         job.payload.stills = (md.stills || []).concat(gen.stills || []);
+        job.payload.assets = assetSrcsOf(md).concat(assetSrcsOf(gen));
         job.payload.resources = (md.resources || []).concat(gen.resources || []);
         if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
         if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
@@ -1267,8 +1294,10 @@
       marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
       generalInstruction: gen.instruction || "",
-      // Stills/recursos del marcador + los generales (contexto compartido).
+      // stills = TODAS las imágenes (marcador + generales) para que el modelo las VEA (contexto).
       stills: (data.stills || []).concat(gen.stills || []),
+      // assets = solo las marcadas "usar" → se INCRUSTAN en el gráfico (logo/icono/foto).
+      assets: assetSrcsOf(data).concat(assetSrcsOf(gen)),
       resources: (data.resources || []).concat(gen.resources || []),
       background: !!data.background, draft: draftMode,
       markerSlug: markerKey, mode: mode
