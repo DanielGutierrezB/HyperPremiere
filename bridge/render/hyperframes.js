@@ -66,6 +66,30 @@ function pickRenderProfile() {
 }
 
 /**
+ * Modo de GPU del BROWSER (captura WebGL/GSAP), independiente del encode.
+ * hyperframes usa la GPU del host por defecto (rápido). En v1.0.47 la forzamos a
+ * 'software' (SwiftShader) porque el backend ANGLE Metal crasheaba el Chromium
+ * dentro del contexto de Premiere en Apple Silicon → estable pero LENTO (la
+ * captura pasa a CPU). Este modo es lo que más pesa en el tiempo de render.
+ *
+ * Prioridad: env HYPERPREMIERE_BROWSER_GPU > config.json { browserGpu } > 'software'.
+ * Cada máquina puede optar por 'hardware' si su Chromium no crashea (ej. la MacBook),
+ * sin afectar a las demás. Default = 'software' (seguro, sin cambios de comportamiento).
+ */
+function browserGpuMode() {
+  const envMode = process.env.HYPERPREMIERE_BROWSER_GPU;
+  if (envMode === 'hardware' || envMode === 'software') return envMode;
+  try {
+    const p = path.join(os.homedir(), '.hyperpremiere', 'config.json');
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (cfg && (cfg.browserGpu === 'hardware' || cfg.browserGpu === 'software')) {
+      return cfg.browserGpu;
+    }
+  } catch (e) {}
+  return 'software';
+}
+
+/**
  * Borra ghost files de macOS (._*) dentro de un directorio.
  * Estos archivos confunden al CLI de hyperframes al escanear el dir.
  */
@@ -151,10 +175,11 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   // mp4 => H.264 opaco HD 1080p con buen bitrate (crf 18) para lectura, cuando
   //         el marcador se genera CON fondo (no necesita canal alpha).
   const profile = pickRenderProfile();
+  const gpuMode = browserGpuMode();
   console.error(
     '[hyperpremiere] perfil de render: ' + profile.workers + ' worker(s), ' +
-    'low-memory=' + profile.lowMemory + ' (RAM ' + profile.ramGb.toFixed(1) + 'GB, ' +
-    profile.cpus + ' cores)'
+    'low-memory=' + profile.lowMemory + ', browser-gpu=' + gpuMode +
+    ' (RAM ' + profile.ramGb.toFixed(1) + 'GB, ' + profile.cpus + ' cores)'
   );
   const args = baseArgs.concat([
     'render',
@@ -186,14 +211,18 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   void durationSec; // informativo; la duración vive en el HTML.
 
   await new Promise((resolve, reject) => {
+    // GPU del browser (ver browserGpuMode). 'software' fuerza SwiftShader (estable
+    // pero lento, fix del crash ANGLE Metal); 'hardware' deja que hyperframes use
+    // la GPU por defecto (rápido, pero es el path que crasheaba en Premiere).
+    const childEnv = Object.assign({}, process.env);
+    if (gpuMode === 'software') {
+      childEnv.PRODUCER_BROWSER_GPU_MODE = 'software';
+    } else {
+      delete childEnv.PRODUCER_BROWSER_GPU_MODE;
+    }
     const child = spawn(bin, args, {
       cwd: workDir,
-      // Forzar GL por software (swiftshader). En Apple Silicon, dentro del CEF
-      // sandbox de Premiere, el modo GPU hardware (ANGLE Metal) hace crashear el
-      // proceso Chromium → "hyperframes salió con código 1". Software es más lento
-      // pero estable y determinístico (hyperframes lo usa para renders confiables).
-      // Respeta un override manual si el usuario ya seteó la env var.
-      env: Object.assign({ PRODUCER_BROWSER_GPU_MODE: 'software' }, process.env),
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWin, // Windows: el shim .cmd/npx necesita shell
     });
