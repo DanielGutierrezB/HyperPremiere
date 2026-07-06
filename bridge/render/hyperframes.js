@@ -118,7 +118,12 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   await new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: workDir,
-      env: process.env,
+      // Forzar GL por software (swiftshader). En Apple Silicon, dentro del CEF
+      // sandbox de Premiere, el modo GPU hardware (ANGLE Metal) hace crashear el
+      // proceso Chromium → "hyperframes salió con código 1". Software es más lento
+      // pero estable y determinístico (hyperframes lo usa para renders confiables).
+      // Respeta un override manual si el usuario ya seteó la env var.
+      env: Object.assign({ PRODUCER_BROWSER_GPU_MODE: 'software' }, process.env),
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: isWin, // Windows: el shim .cmd/npx necesita shell
     });
