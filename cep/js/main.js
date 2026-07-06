@@ -12,6 +12,7 @@
   // recursos que aplican a TODOS los marcadores). Reusa toda la maquinaria de
   // marcador (getMarkerData/addMarkerStill/…) sin ser un marcador real.
   var GEN_KEY = "__general__";
+  var focusMarkerAfterRender = null; // markerKey a enfocar tras renderizar (desde "Ver")
 
   // Timing auto-calibrado para estimar la cola: promedio de segundos por job de
   // modelo, y segundos de render por segundo de composición. Se afina con el uso.
@@ -1343,6 +1344,22 @@
     );
   }
 
+  // "Ver" (clic en el nombre del clip): abre la secuencia + salta al marcador en
+  // Premiere, y en el panel carga los marcadores de esa secuencia, va a la pestaña
+  // Marcadores y enfoca/despliega la tarjeta de ese marcador.
+  function goToJobMarker(job) {
+    if (!job) return;
+    var seqArg = JSON.stringify(job.seqName);
+    csInterface.evalScript(
+      "hp_openSequenceAndSeek(" + seqArg + ", " + Number(job.markerStart) + ")",
+      function () {
+        focusMarkerAfterRender = job.markerKey; // renderMarkers lo enfoca al terminar
+        selectTab("markers");
+        onLoadMarkers(); // relee la secuencia (ya activa) y renderiza sus marcadores
+      }
+    );
+  }
+
   // Re-renderiza en alta calidad la última versión de UN marcador (un job).
   // Se usa desde la Cola cuando el job se hizo en borrador y a Daniel le gustó.
   function renderJobHQ(job) {
@@ -1629,6 +1646,13 @@
         var top = document.createElement("div"); top.className = "qj-title";
         var dot = (j.status === "running") ? "▶ " : (j.status === "modeling") ? "✎ " : (j.status === "ready") ? "◔ " : (j.status === "queued") ? "• " : (j.status === "done") ? "✓ " : (j.status === "waiting") ? "⏳ " : "⚠ ";
         top.textContent = dot + j.label;
+        // El nombre del clip terminado es clickeable = "Ver": abre la secuencia,
+        // salta al marcador y lo carga/enfoca en la pestaña Marcadores.
+        if (j.status === "done") {
+          top.classList.add("qj-title-link");
+          top.setAttribute("title", "Ver: abrir esta secuencia, saltar al marcador y cargarlo en Marcadores");
+          top.addEventListener("click", (function (job) { return function (e) { e.stopPropagation(); goToJobMarker(job); }; })(j));
+        }
         line.appendChild(top);
         if (j.status === "queued") {
           var jc = document.createElement("span"); jc.className = "qj-ctrls";
@@ -1663,8 +1687,7 @@
           // Job terminado: revisar en Premiere, subir a HQ si fue borrador, o
           // dar feedback y regenerar (retomando el mismo puesto en la cola).
           var dc = document.createElement("span"); dc.className = "qj-ctrls";
-          dc.appendChild(iconBtn("👁 Ver", "Abrir esta secuencia y saltar al marcador para revisar",
-            (function (job) { return function () { openJobInPremiere(job); }; })(j)));
+          // (El "Ver" ahora es clic en el nombre del clip — ver arriba.)
           // Render HQ solo si el job se hizo en borrador (aún no está en alta).
           if (j.kind !== "renderVersionHQ" && j.payload && j.payload.draft) {
             var hqb = iconBtn("Render HQ", "Re-renderizar este marcador en alta calidad",
@@ -2130,6 +2153,23 @@
     if (ctx && objectiveInput && objectiveInput.value.trim()) ctx.open = false;
     // Si hay jobs en curso de esta secuencia, reflejar su progreso en las tarjetas.
     reflectQueueOnCards();
+    // Enfoque pedido desde "Ver" (clic en el nombre del clip en la Cola).
+    if (focusMarkerAfterRender) { focusMarkerCard(focusMarkerAfterRender); focusMarkerAfterRender = null; }
+  }
+
+  // Despliega, resalta y hace scroll a la tarjeta del marcador `markerKey`.
+  function focusMarkerCard(markerKey) {
+    if (!markersContainer) return;
+    var cards = markersContainer.querySelectorAll("details.marker-card");
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (c._markerKey !== markerKey) continue;
+      try { c.open = true; } catch (e) {}
+      try { c.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { c.scrollIntoView(); }
+      c.classList.add("is-focused");
+      (function (card) { setTimeout(function () { card.classList.remove("is-focused"); }, 2200); })(c);
+      break;
+    }
   }
 
   function onLoadMarkers() {

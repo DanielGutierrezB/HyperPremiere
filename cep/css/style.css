@@ -699,6 +699,11 @@ textarea:focus {
 .qj-title { font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .qj-msg { font-size: 10px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .queue-job.is-done .qj-title { color: #0ae98d; }
+/* Nombre del clip terminado = clickeable (Ver) */
+.qj-title-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.qj-title-link:hover { color: #34ffaa; }
+/* Resalte breve de la tarjeta del marcador al llegar desde "Ver" */
+.marker-card.is-focused { box-shadow: 0 0 0 2px var(--accent, #60a5fa); border-radius: 8px; transition: box-shadow 0.2s; }
 .queue-job.is-error .qj-title { color: #f87171; }
 .queue-job.is-running .qj-title { color: var(--accent); }
 .queue-job.is-queued .qj-title { color: var(--text-secondary); }
