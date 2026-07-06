@@ -96,6 +96,10 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     '--format', fmt,
     '--quality', q,
     '--workers', '1',
+    // Perfil de baja memoria: encodea de a poco en vez de bufferear todos los
+    // frames. Sin esto, marcadores largos (ej. 33s ≈ 1008 frames a 1080p) revientan
+    // con "Set maximum size exceeded" (límite de Buffer de Node).
+    '--low-memory-mode',
   ]);
   if (fmt === 'mp4') args.push('--crf', q === 'draft' ? '28' : '18');
   void durationSec; // informativo; la duración vive en el HTML.

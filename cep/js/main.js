@@ -1090,6 +1090,19 @@
         }
         paused = false; emit(); pump();
       },
+      // Reintenta un job que quedó en "error" (tras arreglar la causa). Vuelve a
+      // "queued" desde cero (re-corre modelo+render, o el render según el kind).
+      retry: function (id) {
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          if (j.id === id && (j.status === "error" || j.status === "waiting")) {
+            j.status = "queued"; j.pct = 0; j.msg = "Reintentando, esperando turno…";
+            j.prepared = null; j._usageCounted = false; j._cancelled = false; j.startedAt = 0;
+            hpLog("Reintento de [" + j.label + "] (id " + id + ").");
+          }
+        }
+        paused = false; emit(); pump();
+      },
       // Reencola TODOS los jobs "waiting" de una vez (o solo los de una secuencia
       // si se pasa seqName). Devuelve cuántos reactivó.
       reactivateAll: function (seqName) {
@@ -1568,6 +1581,15 @@
           ac.appendChild(iconBtn("✕ cancelar", "Cancelar este marcador (para rehacerlo). Lo que esté en vuelo se descarta.",
             (function (id) { return function () { HPQueue.cancelJob(id); }; })(j.id)));
           line.appendChild(ac);
+        } else if (j.status === "error") {
+          // Job con error: reintentar (tras arreglar la causa) o descartar.
+          var ec = document.createElement("span"); ec.className = "qj-ctrls";
+          var retryBtn = iconBtn("↻ Reintentar", "Volver a intentar este marcador desde cero",
+            (function (id) { return function () { HPQueue.retry(id); }; })(j.id));
+          retryBtn.className = "qbtn qbtn-react";
+          ec.appendChild(retryBtn);
+          ec.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
+          line.appendChild(ec);
         } else if (j.status === "done") {
           // Job terminado: revisar en Premiere, subir a HQ si fue borrador, o
           // dar feedback y regenerar (retomando el mismo puesto en la cola).
