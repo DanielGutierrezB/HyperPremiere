@@ -875,6 +875,8 @@
       return Promise.reject(new Error(engineErrMsg()));
     }
     function finishPlace(job, res) {
+      // Job cancelado mientras renderizaba: no colocamos nada, liberamos el carril.
+      if (job._cancelled) { renderBusy = false; hpLog("Job CANCELADO [" + job.label + "] tras render — descartado."); emit(); pump(); return; }
       job.version = res.version;
       if (res.usage && !job._usageCounted) { job.usage = res.usage; HPStore.addSessionUsage(res.usage); updateSessionUsageBar(); job._usageCounted = true; }
       var seqArg = JSON.stringify(job.seqName);
@@ -933,6 +935,7 @@
       var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
       hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (currentModelName || "?"));
       callEngine(method, job.payload, onP(job)).then(function (prep) {
+        if (job._cancelled) { modelBusy = false; hpLog("Job CANCELADO [" + job.label + "] tras modelo — descartado."); emit(); pump(); return; }
         if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
         job.prepared = prep;
         if (prep.usage) { job.usage = prep.usage; HPStore.addSessionUsage(prep.usage); updateSessionUsageBar(); job._usageCounted = true; }
@@ -947,6 +950,7 @@
         } else {
           job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
         }
+        if (job._cancelled) { modelBusy = false; emit(); pump(); return; }
         hpLog("Job MODELO FALLÓ [" + job.label + "] · rate=" + !!f.rate + " · " + f.msg, "ERROR");
         modelBusy = false; emit(); pump();
       });
@@ -964,6 +968,7 @@
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
         finishPlace(job, res);
       }).catch(function (err) {
+        if (job._cancelled) { renderBusy = false; emit(); pump(); return; }
         var f = classifyFailure(err);
         if (f.rate) {
           job.status = "waiting"; job.pct = 0;
@@ -1163,6 +1168,35 @@
           return j.status === "queued" || j.status === "modeling" || j.status === "ready" || j.status === "running" || j.status === "waiting";
         });
         emit();
+      },
+      // Cancela UN job aunque esté activo: si está en vuelo (modelo/render) lo
+      // marca _cancelled (su resultado se descarta al terminar) y lo saca de la
+      // lista. Sirve para parar y rehacer.
+      cancelJob: function (id) {
+        var next = [];
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          if (j.id !== id) { next.push(j); continue; }
+          if (j.status === "modeling" || j.status === "ready" || j.status === "running") {
+            j._cancelled = true; // su promesa en vuelo se descartará al resolver
+            hpLog("Cancelando job activo [" + j.label + "] (se descarta al terminar la etapa en vuelo).");
+          }
+          // en cualquier caso, lo sacamos de la cola visible
+        }
+        jobs = next;
+        emit(); pump();
+      },
+      // Vacía TODA la cola (incluidos activos) para rehacer desde cero. Lo que ya
+      // está en vuelo (IA/render) no se puede matar, pero su resultado se descarta.
+      clearAll: function () {
+        for (var i = 0; i < jobs.length; i++) {
+          var s = jobs[i].status;
+          if (s === "modeling" || s === "ready" || s === "running") jobs[i]._cancelled = true;
+        }
+        hpLog("Vaciar cola: " + jobs.length + " job(s) eliminados (activos marcados como cancelados).");
+        jobs = [];
+        paused = false;
+        emit(); // persist guardará la cola vacía
       }
     };
   })();
@@ -1452,6 +1486,20 @@
     clr.title = "Quita de la lista los jobs terminados y con error (conserva en cola, en proceso y los que esperan tokens)";
     clr.addEventListener("click", function () { HPQueue.clearFinished(); });
     head.appendChild(clr);
+    // Vaciar cola: para TODO (incluido lo activo) y limpia la lista, para rehacer.
+    var wipe = document.createElement("button"); wipe.type = "button"; wipe.className = "queue-clear";
+    wipe.textContent = "⏹ vaciar cola";
+    wipe.title = "Para y quita TODOS los marcadores de la cola (incluido el que está corriendo) para rehacer el proceso.";
+    wipe.addEventListener("click", function () {
+      var n = HPQueue.jobs().length;
+      showConfirmOverlay("Vaciar la cola", function (body) {
+        var p = document.createElement("p");
+        p.textContent = "Se van a quitar los " + n + " marcador(es) de la cola, incluido el que esté procesando. " +
+          "Lo que ya está en vuelo (IA o render) termina en segundo plano pero su resultado se descarta. No borra archivos ya generados en disco.";
+        body.appendChild(p);
+      }, "Vaciar (" + n + ")", function () { HPQueue.clearAll(); setOutput("Cola vaciada.", false); });
+    });
+    head.appendChild(wipe);
     // Limpiar versiones viejas: borra del disco los videos de versiones NO-últimas
     // de cada marcador (conserva HTMLs). Corre sobre todas las secuencias de la cola.
     var cleanBtn = document.createElement("button"); cleanBtn.type = "button"; cleanBtn.className = "queue-clear";
@@ -1514,6 +1562,12 @@
           wc.appendChild(rb);
           wc.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
           line.appendChild(wc);
+        } else if (j.status === "modeling" || j.status === "ready" || j.status === "running") {
+          // Job activo: se puede cancelar (lo en vuelo termina en 2º plano y se descarta).
+          var ac = document.createElement("span"); ac.className = "qj-ctrls";
+          ac.appendChild(iconBtn("✕ cancelar", "Cancelar este marcador (para rehacerlo). Lo que esté en vuelo se descarta.",
+            (function (id) { return function () { HPQueue.cancelJob(id); }; })(j.id)));
+          line.appendChild(ac);
         } else if (j.status === "done") {
           // Job terminado: revisar en Premiere, subir a HQ si fue borrador, o
           // dar feedback y regenerar (retomando el mismo puesto en la cola).
