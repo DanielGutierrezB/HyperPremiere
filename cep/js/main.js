@@ -566,7 +566,7 @@
   // incrustan en el gráfico por archivo, así que el logo/ícono sigue apareciendo.
   var IMG_REF_RE = /(im[aá]genes?|logo|isotipo|logotipo|[íi]conos?|\bmarca\b|foto|captura|referenci|ilustraci)/i;
   function feedbackNeedsImages(text) { return IMG_REF_RE.test(String(text || "")); }
-  function renderStills(container, markerKey) {
+  function renderStills(container, markerKey, fbJobId) {
     container.innerHTML = "";
     var data = HPStore.getMarkerData(markerKey);
     var stills = data.stills, uses = data.stillUse || [];
@@ -617,6 +617,34 @@
         thumb.appendChild(num);
         thumb.appendChild(remove);
         thumb.appendChild(tag);
+
+        // Modo feedback: toggle "reenviar esta imagen al modelo". Por defecto las
+        // imágenes YA existentes salen apagadas (gris) → no se reenvían (ahorro de
+        // tokens); las NUEVAS agregadas en este feedback entran activas. No afecta el
+        // incrustado: una imagen "✓ usar" se mete en el gráfico igual, se reenvíe o no.
+        if (fbJobId) {
+          var on = fbEffectiveSend(fbJobId, index);
+          thumb.classList.add("fb");
+          if (!on) thumb.classList.add("fb-off");
+          var send = document.createElement("button");
+          send.type = "button";
+          send.className = "still-send" + (on ? " is-on" : "");
+          send.textContent = on ? "📤 reenviar" : "no se envía";
+          send.title = on
+            ? "Se reenvía al modelo en este feedback (usa tokens). Clic para no enviarla."
+            : "No se reenvía (ahorra tokens). Clic si querés que el modelo la VEA en este ajuste.";
+          var toggle = function (e) {
+            e.stopPropagation();
+            var rec = feedbackImgSel[fbJobId]; if (!rec) return;
+            rec.sel[index] = !fbEffectiveSend(fbJobId, index);
+            renderStills(container, markerKey, fbJobId);
+          };
+          send.addEventListener("click", toggle);
+          img.style.cursor = "pointer";
+          img.addEventListener("click", toggle);
+          thumb.appendChild(send);
+        }
+
         container.appendChild(thumb);
       })(i);
     }
@@ -654,12 +682,12 @@
   }
 
   // Ingesta de una lista de File: imágenes → stills, el resto → recursos.
-  function ingestFiles(files, markerKey, thumbs, resList, statusEl) {
+  function ingestFiles(files, markerKey, thumbs, resList, statusEl, fbJobId) {
     if (!files || !files.length) return;
     var pending = files.length;
     function done() {
       pending--;
-      if (pending === 0) { renderStills(thumbs, markerKey); renderResources(resList, markerKey); }
+      if (pending === 0) { renderStills(thumbs, markerKey, fbJobId); renderResources(resList, markerKey); }
     }
     for (var i = 0; i < files.length; i++) {
       (function (file) {
@@ -684,7 +712,7 @@
     if (statusEl) statusEl.textContent = "";
   }
 
-  function createStillsControl(markerKey) {
+  function createStillsControl(markerKey, fbJobId) {
     var wrap = document.createElement("div");
     wrap.className = "marker-stills";
 
@@ -712,7 +740,7 @@
     stillStatus.className = "still-status";
 
     captureBtn.addEventListener("click", function () {
-      captureProgramStill(markerKey, thumbs, captureBtn, stillStatus);
+      captureProgramStill(markerKey, thumbs, captureBtn, stillStatus, fbJobId);
     });
 
     // Zona drag & drop: al clicar abre el selector; al soltar, ingiere.
@@ -726,11 +754,11 @@
       e.preventDefault();
       drop.classList.remove("is-over");
       var files = e.dataTransfer && e.dataTransfer.files;
-      ingestFiles(files, markerKey, thumbs, resList, stillStatus);
+      ingestFiles(files, markerKey, thumbs, resList, stillStatus, fbJobId);
     });
 
     fileInput.addEventListener("change", function () {
-      ingestFiles(fileInput.files, markerKey, thumbs, resList, stillStatus);
+      ingestFiles(fileInput.files, markerKey, thumbs, resList, stillStatus, fbJobId);
       fileInput.value = "";
     });
 
@@ -740,7 +768,7 @@
     wrap.appendChild(stillStatus);
     wrap.appendChild(thumbs);
     wrap.appendChild(resList);
-    renderStills(thumbs, markerKey);
+    renderStills(thumbs, markerKey, fbJobId);
     renderResources(resList, markerKey);
     return wrap;
   }
@@ -767,7 +795,7 @@
   // GUARDA en la carpeta de la secuencia (engine.saveCapture) y lo agrega como
   // still del marcador. Nota: QE muestra un alert nativo "Exported frame …" que
   // hay que cerrar (comportamiento de Premiere, no del plugin).
-  function captureProgramStill(markerKey, thumbs, btn, statusEl) {
+  function captureProgramStill(markerKey, thumbs, btn, statusEl, fbJobId) {
     var tmpPath = "/tmp/hp-still-" + (new Date().getTime()) + ".png";
     var arg = JSON.stringify(tmpPath);
     var prev = btn.textContent;
@@ -801,7 +829,7 @@
           // Refrescar el contenedor LOCAL (el que inició la captura, ej. la caja de
           // feedback) SIEMPRE, y además la tarjeta si está visible. Antes solo
           // refrescaba la tarjeta y la captura no se veía sumar en el feedback.
-          if (thumbs) renderStills(thumbs, markerKey);
+          if (thumbs) renderStills(thumbs, markerKey, fbJobId);
           refreshStills(markerKey);
           if (markerKey === GEN_KEY) updateGeneralSummary();
           if (statusEl) statusEl.textContent = "✓ guardada en la carpeta de la secuencia";
@@ -982,11 +1010,18 @@
         job.payload.transcript = segments;
         job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
         // Stills (visión) + assets (a incrustar) = marcador + generales.
-        job.payload.stills = (md.stills || []).concat(gen.stills || []);
         job.payload.assets = assetSrcsOf(md).concat(assetSrcsOf(gen));
-        // Refinamiento que no trata sobre las imágenes → no reenviar los stills como
-        // visión (ahorro de tokens). Los assets "usar" se incrustan igual en el render.
-        if (job.payload.mode === "adjust" && job.payload._omitStills) job.payload.stills = [];
+        // Refinamiento (adjust): solo reenviamos como visión las imágenes que el editor
+        // dejó activas (stillsSend = índices en los stills del marcador). Ahorro de
+        // tokens. Los assets "usar" se incrustan en el render igual, se reenvíen o no.
+        if (job.payload.mode === "adjust" && Array.isArray(job.payload.stillsSend)) {
+          var _all = md.stills || [];
+          job.payload.stills = job.payload.stillsSend
+            .map(function (ix) { return _all[ix]; })
+            .filter(function (s) { return !!s; });
+        } else {
+          job.payload.stills = (md.stills || []).concat(gen.stills || []);
+        }
         job.payload.resources = (md.resources || []).concat(gen.resources || []);
         if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
         if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
@@ -1213,7 +1248,7 @@
       // pipeline lo retoma en la posición original (no al final). Si viene texto
       // de feedback, se regenera en modo "ajustar" (toma la versión previa como
       // base); si no, es una regeneración total.
-      regenerate: function (id, adjustmentText, sendImages) {
+      regenerate: function (id, adjustmentText, stillsSend) {
         for (var i = 0; i < jobs.length; i++) {
           var j = jobs[i];
           if (j.id !== id) continue;
@@ -1222,10 +1257,10 @@
           j.payload = j.payload || {};
           if (txt) {
             j.payload.adjustment = txt; j.payload.mode = "adjust"; j.kind = "feedback";
-            // Solo reenviar imágenes si el feedback las necesita (ahorro de tokens).
-            j.payload._omitStills = (sendImages === false);
+            // Índices (en los stills del marcador) a reenviar como visión; [] = ninguno.
+            j.payload.stillsSend = Array.isArray(stillsSend) ? stillsSend : [];
           }
-          else { j.payload.mode = "generate"; j.kind = "generate"; delete j.payload._omitStills; }
+          else { j.payload.mode = "generate"; j.kind = "generate"; delete j.payload.stillsSend; }
           j.status = "queued"; j.pct = 0;
           j.msg = txt ? "Reencolado con feedback, esperando turno…" : "Reencolado, esperando turno…";
           j.prepared = null; j._usageCounted = false; j.version = undefined;
@@ -1333,8 +1368,11 @@
     };
     if (mode === "adjust") {
       payload.adjustment = data.instruction || "";
-      // Auto: si la instrucción no menciona imágenes, no las reenvía como visión.
-      payload._omitStills = !feedbackNeedsImages(payload.adjustment);
+      // Auto (sin UI por-imagen en la tarjeta): si la instrucción menciona imágenes,
+      // reenvía TODAS las del marcador; si no, ninguna (ahorro de tokens).
+      payload.stillsSend = feedbackNeedsImages(payload.adjustment)
+        ? (data.stills || []).map(function (_s, ix) { return ix; })
+        : [];
     }
     var job = {
       kind: mode === "generate" ? "generate" : "feedback",
@@ -1549,9 +1587,17 @@
   // (id → texto), para que sobreviva a los re-render frecuentes de la cola.
   var feedbackOpen = {};
   var feedbackDraft = {};
-  // id → true/false cuando el usuario toca el check "reenviar imágenes"; undefined
-  // = automático (se decide según el texto del feedback).
-  var feedbackSendImages = {};
+  // Selección de qué imágenes reenviar en un feedback, por job:
+  //   feedbackImgSel[jobId] = { base: <nº de stills al abrir>, sel: { index: bool } }
+  // Regla: imágenes existentes (index < base) NO se reenvían por defecto (gris);
+  // las nuevas (index >= base) SÍ. `sel[index]` guarda el override manual del usuario.
+  var feedbackImgSel = {};
+  function fbEffectiveSend(jobId, index) {
+    var rec = feedbackImgSel[jobId];
+    if (!rec) return false;
+    if (rec.sel[index] !== undefined) return rec.sel[index];
+    return index >= rec.base;
+  }
 
   // Panel de cola global: agrupado por secuencia, con reordenamiento
   // (secuencia arriba/abajo y marcador arriba/abajo dentro de su secuencia).
@@ -1765,18 +1811,21 @@
           inRow.appendChild(ta);
           var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
           go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
-          go.addEventListener("click", (function (id) {
+          go.addEventListener("click", (function (id, mk) {
             return function (e) {
               e.stopPropagation();
               var t = feedbackDraft[id] || "";
-              // Reenviar imágenes: si el usuario tocó el check, lo respetamos; si no,
-              // lo decide el texto del feedback (menciona imagen/logo/etc → sí).
-              var sImgs = feedbackSendImages[id];
-              if (sImgs === undefined) sImgs = feedbackNeedsImages(t);
-              feedbackOpen[id] = false; feedbackDraft[id] = ""; feedbackSendImages[id] = undefined;
-              HPQueue.regenerate(id, t, sImgs);
+              // Índices de las imágenes que el usuario dejó activas (📤) para reenviar.
+              var sendIdx = [];
+              var rec = feedbackImgSel[id];
+              if (rec) {
+                var cnt = ((HPStore.getMarkerData(mk) || {}).stills || []).length;
+                for (var ii = 0; ii < cnt; ii++) if (fbEffectiveSend(id, ii)) sendIdx.push(ii);
+              }
+              feedbackOpen[id] = false; feedbackDraft[id] = ""; delete feedbackImgSel[id];
+              HPQueue.regenerate(id, t, sendIdx);
             };
-          })(j.id));
+          })(j.id, j.markerKey));
           inRow.appendChild(go);
           fb.appendChild(inRow);
           // Imágenes/elementos para el feedback — mismo control que la tarjeta
@@ -1784,30 +1833,18 @@
           // marcador y la regeneración los toma. Solo si el job es de la secuencia
           // actual (HPStore opera sobre ese contexto).
           if (j.seqName === currentSequenceName && j.projectPath === currentProjectPath) {
-            // Check "reenviar imágenes" — solo tiene sentido si el marcador tiene
-            // imágenes adjuntas. Default vivo: sigue la detección del texto hasta que
-            // el usuario lo toque. Desmarcado = ahorra tokens (no manda visión); los
-            // assets "✓ usar" se incrustan igual en el gráfico.
-            var _fmd = HPStore.getMarkerData(j.markerKey) || {};
-            var _fgd = HPStore.getMarkerData(GEN_KEY) || {};
-            var _nStills = ((_fmd.stills || []).length) + ((_fgd.stills || []).length);
-            if (_nStills > 0) {
-              var optRow = document.createElement("label"); optRow.className = "qj-fb-opt";
-              optRow.title = "Si tu ajuste NO trata sobre las imágenes, dejalo desmarcado y ahorrás tokens. Las imágenes marcadas ✓ usar igual se incrustan en el gráfico. Marcalo si el ajuste depende de VER una imagen (p. ej. \"usá los colores de la imagen 1\").";
-              optRow.addEventListener("click", function (e) { e.stopPropagation(); });
-              var cbImg = document.createElement("input"); cbImg.type = "checkbox";
-              var _init = (feedbackSendImages[j.id] !== undefined) ? feedbackSendImages[j.id] : feedbackNeedsImages(feedbackDraft[j.id] || "");
-              cbImg.checked = _init;
-              cbImg.addEventListener("change", (function (id) { return function (e) { feedbackSendImages[id] = e.target.checked; }; })(j.id));
-              var sp = document.createElement("span"); sp.textContent = "🖼️ Reenviar imágenes al modelo (usa más tokens)";
-              optRow.appendChild(cbImg); optRow.appendChild(sp);
-              fb.appendChild(optRow);
-              // Mientras el usuario no toque el check, el default sigue lo que escribe.
-              ta.addEventListener("input", (function (id, box) { return function () { if (feedbackSendImages[id] === undefined) box.checked = feedbackNeedsImages(feedbackDraft[id] || ""); }; })(j.id, cbImg));
+            // Selección de reenvío por imagen. Se inicializa una vez por apertura: las
+            // imágenes YA adjuntas quedan apagadas (no se reenvían → ahorro de tokens);
+            // las NUEVAS que agregues acá entran activas. Cada miniatura tiene su 📤.
+            if (feedbackImgSel[j.id] === undefined) {
+              feedbackImgSel[j.id] = { base: ((HPStore.getMarkerData(j.markerKey) || {}).stills || []).length, sel: {} };
             }
+            var hint = document.createElement("div"); hint.className = "qj-fb-hint";
+            hint.textContent = "Estás refinando lo ya generado: las imágenes adjuntas NO se reenvían (📤 para reactivar la que necesites). Las nuevas que agregues se envían solas. Las ✓ usar se incrustan igual.";
+            fb.appendChild(hint);
             var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
             mnt.addEventListener("click", function (e) { e.stopPropagation(); });
-            mnt.appendChild(createStillsControl(j.markerKey));
+            mnt.appendChild(createStillsControl(j.markerKey, j.id));
             fb.appendChild(mnt);
           } else {
             var note = document.createElement("div"); note.className = "qj-msg";

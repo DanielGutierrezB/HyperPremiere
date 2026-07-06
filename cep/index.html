@@ -22,7 +22,7 @@
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.0.43</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.0.44</span>
       </button>
     </div>
   </header>
@@ -52,7 +52,7 @@
         <strong>Editar HTML manualmente:</strong> abrís una versión, la retocás a mano y la renderizás sin gastar IA.</p>
 
         <p class="help-diff"><strong>— Feedback y tokens —</strong><br>
-        En un feedback, si tu ajuste <strong>no menciona las imágenes</strong> (ej. "subí el título", "hacelo más lento") NO se reenvían las imágenes al modelo → ahorrás bastantes tokens. Si el ajuste <strong>sí depende de verlas</strong> (ej. "usá los colores de la imagen 1", "movés el logo") se reenvían solas. Hay un check <em>🖼️ Reenviar imágenes</em> para forzarlo cuando quieras. Ojo: las imágenes marcadas <strong>✓ usar</strong> se incrustan en el gráfico igual, se reenvíen o no.</p>
+        En un feedback estás refinando algo ya generado, así que las imágenes ya adjuntas aparecen <strong>apagadas (gris)</strong> y <strong>no se reenvían</strong> al modelo → ahorrás tokens (las imágenes son lo más caro). Si un ajuste depende de <em>ver</em> una imagen, tocá su <strong>📤 reenviar</strong> para reactivarla. Cualquier imagen <strong>nueva</strong> que agregues en el feedback entra activa sola. Ojo: las imágenes marcadas <strong>✓ usar</strong> se incrustan en el gráfico igual, se reenvíen o no (el logo/ícono aparece aunque el modelo no lo "vea").</p>
 
         <p class="help-diff"><strong>— La cola —</strong><br>
         Procesa de a uno. Podés <strong>pausar/reanudar</strong> (si estaba diseñando, retoma desde el llamado a la IA; si estaba renderizando, reanuda el render), <strong>cancelar</strong> un ítem, <strong>reintentar</strong> si algo falló (si el modelo ya había terminado y falló el render, reintenta solo el render sin gastar IA), <strong>mover</strong> el orden y <strong>vaciar</strong> todo. Cada terminado se puede <strong>Ver</strong> (clic en el nombre del clip: abre esa secuencia y salta al marcador). Abajo, un <strong>estimado</strong> de tiempo, tokens y costo de lo pendiente.</p>
