@@ -545,7 +545,7 @@ textarea:focus {
 }
 .btn-update:hover { border-color: #60a5fa; color: #e8e6df; }
 .btn-update:disabled { opacity: 0.6; cursor: default; }
-.update-icon { display: inline-block; }
+.update-icon { display: inline-block; font-size: 16px; font-weight: 700; vertical-align: middle; margin-right: 1px; }
 .update-icon.spinning { animation: hp-spin 0.8s linear infinite; }
 @keyframes hp-spin { to { transform: rotate(360deg); } }
 
@@ -1013,6 +1013,16 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
 }
 .icon-btn:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+
+/* Botón "Descargar log": ícono + etiqueta "Log" para que se entienda qué hace. */
+.btn-log {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px;
+  padding: 0 8px; font-size: 11px; line-height: 1; color: var(--text-secondary);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+  background: transparent; cursor: pointer;
+}
+.btn-log:hover { color: var(--accent); border-color: var(--accent); }
+.btn-log .dl-ico { font-size: 14px; }
 
 /* El botón actualizar un poco más chico en el header nuevo */
 .btn-update { padding: 3px 8px; }
