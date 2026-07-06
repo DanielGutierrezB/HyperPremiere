@@ -179,6 +179,25 @@ function stillToDataUrl(s) {
   return null;
 }
 
+// Guarda las imágenes provistas como ARCHIVOS embebibles (asset-01.png, …) en
+// `dir`. Devuelve los nombres. Se copian al workDir/assets del render para que el
+// HTML pueda referenciarlas con <img src="assets/asset-01.png">.
+function saveAssets(dir, dataUrls) {
+  const list = Array.isArray(dataUrls) ? dataUrls : [];
+  if (!list.length) return [];
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  fs.mkdirSync(dir, { recursive: true });
+  const names = [];
+  list.forEach((du, i) => {
+    const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(String(du || ''));
+    if (!m) return;
+    const ext = m[1] === 'jpeg' ? 'jpg' : m[1].replace(/[^a-z0-9]/gi, '') || 'png';
+    const name = 'asset-' + String(i + 1).padStart(2, '0') + '.' + ext;
+    try { fs.writeFileSync(path.join(dir, name), Buffer.from(m[2], 'base64')); names.push(name); } catch (e) {}
+  });
+  return names;
+}
+
 async function prepareGeneration(body, mode, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   const { projectPath, sequenceName, objective, transcript, marker, markerTranscript,
@@ -247,6 +266,20 @@ async function prepareGeneration(body, mode, onProgress) {
     ].join('\n');
   }
   saveStills(outPaths.stillsDir, stillsList);
+
+  // Imágenes provistas también disponibles como ARCHIVO para INCRUSTAR (logo/icono/
+  // foto). Se guardan en <base>/_assets/<slug> y se copian al render; el modelo las
+  // referencia con <img src="assets/asset-NN.ext"> si la instrucción pide usarlas.
+  const assetsDir = path.join(baseDir, '_assets', markerSlug);
+  const assetNames = saveAssets(assetsDir, stillsList);
+  if (assetNames.length) {
+    userPrompt += '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
+      'Las imágenes que ves también están disponibles como archivos en la carpeta assets/ del proyecto:\n' +
+      assetNames.map((n) => '- assets/' + n).join('\n') +
+      '\nSi la instrucción pide USAR o incluir una imagen provista (un logo, icono, foto o marca), ' +
+      'INCRUSTALA tal cual con <img src="assets/NOMBRE"> (ruta relativa exacta) — NO la recrees ni dibujes una aproximación. ' +
+      'Si son solo referencia visual (por ej. un frame del video para leer composición/paleta), usalas como contexto y NO las incrustes.';
+  }
 
   // Recursos de referencia (PDFs, imágenes, docs) subidos por el editor: se
   // guardan al lado de la render y se referencian por ruta en el prompt para
@@ -326,7 +359,7 @@ async function prepareGeneration(body, mode, onProgress) {
   return {
     ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
     durationSec, videoExt, draft: body.draft === true, version, markerSlug, baseDir,
-    usage: usageAcc, background: withBackground, instruction, marker,
+    usage: usageAcc, background: withBackground, instruction, marker, assetsDir,
     model: config.model, provider: config.provider, mode, adjustment,
   };
 }
@@ -339,6 +372,7 @@ async function renderPrepared(prepared, onProgress) {
   await renderComposition({
     html: prepared.html, outMovPath: prepared.outMovPath, durationSec: prepared.durationSec,
     onProgress: report, format: prepared.videoExt, quality: prepared.draft ? 'draft' : 'high',
+    assetsDir: prepared.assetsDir,
   });
 
   let history = [];
@@ -627,7 +661,7 @@ async function renderManualHtml(body, onProgress) {
   fs.writeFileSync(outPaths.html, cleanHtml, 'utf8');
 
   report({ pct: 40, msg: 'Renderizando el video con alpha…' });
-  await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high' });
+  await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
 
   let history = [];
   if (version > 1) {
@@ -676,7 +710,7 @@ async function renderVersionHQ(body, onProgress) {
   if (!movPath) throw new Error('No se encontró el archivo de video de v' + latest + ' para reemplazar');
 
   report({ pct: 30, msg: 'Render HQ (reemplazando v' + latest + ' en alta)…' });
-  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality: 'high' });
+  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality: 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
   return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground, replaced: true };
 }
 
@@ -705,7 +739,7 @@ async function renderLatest(body, onProgress) {
     paths(baseDir, markerSlug, latest, list.versions[list.versions.length - 1].model || 'x', videoExt).mov;
   const quality = body.draft ? 'draft' : 'high';
   report({ pct: 30, msg: 'Re-render de v' + latest + ' (sin re-diseñar)…' });
-  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality });
+  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality, assetsDir: path.join(baseDir, '_assets', markerSlug) });
   return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground };
 }
 

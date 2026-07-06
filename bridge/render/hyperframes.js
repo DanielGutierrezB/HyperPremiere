@@ -45,7 +45,7 @@ function removeGhostFiles(dir) {
  *                                    la duración real la define la composición HTML).
  * @returns {Promise<{movPath: string, htmlPath: string}>}
  */
-async function renderComposition({ html, outMovPath, durationSec, onProgress, format, quality }) {
+async function renderComposition({ html, outMovPath, durationSec, onProgress, format, quality, assetsDir }) {
   var report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!html || typeof html !== 'string') {
     throw new Error('renderComposition: falta el HTML de la composición');
@@ -67,6 +67,17 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     JSON.stringify({ paths: { blocks: '.', assets: 'assets' } }, null, 2),
     'utf8'
   );
+  // Copiar los assets embebibles (imágenes provistas por el editor) al workDir/assets
+  // para que el HTML pueda referenciarlos con <img src="assets/asset-01.png">.
+  try {
+    if (assetsDir && fs.existsSync(assetsDir)) {
+      const dst = path.join(workDir, 'assets');
+      fs.mkdirSync(dst, { recursive: true });
+      for (const f of fs.readdirSync(assetsDir)) {
+        try { fs.copyFileSync(path.join(assetsDir, f), path.join(dst, f)); } catch (e) {}
+      }
+    }
+  } catch (e) {}
 
   fs.mkdirSync(path.dirname(outMovPath), { recursive: true });
 
