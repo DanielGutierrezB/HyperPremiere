@@ -11,7 +11,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const RENDER_TIMEOUT_MS = 600 * 1000; // ~600s
+// Watchdog de INACTIVIDAD (no un tope total): matamos el render solo si pasa
+// este lapso sin NINGUNA salida del CLI. Así un render lento pero vivo (marcador
+// largo en máquina modesta, captura por software) no se mata por tardar; solo
+// muere si de verdad se colgó. Antes era un tope fijo de 600s que mataba renders
+// que iban bien (un marcador de 33s ≈ 1000 frames en serial no cabe en 600s).
+const IDLE_TIMEOUT_MS = 300 * 1000; // 5 min sin salida => colgado
 
 /**
  * Elige el perfil de render según el hardware de ESTA máquina, para que la
@@ -197,12 +202,23 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     let stdout = '';
     let settled = false;
 
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill('SIGKILL');
-      reject(new Error(`hyperframes: timeout después de ${RENDER_TIMEOUT_MS / 1000}s\n${stderr}`));
-    }, RENDER_TIMEOUT_MS);
+    let idleTimer = null;
+    let lastOutputAt = Date.now();
+    function armIdle() {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill('SIGKILL');
+        const idleSec = Math.round((Date.now() - lastOutputAt) / 1000);
+        reject(new Error(
+          `hyperframes: sin actividad por ${idleSec}s (watchdog ${IDLE_TIMEOUT_MS / 1000}s) — ` +
+          `parece colgado\n${stderr}`
+        ));
+      }, IDLE_TIMEOUT_MS);
+    }
+    function bumpIdle() { lastOutputAt = Date.now(); armIdle(); }
+    armIdle();
 
     function scan(text) {
       // "Capturing frame 30/150" → progreso real del render (mapeado a 55–90%).
@@ -217,20 +233,20 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
       else if (/assembling/i.test(text)) report({ pct: 93, msg: 'Ensamblando el video final…' });
     }
 
-    child.stdout.on('data', (d) => { const s = d.toString(); stdout += s; scan(s); });
-    child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; scan(s); });
+    child.stdout.on('data', (d) => { const s = d.toString(); stdout += s; bumpIdle(); scan(s); });
+    child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; bumpIdle(); scan(s); });
 
     child.on('error', (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(idleTimer);
       reject(new Error(`hyperframes: no se pudo lanzar npx (${err.message})`));
     });
 
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(idleTimer);
       if (code === 0) {
         resolve();
       } else {
