@@ -267,9 +267,13 @@ async function prepareGeneration(body, mode, onProgress) {
 
   report({ pct: 5, msg: 'Armando el contexto…' });
   const systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
+  // Refinamiento (adjust): prompt lean — no reenviar el transcript completo (ya
+  // tiene el HTML previo + el fragmento del marcador). Ahorra tokens en feedback.
+  const leanPrompt = mode === 'adjust';
   let userPrompt = buildUserPrompt({
     objective, transcriptSegments: transcript, marker, markerTranscript,
     instruction, generalInstruction: body.generalInstruction, stillsCount: stillsList.length,
+    lean: leanPrompt,
   });
 
   // Config activa (necesitamos el modelo antes de armar los nombres de archivo).
@@ -466,6 +470,7 @@ function estimateTokens(body) {
         markerTranscript,
         instruction: body.instruction || '',
         stillsCount: stills.length,
+        lean: body.mode === 'adjust',
       });
     } catch (e) {
       userPrompt = String(body.objective || '') + ' ' + String(body.instruction || '');

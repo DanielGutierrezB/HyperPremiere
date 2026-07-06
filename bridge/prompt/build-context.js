@@ -70,6 +70,7 @@ function buildUserPrompt(ctx) {
     instruction,
     generalInstruction,
     stillsCount,
+    lean, // refinamiento: omitir el transcript completo de la clase (ahorro de tokens)
   } = ctx || {};
 
   const markerStart = Number(marker && marker.start) || 0;
@@ -81,8 +82,13 @@ function buildUserPrompt(ctx) {
   parts.push('## Objetivo de la clase');
   parts.push((objective || '').trim() || '(sin objetivo declarado)');
 
-  parts.push('\n## Transcript completo de la clase (contexto general)');
-  parts.push(summarizeTranscript(transcriptSegments) || '(sin transcript)');
+  // En refinamiento (lean) NO reenviamos el transcript completo de la clase: el
+  // modelo ya tiene el diseño previo (HTML) y el fragmento del marcador; reenviar
+  // toda la clase otra vez es desperdicio de tokens.
+  if (!lean) {
+    parts.push('\n## Transcript completo de la clase (contexto general)');
+    parts.push(summarizeTranscript(transcriptSegments) || '(sin transcript)');
+  }
 
   parts.push(`\n## Fragmento del marcador "${(marker && marker.name) || 'sin nombre'}"`);
   parts.push(

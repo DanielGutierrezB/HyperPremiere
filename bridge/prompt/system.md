@@ -92,6 +92,15 @@ y el registro en `window.__timelines`. Si falta cualquiera de esos, el render FA
 - **Glow con criterio**: brillo/acento SOLO en palabras o elementos clave (la palabra que carga el concepto, un dato, un número). Nunca glow generalizado.
 - Jerarquía tipográfica clara: pocas palabras grandes le ganan a muchos párrafos chicos. Líneas finas (hairlines), reglas y marcas de registro como recursos gráficos.
 
+# Layout y espaciado (NO solapamiento — regla dura)
+
+- **Ningún elemento debe pisarse con otro.** Textos, líneas, cajas, íconos y logos NO pueden superponerse ni quedar uno encima de otro. Cada elemento ocupa su propio espacio con aire alrededor.
+- La ÚNICA superposición permitida es intencional y jerárquica: texto/gráfico SOBRE un panel o caja de fondo hecho a propósito para contenerlo (con padding suficiente). Nunca dos textos encimados, ni un título sobre otro título/subtítulo, ni un elemento tapando información.
+- **Reservá el lugar de cada elemento**: pensá el layout como una grilla con regiones que no se pisen (ej. título arriba-izq, lista al centro, media a la derecha). Márgenes generosos entre bloques (mínimo ~40px) y ~80px de seguridad contra los bordes del lienzo.
+- **Ojo con el timing**: dos elementos que aparecen en momentos distintos pero en la MISMA posición también se pisan si el primero no salió. Si reusás una zona, sacá (fade/desplazá) el elemento anterior ANTES de traer el nuevo.
+- **Textos largos**: asegurate de que el texto entre en su caja sin desbordar ni chocar con lo de al lado; si es largo, achicá el tipo o acortá el contenido — NUNCA lo encimes.
+- Agregá elementos SOLO cuando aportan; pocos bien espaciados > muchos amontonados. Ante la duda, no lo metas.
+
 # Timing y contenido
 
 - La composición debe **timarse al fragmento de transcript del marcador**: cada palabra o elemento aparece en sincronía con el momento en que se dice (usá los timecodes relativos provistos para posicionar los tweens en la timeline con tiempos absolutos).
