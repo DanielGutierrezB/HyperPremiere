@@ -827,7 +827,8 @@
         id: j.id, status: normStatus(j.status), pct: (normStatus(j.status) === "done" ? 100 : 0),
         msg: j.msg, kind: j.kind, seqName: j.seqName, projectPath: j.projectPath,
         markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
-        markerDuration: j.markerDuration, version: j.version, usage: j.usage, payload: p
+        markerDuration: j.markerDuration, version: j.version, usage: j.usage,
+        _failedStage: j._failedStage, payload: p
       };
     }
     var persistTimer = null;
@@ -951,6 +952,7 @@
           job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
         }
         if (job._cancelled) { modelBusy = false; emit(); pump(); return; }
+        job._failedStage = "model"; // falló el diseño → reintentar re-llama a la IA
         hpLog("Job MODELO FALLÓ [" + job.label + "] · rate=" + !!f.rate + " · " + f.msg, "ERROR");
         modelBusy = false; emit(); pump();
       });
@@ -963,7 +965,9 @@
         ? callEngine("renderManualHtml", job.payload, onP(job))
         : (job.kind === "renderVersionHQ")
           ? callEngine("renderVersionHQ", job.payload, onP(job))
-          : callEngine("renderPrepared", job.prepared, onP(job));
+          : (job.kind === "renderLatest")
+            ? callEngine("renderLatest", job.payload, onP(job))
+            : callEngine("renderPrepared", job.prepared, onP(job));
       p.then(function (res) {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
         finishPlace(job, res);
@@ -976,6 +980,7 @@
         } else {
           job.status = "error"; job.msg = "Error: " + shortenErr(f.msg);
         }
+        job._failedStage = "render"; // el modelo ya estaba OK; reintentar re-renderiza sin IA
         hpLog("Job RENDER FALLÓ [" + job.label + "] · rate=" + !!f.rate + " · " + f.msg, "ERROR");
         renderBusy = false; emit(); pump();
       });
@@ -988,7 +993,7 @@
       if (!renderBusy && (overlap || !modelBusy)) {
         for (var i = 0; i < jobs.length; i++) {
           var j = jobs[i];
-          if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ"))) { startRender(j); break; }
+          if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ" || j.kind === "renderLatest"))) { startRender(j); break; }
         }
       }
       // Carril MODELO (en local, no mientras el render corre).
@@ -1090,15 +1095,34 @@
         }
         paused = false; emit(); pump();
       },
-      // Reintenta un job que quedó en "error" (tras arreglar la causa). Vuelve a
-      // "queued" desde cero (re-corre modelo+render, o el render según el kind).
+      // Reintenta un job en "error" DESDE EL PUNTO DE FALLO:
+      // - Si falló en RENDER (el diseño de la IA ya estaba hecho) → re-renderiza
+      //   SIN volver a llamar a la IA (usa el prepared en memoria, o re-renderiza
+      //   la última versión HTML del disco). Ahorra tiempo y tokens.
+      // - Si falló en el MODELO → re-corre desde cero (re-llama a la IA).
       retry: function (id) {
         for (var i = 0; i < jobs.length; i++) {
           var j = jobs[i];
-          if (j.id === id && (j.status === "error" || j.status === "waiting")) {
-            j.status = "queued"; j.pct = 0; j.msg = "Reintentando, esperando turno…";
-            j.prepared = null; j._usageCounted = false; j._cancelled = false; j.startedAt = 0;
-            hpLog("Reintento de [" + j.label + "] (id " + id + ").");
+          if (j.id !== id || (j.status !== "error" && j.status !== "waiting")) continue;
+          j.pct = 0; j._usageCounted = false; j._cancelled = false; j.startedAt = 0;
+          if (j._failedStage === "render") {
+            if (j.prepared) {
+              // Diseño en memoria → solo re-render (renderPrepared).
+              j.status = "ready"; j.msg = "Reintentando el render (sin re-diseñar)…";
+            } else {
+              // Diseño en disco (tras recarga) → re-render de la última versión sin IA.
+              j.kind = "renderLatest";
+              j.payload = {
+                projectPath: j.projectPath, sequenceName: j.seqName, markerSlug: j.markerKey,
+                marker: { start: j.markerStart, end: j.markerStart + j.markerDuration, duration: j.markerDuration },
+                background: !!(j.payload && j.payload.background), draft: !!(j.payload && j.payload.draft)
+              };
+              j.status = "queued"; j.msg = "Reintentando el render (sin re-diseñar)…";
+            }
+            hpLog("Reintento RENDER de [" + j.label + "] (sin re-llamar a la IA).");
+          } else {
+            j.status = "queued"; j.prepared = null; j.msg = "Reintentando desde cero…";
+            hpLog("Reintento COMPLETO de [" + j.label + "] (re-diseña con IA).");
           }
         }
         paused = false; emit(); pump();

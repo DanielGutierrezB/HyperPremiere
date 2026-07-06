@@ -680,6 +680,35 @@ async function renderVersionHQ(body, onProgress) {
   return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground, replaced: true };
 }
 
+// Re-renderiza la ÚLTIMA versión (HTML ya diseñado en disco) SIN volver a llamar
+// a la IA — para "reintentar desde el punto de fallo" cuando el render falló pero
+// el modelo ya había terminado. Respeta la calidad (draft/alta) y coloca normal.
+async function renderLatest(body, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
+  body = body || {};
+  const markerSlug = String(body.markerSlug || '').trim();
+  if (!markerSlug) throw new Error('renderLatest: falta markerSlug');
+  const marker = body.marker || {};
+  const durationSec = Number(marker.duration) || 0;
+  if (durationSec <= 0) throw new Error('renderLatest: marker.duration debe ser > 0');
+  const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+  const list = listMarkerVersions({ projectPath: body.projectPath, sequenceName: body.sequenceName, markerSlug });
+  if (!list.ok || !list.versions.length) throw new Error('No hay versiones (HTML) para re-renderizar de ' + markerSlug);
+  const latest = list.versions[list.versions.length - 1].version;
+  const srcHtmlPath = versionFile(baseDir, markerSlug, latest, '.html');
+  const html = srcHtmlPath ? fs.readFileSync(srcHtmlPath, 'utf8') : '';
+  if (!html) throw new Error('No se encontró el HTML de la última versión (v' + latest + ')');
+  const withBackground = body.background === true;
+  const videoExt = withBackground ? 'mp4' : 'mov';
+  const movPath = versionFile(baseDir, markerSlug, latest, '.' + videoExt) ||
+    versionFile(baseDir, markerSlug, latest, '.mov') || versionFile(baseDir, markerSlug, latest, '.mp4') ||
+    paths(baseDir, markerSlug, latest, list.versions[list.versions.length - 1].model || 'x', videoExt).mov;
+  const quality = body.draft ? 'draft' : 'high';
+  report({ pct: 30, msg: 'Re-render de v' + latest + ' (sin re-diseñar)…' });
+  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality });
+  return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground };
+}
+
 // Limpia VIDEOS de versiones viejas de una secuencia: por cada marcador deja
 // solo el video (.mov/.mp4) de la ÚLTIMA versión y borra los anteriores.
 // NO toca los .html (historial/editor) ni stills/recursos. Devuelve cuánto liberó.
@@ -872,6 +901,7 @@ function loadQueue(body) {
 
 module.exports = {
   generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
+  renderLatest,
   saveQueue,
   loadQueue,
   cleanOldVersions,
