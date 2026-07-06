@@ -72,21 +72,22 @@ function pickRenderProfile() {
  * dentro del contexto de Premiere en Apple Silicon → estable pero LENTO (la
  * captura pasa a CPU). Este modo es lo que más pesa en el tiempo de render.
  *
- * Prioridad: env HYPERPREMIERE_BROWSER_GPU > config.json { browserGpu } > 'software'.
- * Cada máquina puede optar por 'hardware' si su Chromium no crashea (ej. la MacBook),
- * sin afectar a las demás. Default = 'software' (seguro, sin cambios de comportamiento).
+ * Prioridad: env HYPERPREMIERE_BROWSER_GPU > config.json { browserGpu } > 'auto'.
+ * Valores: 'hardware' (fuerza GPU), 'software' (fuerza CPU/SwiftShader), 'auto'
+ * (intenta GPU y, si el Chromium crashea, reintenta el mismo render por software).
+ * 'auto' es el default: cada máquina usa la GPU cuando funciona (rápido) y cae sola
+ * a software cuando ese contexto crashea (ej. dentro de Premiere) — sin tocar nada.
  */
 function browserGpuMode() {
+  const VALID = ['hardware', 'software', 'auto'];
   const envMode = process.env.HYPERPREMIERE_BROWSER_GPU;
-  if (envMode === 'hardware' || envMode === 'software') return envMode;
+  if (VALID.includes(envMode)) return envMode;
   try {
     const p = path.join(os.homedir(), '.hyperpremiere', 'config.json');
     const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
-    if (cfg && (cfg.browserGpu === 'hardware' || cfg.browserGpu === 'software')) {
-      return cfg.browserGpu;
-    }
+    if (cfg && VALID.includes(cfg.browserGpu)) return cfg.browserGpu;
   } catch (e) {}
-  return 'software';
+  return 'auto';
 }
 
 /**
@@ -210,81 +211,108 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   }
   void durationSec; // informativo; la duración vive en el HTML.
 
-  await new Promise((resolve, reject) => {
-    // GPU del browser (ver browserGpuMode). 'software' fuerza SwiftShader (estable
-    // pero lento, fix del crash ANGLE Metal); 'hardware' deja que hyperframes use
-    // la GPU por defecto (rápido, pero es el path que crasheaba en Premiere).
-    const childEnv = Object.assign({}, process.env);
-    if (gpuMode === 'software') {
-      childEnv.PRODUCER_BROWSER_GPU_MODE = 'software';
-    } else {
-      delete childEnv.PRODUCER_BROWSER_GPU_MODE;
-    }
-    const child = spawn(bin, args, {
-      cwd: workDir,
-      env: childEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: isWin, // Windows: el shim .cmd/npx necesita shell
-    });
+  // Una corrida del CLI con un modo de GPU concreto ('hardware' | 'software').
+  function runOnce(effectiveMode) {
+    return new Promise((resolve, reject) => {
+      // 'software' fuerza SwiftShader (estable pero lento); 'hardware' deja que
+      // hyperframes use la GPU por defecto (rápido, pero puede crashear en Premiere).
+      const childEnv = Object.assign({}, process.env);
+      if (effectiveMode === 'software') {
+        childEnv.PRODUCER_BROWSER_GPU_MODE = 'software';
+      } else {
+        delete childEnv.PRODUCER_BROWSER_GPU_MODE;
+      }
+      const child = spawn(bin, args, {
+        cwd: workDir,
+        env: childEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: isWin, // Windows: el shim .cmd/npx necesita shell
+      });
 
-    let stderr = '';
-    let stdout = '';
-    let settled = false;
+      let stderr = '';
+      let stdout = '';
+      let settled = false;
 
-    let idleTimer = null;
-    let lastOutputAt = Date.now();
-    function armIdle() {
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
+      let idleTimer = null;
+      let lastOutputAt = Date.now();
+      function armIdle() {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          child.kill('SIGKILL');
+          const idleSec = Math.round((Date.now() - lastOutputAt) / 1000);
+          reject(Object.assign(new Error(
+            `hyperframes: sin actividad por ${idleSec}s (watchdog ${IDLE_TIMEOUT_MS / 1000}s) — ` +
+            `parece colgado\n${stderr}`
+          ), { code: 'IDLE' }));
+        }, IDLE_TIMEOUT_MS);
+      }
+      function bumpIdle() { lastOutputAt = Date.now(); armIdle(); }
+      armIdle();
+
+      function scan(text) {
+        // "Capturing frame 30/150" → progreso real del render (mapeado a 55–90%).
+        const fm = text.match(/frame\s+(\d+)\s*\/\s*(\d+)/i);
+        if (fm) {
+          const cur = parseInt(fm[1], 10), tot = parseInt(fm[2], 10) || 1;
+          const pct = 55 + Math.round((cur / tot) * 33);
+          report({ pct: pct, msg: 'Renderizando fotograma ' + cur + '/' + tot + '…' });
+          return;
+        }
+        if (/encoding/i.test(text)) report({ pct: 90, msg: 'Codificando el video…' });
+        else if (/assembling/i.test(text)) report({ pct: 93, msg: 'Ensamblando el video final…' });
+      }
+
+      child.stdout.on('data', (d) => { const s = d.toString(); stdout += s; bumpIdle(); scan(s); });
+      child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; bumpIdle(); scan(s); });
+
+      child.on('error', (err) => {
         if (settled) return;
         settled = true;
-        child.kill('SIGKILL');
-        const idleSec = Math.round((Date.now() - lastOutputAt) / 1000);
-        reject(new Error(
-          `hyperframes: sin actividad por ${idleSec}s (watchdog ${IDLE_TIMEOUT_MS / 1000}s) — ` +
-          `parece colgado\n${stderr}`
-        ));
-      }, IDLE_TIMEOUT_MS);
-    }
-    function bumpIdle() { lastOutputAt = Date.now(); armIdle(); }
-    armIdle();
+        clearTimeout(idleTimer);
+        reject(Object.assign(new Error(`hyperframes: no se pudo lanzar npx (${err.message})`), { code: 'SPAWN' }));
+      });
 
-    function scan(text) {
-      // "Capturing frame 30/150" → progreso real del render (mapeado a 55–90%).
-      const fm = text.match(/frame\s+(\d+)\s*\/\s*(\d+)/i);
-      if (fm) {
-        const cur = parseInt(fm[1], 10), tot = parseInt(fm[2], 10) || 1;
-        const pct = 55 + Math.round((cur / tot) * 33);
-        report({ pct: pct, msg: 'Renderizando fotograma ' + cur + '/' + tot + '…' });
-        return;
-      }
-      if (/encoding/i.test(text)) report({ pct: 90, msg: 'Codificando el video…' });
-      else if (/assembling/i.test(text)) report({ pct: 93, msg: 'Ensamblando el video final…' });
-    }
-
-    child.stdout.on('data', (d) => { const s = d.toString(); stdout += s; bumpIdle(); scan(s); });
-    child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; bumpIdle(); scan(s); });
-
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(idleTimer);
-      reject(new Error(`hyperframes: no se pudo lanzar npx (${err.message})`));
+      child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(idleTimer);
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(Object.assign(new Error(
+            `hyperframes salió con código ${code}\nstderr:\n${stderr}\nstdout:\n${stdout}`
+          ), { code: code }));
+        }
+      });
     });
+  }
 
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(idleTimer);
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(
-          `hyperframes salió con código ${code}\nstderr:\n${stderr}\nstdout:\n${stdout}`
-        ));
-      }
-    });
-  });
+  // Plan de intentos. En 'auto' probamos GPU y, si crashea, reintentamos el MISMO
+  // render por software (el path estable). Así cada máquina usa la GPU cuando puede
+  // y cae sola a software cuando ese contexto no la soporta, sin configurar nada.
+  const attempts = gpuMode === 'auto' ? ['hardware', 'software'] : [gpuMode];
+  let lastErr = null;
+  for (let i = 0; i < attempts.length; i++) {
+    const mode = attempts[i];
+    const isLast = i === attempts.length - 1;
+    console.error('[hyperpremiere] intento de captura: browser-gpu=' + mode);
+    try {
+      await runOnce(mode);
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (isLast) break;
+      // Limpiar salida parcial antes de reintentar.
+      try { if (fs.existsSync(outMovPath)) fs.unlinkSync(outMovPath); } catch (_) {}
+      console.error('[hyperpremiere] browser-gpu=' + mode + ' falló (' +
+        String(e.message).split('\n')[0] + ') → reintento por software');
+      report({ pct: 55, msg: 'La GPU falló, reintentando por software…' });
+    }
+  }
+  if (lastErr) throw lastErr;
 
   if (!fs.existsSync(outMovPath)) {
     throw new Error(`hyperframes terminó OK pero no existe el archivo de salida: ${outMovPath}`);
