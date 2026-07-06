@@ -2681,6 +2681,51 @@
 
   loadConfig();
 
+  // ── Tooltips propios ────────────────────────────────────────────────
+  // CEF (Premiere) NO dibuja los tooltips nativos de `title`. Mostramos uno
+  // propio leyendo el atributo title/data-tip de cualquier botón o control.
+  (function customTooltips() {
+    var tip = document.createElement("div");
+    tip.className = "hp-tip"; tip.setAttribute("data-hidden", "true");
+    document.body.appendChild(tip);
+    var curEl = null;
+    function titledAncestor(el) {
+      while (el && el !== document.body && el.nodeType === 1) {
+        if (el.getAttribute) {
+          var t = el.getAttribute("title");
+          if (t) { el.setAttribute("data-tip", t); el.removeAttribute("title"); return { el: el, t: t }; }
+          var dt = el.getAttribute("data-tip");
+          if (dt) return { el: el, t: dt };
+        }
+        el = el.parentNode;
+      }
+      return null;
+    }
+    function place(el) {
+      var r = el.getBoundingClientRect();
+      tip.style.visibility = "hidden"; tip.setAttribute("data-hidden", "false");
+      var tw = tip.offsetWidth, th = tip.offsetHeight;
+      var left = Math.max(6, Math.min(window.innerWidth - tw - 6, r.left));
+      var top = r.bottom + 6;
+      if (top + th > window.innerHeight - 6) top = r.top - th - 6; // arriba si no cabe abajo
+      tip.style.left = left + "px"; tip.style.top = Math.max(6, top) + "px";
+      tip.style.visibility = "visible";
+    }
+    document.addEventListener("mouseover", function (e) {
+      var r = titledAncestor(e.target);
+      if (!r) return;
+      if (r.el === curEl && tip.getAttribute("data-hidden") === "false") return;
+      curEl = r.el; tip.textContent = r.t; place(r.el);
+    });
+    document.addEventListener("mouseout", function (e) {
+      if (!curEl) return;
+      // Ocultar solo al salir del elemento con tooltip (no al pasar a un hijo).
+      if (e.relatedTarget && curEl.contains(e.relatedTarget)) return;
+      tip.setAttribute("data-hidden", "true"); curEl = null;
+    });
+    document.addEventListener("click", function () { tip.setAttribute("data-hidden", "true"); curEl = null; }, true);
+  })();
+
   // Arranque: fijar contexto y rehidratar objetivo + estado del transcript.
   loadContext(function () {
     hydrateObjective();

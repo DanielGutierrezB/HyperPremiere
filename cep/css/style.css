@@ -1106,6 +1106,15 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* v1.0.4 — jobs que quedaron sin tokens / límite alcanzado (reactivables) */
 .queue-job.is-waiting { border-left: 3px solid var(--warn); padding-left: 7px; }
 .queue-job.is-waiting .qj-title { color: var(--warn); }
+/* Tooltip propio (CEF no dibuja los title nativos) */
+.hp-tip {
+  position: fixed; z-index: 9999; max-width: 320px; pointer-events: none;
+  background: #0d1117; color: #e6edf3; border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 6px; padding: 6px 9px; font-size: 11px; line-height: 1.35;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45); white-space: normal;
+}
+.hp-tip[data-hidden="true"] { display: none; }
+
 /* Footer de estimación de la cola (tiempo + tokens de lo pendiente) */
 .queue-estimate {
   margin-top: 8px; padding: 8px 10px; border-radius: 8px;
