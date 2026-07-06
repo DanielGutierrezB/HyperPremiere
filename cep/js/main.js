@@ -689,8 +689,28 @@
     return wrap;
   }
 
-  // Captura el frame actual del monitor de programa (host.jsx exportFramePNG),
-  // lo lee con Node (engine.readStill) y lo agrega como still del marcador.
+  // Re-renderiza los stills/recursos buscando el contenedor VIVO en el DOM (no un
+  // closure que pudo quedar viejo si la tarjeta se re-renderizó). markerKey puede
+  // ser GEN_KEY (zona de prompt general) o la clave de un marcador.
+  function refreshStills(markerKey) {
+    var mount = null;
+    if (markerKey === GEN_KEY) {
+      mount = document.getElementById("general-stills-mount");
+    } else if (markersContainer) {
+      var cards = markersContainer.querySelectorAll("details.marker-card");
+      for (var i = 0; i < cards.length; i++) { if (cards[i]._markerKey === markerKey) { mount = cards[i]; break; } }
+    }
+    if (!mount) return false;
+    var t = mount.querySelector(".still-thumbs"), r = mount.querySelector(".resource-list");
+    if (t) renderStills(t, markerKey);
+    if (r) renderResources(r, markerKey);
+    return true;
+  }
+
+  // Captura el frame actual del monitor de programa (host.jsx exportFramePNG), lo
+  // GUARDA en la carpeta de la secuencia (engine.saveCapture) y lo agrega como
+  // still del marcador. Nota: QE muestra un alert nativo "Exported frame …" que
+  // hay que cerrar (comportamiento de Premiere, no del plugin).
   function captureProgramStill(markerKey, thumbs, btn, statusEl) {
     var tmpPath = "/tmp/hp-still-" + (new Date().getTime()) + ".png";
     var arg = JSON.stringify(tmpPath);
@@ -698,6 +718,7 @@
     btn.disabled = true;
     btn.textContent = "Capturando…";
     if (statusEl) { statusEl.textContent = ""; statusEl.className = "still-status"; }
+    hpLog("Captura de programa para [" + markerKey + "] → " + tmpPath);
 
     function fail(msg) {
       if (statusEl) { statusEl.textContent = msg; statusEl.className = "still-status is-error"; }
@@ -706,24 +727,32 @@
     }
 
     csInterface.evalScript("hp_captureProgramFrame(" + arg + ")", function (result) {
+      hpLog("Captura: host devolvió " + (result || "(vacío)"));
       if (!result || result.indexOf("ok|") !== 0) {
         fail("No se pudo capturar: " + (result || "sin secuencia/monitor"));
         return;
       }
       var realPath = result.substring(3); // "ok|<ruta real>"
-      hpCall("readStill", realPath)
-        .then(function (res) {
-          if (res && res.ok && res.dataUrl) {
-            HPStore.addMarkerStill(markerKey, res.dataUrl);
-            renderStills(thumbs, markerKey);
-            if (statusEl) statusEl.textContent = "";
-            btn.textContent = prev;
-            btn.disabled = false;
-          } else {
-            fail("No se pudo leer el frame: " + ((res && res.error) || ""));
-          }
-        })
-        .catch(function (e) { fail((e && e.message) || "error leyendo el frame"); });
+      hpCall("saveCapture", {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName,
+        markerSlug: markerKey, tmpPath: realPath
+      }).then(function (res) {
+        if (res && res.ok && res.dataUrl) {
+          HPStore.addMarkerStill(markerKey, res.dataUrl);
+          // Refrescar por el contenedor VIVO (robusto ante re-render) + fallback al closure.
+          if (!refreshStills(markerKey) && thumbs) renderStills(thumbs, markerKey);
+          if (markerKey === GEN_KEY) updateGeneralSummary();
+          if (statusEl) statusEl.textContent = "✓ guardada en la carpeta de la secuencia";
+          hpLog("Captura OK → " + res.savedPath + " · agregada a [" + markerKey + "]");
+          btn.textContent = prev; btn.disabled = false;
+        } else {
+          fail("No se pudo guardar el frame: " + ((res && res.error) || ""));
+          hpLog("saveCapture FALLÓ: " + ((res && res.error) || ""), "WARN");
+        }
+      }).catch(function (e) {
+        fail((e && e.message) || "error guardando el frame");
+        hpLog("saveCapture excepción: " + ((e && e.message) || e), "ERROR");
+      });
     });
   }
 

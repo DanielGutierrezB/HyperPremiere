@@ -460,6 +460,28 @@ function listOtherResources(baseDir, currentSlug) {
 
 // Lee un PNG (el frame capturado por host.jsx) y lo devuelve como dataURL.
 // Borra el archivo temporal después. Lo hace Node (fiable), no la API de CEP.
+// Guarda una captura del programa en la carpeta de la secuencia (para tener todo
+// el contexto en disco) y devuelve su dataUrl para usarla como still. Mueve el
+// PNG temporal a "<seq>/_capturas/<marcador>-<stamp>.png".
+function saveCapture(body) {
+  try {
+    body = body || {};
+    const tmpPath = body.tmpPath;
+    if (!tmpPath || !fs.existsSync(tmpPath)) return { ok: false, error: 'no existe la captura: ' + tmpPath };
+    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+    const capDir = path.join(baseDir, '_capturas');
+    fs.mkdirSync(capDir, { recursive: true });
+    const slug = String(body.markerSlug || 'general').replace(/[^a-zA-Z0-9._-]+/g, '-') || 'general';
+    const stamp = (path.basename(tmpPath).match(/\d+/) || [String(Date.now())])[0];
+    const dest = path.join(capDir, slug + '-' + stamp + '.png');
+    fs.copyFileSync(tmpPath, dest);
+    try { fs.unlinkSync(tmpPath); } catch (e) {}
+    const b64 = fs.readFileSync(dest).toString('base64');
+    if (!b64) return { ok: false, error: 'la captura quedó vacía' };
+    return { ok: true, dataUrl: 'data:image/png;base64,' + b64, savedPath: dest };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+
 function readStill(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath)) {
@@ -857,4 +879,5 @@ module.exports = {
   checkUpdate,
   selfUpdate,
   readStill,
+  saveCapture,
 };
