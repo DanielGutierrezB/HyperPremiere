@@ -1682,13 +1682,14 @@
         row.appendChild(msg);
         // Caja de feedback inline (solo en jobs terminados y si el usuario la abrió).
         if (j.status === "done" && feedbackOpen[j.id]) {
-          var fb = document.createElement("div"); fb.className = "qj-feedback";
+          var fb = document.createElement("div"); fb.className = "qj-feedback-wrap";
+          var inRow = document.createElement("div"); inRow.className = "qj-feedback";
           var ta = document.createElement("textarea"); ta.className = "qj-fb-input"; ta.rows = 2;
           ta.placeholder = "Qué ajustar… (se regenera manteniendo el puesto en la cola)";
           ta.value = feedbackDraft[j.id] || "";
           ta.addEventListener("input", (function (id) { return function (e) { feedbackDraft[id] = e.target.value; }; })(j.id));
           ta.addEventListener("click", function (e) { e.stopPropagation(); });
-          fb.appendChild(ta);
+          inRow.appendChild(ta);
           var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
           go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
           go.addEventListener("click", (function (id) {
@@ -1699,7 +1700,22 @@
               HPQueue.regenerate(id, t);
             };
           })(j.id));
-          fb.appendChild(go);
+          inRow.appendChild(go);
+          fb.appendChild(inRow);
+          // Imágenes/elementos para el feedback — mismo control que la tarjeta
+          // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
+          // marcador y la regeneración los toma. Solo si el job es de la secuencia
+          // actual (HPStore opera sobre ese contexto).
+          if (j.seqName === currentSequenceName && j.projectPath === currentProjectPath) {
+            var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
+            mnt.addEventListener("click", function (e) { e.stopPropagation(); });
+            mnt.appendChild(createStillsControl(j.markerKey));
+            fb.appendChild(mnt);
+          } else {
+            var note = document.createElement("div"); note.className = "qj-msg";
+            note.textContent = "Para adjuntar imágenes a este marcador, abrí su secuencia en la pestaña Marcadores.";
+            fb.appendChild(note);
+          }
           row.appendChild(fb);
         }
         if (j.status === "running" || j.status === "modeling") {

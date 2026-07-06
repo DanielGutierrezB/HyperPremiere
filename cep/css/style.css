@@ -1152,7 +1152,9 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .engine-prep .hp-bar[data-hidden="true"] { display: none; }
 
 /* Caja de feedback inline en un job terminado */
-.qj-feedback { display: flex; gap: 6px; align-items: flex-end; margin-top: 5px; }
+.qj-feedback-wrap { margin-top: 5px; }
+.qj-fb-stills { margin-top: 8px; }
+.qj-feedback { display: flex; gap: 6px; align-items: flex-end; }
 .qj-fb-input {
   flex: 1; resize: vertical; min-height: 34px; font: inherit; font-size: 11px;
   padding: 5px 7px; border-radius: 5px; background: var(--bg-input, rgba(255,255,255,0.04));
