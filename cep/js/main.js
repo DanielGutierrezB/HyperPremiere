@@ -537,6 +537,13 @@
     });
   }
 
+  // Fuente para el <img> del thumbnail: data URL tal cual, o ruta de archivo
+  // (captura guardada en disco) servida por file:// (encodeURI para espacios).
+  function stillThumbSrc(s) {
+    s = String(s || "");
+    if (/^data:/i.test(s) || /^file:\/\//i.test(s)) return s;
+    return "file://" + encodeURI(s);
+  }
   function renderStills(container, markerKey) {
     container.innerHTML = "";
     var stills = HPStore.getMarkerData(markerKey).stills;
@@ -547,7 +554,7 @@
         thumb.className = "still-thumb";
 
         var img = document.createElement("img");
-        img.src = stills[index];
+        img.src = stillThumbSrc(stills[index]);
 
         var remove = document.createElement("button");
         remove.type = "button";
@@ -737,8 +744,10 @@
         projectPath: currentProjectPath, sequenceName: currentSequenceName,
         markerSlug: markerKey, tmpPath: realPath
       }).then(function (res) {
-        if (res && res.ok && res.dataUrl) {
-          HPStore.addMarkerStill(markerKey, res.dataUrl);
+        if (res && res.ok && (res.savedPath || res.dataUrl)) {
+          // Guardamos la RUTA en disco (no el base64) → no revienta la cuota de
+          // localStorage. El engine la lee y la convierte a imagen al generar.
+          HPStore.addMarkerStill(markerKey, res.savedPath || res.dataUrl);
           // Refrescar por el contenedor VIVO (robusto ante re-render) + fallback al closure.
           if (!refreshStills(markerKey) && thumbs) renderStills(thumbs, markerKey);
           if (markerKey === GEN_KEY) updateGeneralSummary();

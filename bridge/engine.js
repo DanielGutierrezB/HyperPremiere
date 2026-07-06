@@ -162,6 +162,23 @@ async function listOllamaModels(baseUrl) {
 // Etapa 1 (MODELO): arma el prompt, llama al modelo y escribe el HTML.
 // NO renderiza. Devuelve un "prepared" que renderPrepared() consume después.
 // Separar modelo/render permite solapar (generar el siguiente mientras renderiza el actual).
+// Convierte un still (data URL o ruta a archivo) a data URL. Devuelve null si no
+// se puede leer. Permite guardar capturas como ruta en el panel (sin base64 en
+// localStorage) y aun así mandarlas al modelo como imagen.
+function stillToDataUrl(s) {
+  s = String(s || '');
+  if (/^data:/i.test(s)) return s;
+  const p = s.replace(/^file:\/\//, '');
+  try {
+    if (fs.existsSync(p)) {
+      const ext = (path.extname(p).slice(1) || 'png').toLowerCase();
+      const mt = ext === 'jpg' ? 'jpeg' : ext;
+      return 'data:image/' + mt + ';base64,' + fs.readFileSync(p).toString('base64');
+    }
+  } catch (e) {}
+  return null;
+}
+
 async function prepareGeneration(body, mode, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   const { projectPath, sequenceName, objective, transcript, marker, markerTranscript,
@@ -172,7 +189,10 @@ async function prepareGeneration(body, mode, onProgress) {
   if (durationSec <= 0) throw new Error('marker.duration debe ser > 0');
 
   const markerSlug = String(body.markerSlug || '').trim() || slugify(marker.name);
-  const stillsList = Array.isArray(stills) ? stills : [];
+  // Los stills pueden venir como data URL (arrastrados) o como RUTA a archivo
+  // (capturas guardadas en _capturas — así no revientan la cuota de localStorage).
+  // Normalizamos todo a data URL para que providers/saveStills funcionen igual.
+  const stillsList = (Array.isArray(stills) ? stills : []).map(stillToDataUrl).filter(Boolean);
   const resourcesList = Array.isArray(body.resources) ? body.resources : [];
 
   // Acumulador de tokens de esta generación (puede haber 2 llamadas al modelo:
