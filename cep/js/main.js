@@ -13,6 +13,14 @@
   // marcador (getMarkerData/addMarkerStill/…) sin ser un marcador real.
   var GEN_KEY = "__general__";
 
+  // Timing auto-calibrado para estimar la cola: promedio de segundos por job de
+  // modelo, y segundos de render por segundo de composición. Se afina con el uso.
+  var HP_TIMING = { modelJobs: 0, modelSec: 0, renderCompSec: 0, renderSec: 0 };
+  try { var _t = JSON.parse(window.localStorage.getItem("hyperpremiere::timing") || "null"); if (_t && typeof _t === "object") HP_TIMING = _t; } catch (e) {}
+  function saveTiming() { try { window.localStorage.setItem("hyperpremiere::timing", JSON.stringify(HP_TIMING)); } catch (e) {} }
+  function avgModelSec() { return HP_TIMING.modelJobs > 0 ? (HP_TIMING.modelSec / HP_TIMING.modelJobs) : 150; }      // default ~2.5 min
+  function renderSecPerCompSec() { return HP_TIMING.renderCompSec > 0 ? (HP_TIMING.renderSec / HP_TIMING.renderCompSec) : 4; } // default 4×
+
   // ── Log en memoria (para el botón "Descargar log") ──────────────────
   // Todo lo relevante (carga del motor, cola, errores) se escribe acá con
   // timestamp. El usuario lo baja a Descargas y nos lo manda ante una falla.
@@ -887,6 +895,10 @@
         job.status = "done"; job.pct = 100;
         job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur;
         hpLog("Job DONE [" + job.label + "] v" + job.version + " · " + msgTxt + " · " + dur);
+        // Calibración: segundos de render por segundo de composición.
+        var _rs = job._renderStart ? (Date.now() - job._renderStart) / 1000 : 0;
+        var _cs = Number(job.markerDuration) || 0;
+        if (_rs > 1 && _cs > 0 && _rs < 7200) { HP_TIMING.renderSec += _rs; HP_TIMING.renderCompSec += _cs; saveTiming(); }
         markGenerated(job);
         renderBusy = false; emit(); pump();
       }
@@ -941,6 +953,9 @@
         job.prepared = prep;
         if (prep.usage) { job.usage = prep.usage; HPStore.addSessionUsage(prep.usage); updateSessionUsageBar(); job._usageCounted = true; }
         job.status = "ready"; job.msg = "En espera de render…";
+        // Calibración: segundos que tardó el modelo (para estimar la cola).
+        var _ms = (Date.now() - (job.startedAt || Date.now())) / 1000;
+        if (_ms > 1 && _ms < 3600) { HP_TIMING.modelJobs++; HP_TIMING.modelSec += _ms; saveTiming(); }
         hpLog("Job MODELO ok [" + job.label + "] → listo para render");
         modelBusy = false; emit(); pump();
       }).catch(function (err) {
@@ -959,6 +974,7 @@
     }
     function startRender(job) {
       renderBusy = true; job.status = "running"; if (!job.startedAt) job.startedAt = Date.now();
+      job._renderStart = Date.now();
       job.msg = "Renderizando…"; emit();
       hpLog("Job RENDER [" + job.label + "] · kind=" + job.kind);
       var p = (job.kind === "renderManualHtml")
@@ -1665,8 +1681,53 @@
         panel.appendChild(row);
       });
     });
+    renderQueueEstimate(panel, jobs);
     // Preservar el scroll de la vista de cola (se refresca seguido durante el proceso).
     if (scroller) scroller.scrollTop = savedScroll;
+  }
+
+  // Footer con estimación de la cola (marcadores en espera): tiempo y tokens de
+  // entrada estimados para procesar TODO lo pendiente, así se decide antes de lanzar.
+  function renderQueueEstimate(panel, jobs) {
+    var pend = [];
+    for (var i = 0; i < jobs.length; i++) {
+      var s = jobs[i].status;
+      if (s === "queued" || s === "modeling" || s === "ready" || s === "running") pend.push(jobs[i]);
+    }
+    if (!pend.length) return;
+    var genCount = 0, compSec = 0;
+    for (var k = 0; k < pend.length; k++) {
+      var j = pend[k];
+      if (j.kind === "generate" || j.kind === "feedback") genCount++;
+      compSec += Number(j.markerDuration) || 0;
+    }
+    // Tiempo ≈ (jobs de modelo × promedio modelo) + (segundos de composición × factor render).
+    var timeSec = genCount * avgModelSec() + compSec * renderSecPerCompSec();
+    var calibrated = HP_TIMING.modelJobs > 0 || HP_TIMING.renderCompSec > 0;
+
+    var foot = document.createElement("div"); foot.className = "queue-estimate";
+    var line1 = document.createElement("div"); line1.className = "qe-line";
+    line1.textContent = "⏳ Pendiente: " + pend.length + " marcador(es) · vídeo total " + fmtDuration(compSec) +
+      " · tiempo ≈ " + fmtDuration(timeSec) + (calibrated ? "" : " (aprox.)");
+    foot.appendChild(line1);
+    var line2 = document.createElement("div"); line2.className = "qe-line qe-tok";
+    line2.textContent = "Tokens de entrada estimados: calculando…";
+    foot.appendChild(line2);
+    panel.appendChild(foot);
+
+    // Tokens: sumar estimateTokens de cada job de IA pendiente (cacheado por job).
+    var aiJobs = pend.filter(function (j) { return j.kind === "generate" || j.kind === "feedback"; });
+    if (!aiJobs.length) { line2.textContent = "Sin llamadas a la IA pendientes (solo render)."; return; }
+    Promise.all(aiJobs.map(function (j) {
+      if (typeof j._tokEst === "number") return Promise.resolve(j._tokEst);
+      return hpCall("estimateTokens", j.payload).then(function (r) {
+        j._tokEst = (r && r.ok) ? (r.inputTokensEst || 0) : 0; return j._tokEst;
+      }).catch(function () { return 0; });
+    })).then(function (vals) {
+      var total = vals.reduce(function (a, b) { return a + (b || 0); }, 0);
+      line2.textContent = "Tokens de entrada estimados (toda la cola): ≈ " + addThousands(total) +
+        " · " + aiJobs.length + " llamada(s) a la IA";
+    }).catch(function () { line2.textContent = ""; });
   }
 
   HPQueue.on(function () { renderQueue(HPQueue.jobs()); reflectQueueOnCards(); });

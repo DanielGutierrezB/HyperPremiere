@@ -182,20 +182,53 @@ function stillToDataUrl(s) {
 // Guarda las imágenes provistas como ARCHIVOS embebibles (asset-01.png, …) en
 // `dir`. Devuelve los nombres. Se copian al workDir/assets del render para que el
 // HTML pueda referenciarlas con <img src="assets/asset-01.png">.
+// Lee ancho×alto de un buffer PNG o JPEG sin dependencias (parseo de cabecera).
+// Devuelve {w,h} o null.
+function imageDims(buf) {
+  try {
+    if (!buf || buf.length < 24) return null;
+    // PNG: firma 89 50 4E 47; IHDR → ancho en offset 16, alto en 20 (big-endian).
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+      return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+    }
+    // JPEG: firma FF D8; recorrer marcadores hasta un SOF (C0–CF salvo C4/C8/CC).
+    if (buf[0] === 0xff && buf[1] === 0xd8) {
+      let off = 2;
+      while (off + 9 < buf.length) {
+        if (buf[off] !== 0xff) { off++; continue; }
+        const marker = buf[off + 1];
+        const len = buf.readUInt16BE(off + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { h: buf.readUInt16BE(off + 5), w: buf.readUInt16BE(off + 7) };
+        }
+        off += 2 + len;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+// Guarda las imágenes provistas como archivos embebibles. Devuelve
+// [{name, w, h}] (dimensiones cuando se pudieron leer) para informarle al modelo.
 function saveAssets(dir, dataUrls) {
   const list = Array.isArray(dataUrls) ? dataUrls : [];
   if (!list.length) return [];
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
   fs.mkdirSync(dir, { recursive: true });
-  const names = [];
+  const out = [];
   list.forEach((du, i) => {
     const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(String(du || ''));
     if (!m) return;
     const ext = m[1] === 'jpeg' ? 'jpg' : m[1].replace(/[^a-z0-9]/gi, '') || 'png';
     const name = 'asset-' + String(i + 1).padStart(2, '0') + '.' + ext;
-    try { fs.writeFileSync(path.join(dir, name), Buffer.from(m[2], 'base64')); names.push(name); } catch (e) {}
+    try {
+      const buf = Buffer.from(m[2], 'base64');
+      fs.writeFileSync(path.join(dir, name), buf);
+      const d = imageDims(buf);
+      out.push({ name, w: d ? d.w : null, h: d ? d.h : null });
+    } catch (e) {}
   });
-  return names;
+  return out;
 }
 
 async function prepareGeneration(body, mode, onProgress) {
@@ -271,13 +304,15 @@ async function prepareGeneration(body, mode, onProgress) {
   // foto). Se guardan en <base>/_assets/<slug> y se copian al render; el modelo las
   // referencia con <img src="assets/asset-NN.ext"> si la instrucción pide usarlas.
   const assetsDir = path.join(baseDir, '_assets', markerSlug);
-  const assetNames = saveAssets(assetsDir, stillsList);
-  if (assetNames.length) {
+  const assetInfos = saveAssets(assetsDir, stillsList);
+  if (assetInfos.length) {
     userPrompt += '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
-      'Las imágenes que ves también están disponibles como archivos en la carpeta assets/ del proyecto:\n' +
-      assetNames.map((n) => '- assets/' + n).join('\n') +
+      'Las imágenes que ves también están disponibles como archivos en la carpeta assets/ del proyecto ' +
+      '(con sus dimensiones reales en px — respetá el aspect ratio al usarlas):\n' +
+      assetInfos.map((a) => '- assets/' + a.name + (a.w && a.h ? ' (' + a.w + '×' + a.h + ' px)' : '')).join('\n') +
       '\nSi la instrucción pide USAR o incluir una imagen provista (un logo, icono, foto o marca), ' +
       'INCRUSTALA tal cual con <img src="assets/NOMBRE"> (ruta relativa exacta) — NO la recrees ni dibujes una aproximación. ' +
+      'Escalala manteniendo su proporción (usá las dimensiones de arriba) y ubicala según la instrucción. ' +
       'Si son solo referencia visual (por ej. un frame del video para leer composición/paleta), usalas como contexto y NO las incrustes.';
   }
 

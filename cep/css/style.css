@@ -1097,6 +1097,15 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* v1.0.4 — jobs que quedaron sin tokens / límite alcanzado (reactivables) */
 .queue-job.is-waiting { border-left: 3px solid var(--warn); padding-left: 7px; }
 .queue-job.is-waiting .qj-title { color: var(--warn); }
+/* Footer de estimación de la cola (tiempo + tokens de lo pendiente) */
+.queue-estimate {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--hairline);
+  font-size: 11px; color: var(--text-secondary);
+}
+.queue-estimate .qe-line { line-height: 1.5; }
+.queue-estimate .qe-tok { color: var(--text-muted); }
+
 /* Confirmación de "limpiar versiones viejas": filas borra ↔ conserva */
 .cleanup-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); font-size: 12px; }
 .cleanup-row .cl-del { color: var(--error, #e08a8a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
