@@ -14,6 +14,53 @@ const path = require('path');
 const RENDER_TIMEOUT_MS = 600 * 1000; // ~600s
 
 /**
+ * Elige el perfil de render según el hardware de ESTA máquina, para que la
+ * herramienta escale sola en cualquier computador (Mac mini 8GB, MacBook 16GB+, etc).
+ *
+ * El cuello de botella real del paralelismo es la RAM (cada worker es un Chrome
+ * capturando frames + buffers de encode), no la cantidad de cores. Por eso el
+ * número de workers se acota principalmente por GB de memoria.
+ *
+ *  - ≤ 10 GB (ej. Mac mini M1 8GB): modo seguro. `--low-memory-mode` encodea
+ *    incremental (evita el "Set maximum size exceeded" en marcadores largos) y
+ *    fija 1 worker. Es el comportamiento estable de siempre.
+ *  - > 10 GB: paraleliza. ~1 worker por cada 4 GB, con techo por cores y máximo 6.
+ *    Sin low-memory-mode se acota el chunk de frames para que los marcadores
+ *    largos (33s ≈ 1008 frames) no revienten el Buffer de Node.
+ *
+ * Respeta overrides manuales por env var:
+ *   HYPERPREMIERE_WORKERS=N   → fija el número de workers.
+ *   HYPERPREMIERE_LOW_MEMORY=1 → fuerza low-memory-mode (1 worker).
+ */
+function pickRenderProfile() {
+  const gb = os.totalmem() / 1024 / 1024 / 1024;
+  const cpus = os.cpus().length || 4;
+
+  let workers;
+  let lowMemory;
+  if (gb <= 10) {
+    workers = 1;
+    lowMemory = true;
+  } else {
+    const byRam = Math.floor(gb / 4);
+    workers = Math.max(2, Math.min(byRam, cpus, 6));
+    lowMemory = false;
+  }
+
+  const forcedWorkers = parseInt(process.env.HYPERPREMIERE_WORKERS, 10);
+  if (Number.isFinite(forcedWorkers) && forcedWorkers > 0) {
+    workers = forcedWorkers;
+    lowMemory = false;
+  }
+  if (process.env.HYPERPREMIERE_LOW_MEMORY === '1') {
+    workers = 1;
+    lowMemory = true;
+  }
+
+  return { workers: workers, lowMemory: lowMemory, ramGb: gb, cpus: cpus };
+}
+
+/**
  * Borra ghost files de macOS (._*) dentro de un directorio.
  * Estos archivos confunden al CLI de hyperframes al escanear el dir.
  */
@@ -93,25 +140,35 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
 
   // hyperframes 0.7.x: --format mov => MOV con transparencia (alpha real, ProRes 4444).
   // Sin -c: renderiza el index.html del proyecto. La duración vive en el HTML (data-duration).
-  // --workers 1: captura SECUENCIAL. Las composiciones con video (ej. marcadores que
-  // reusan el diagrama anterior) revientan con workers en paralelo ("Parallel capture
-  // timed out" / "Navigation timeout of 60000 ms exceeded") porque varios Chrome compiten
-  // por RAM/GPU. Secuencial es más lento pero estable — es la solución que sugiere el CLI.
+  // Workers/low-memory se eligen según el hardware (ver pickRenderProfile): la mini de
+  // 8GB va en modo seguro (1 worker + low-memory), y una máquina con más RAM paraleliza.
   // mov => ProRes 4444 con alpha (overlay transparente).
   // mp4 => H.264 opaco HD 1080p con buen bitrate (crf 18) para lectura, cuando
   //         el marcador se genera CON fondo (no necesita canal alpha).
+  const profile = pickRenderProfile();
+  console.error(
+    '[hyperpremiere] perfil de render: ' + profile.workers + ' worker(s), ' +
+    'low-memory=' + profile.lowMemory + ' (RAM ' + profile.ramGb.toFixed(1) + 'GB, ' +
+    profile.cpus + ' cores)'
+  );
   const args = baseArgs.concat([
     'render',
     workDir,
     '-o', outMovPath,
     '--format', fmt,
     '--quality', q,
-    '--workers', '1',
+    '--workers', String(profile.workers),
+  ]);
+  if (profile.lowMemory) {
     // Perfil de baja memoria: encodea de a poco en vez de bufferear todos los
     // frames. Sin esto, marcadores largos (ej. 33s ≈ 1008 frames a 1080p) revientan
-    // con "Set maximum size exceeded" (límite de Buffer de Node).
-    '--low-memory-mode',
-  ]);
+    // con "Set maximum size exceeded" (límite de Buffer de Node). Fija 1 worker.
+    args.push('--low-memory-mode');
+  } else {
+    // Paralelo (RAM alta): acotamos el chunk de frames para que los marcadores
+    // largos no revienten el Buffer de Node aun sin low-memory-mode.
+    args.push('--target-chunk-frames', '300');
+  }
   if (fmt === 'mp4') {
     args.push('--crf', q === 'draft' ? '28' : '18');
     // Encode H.264 por hardware (VideoToolbox). En Apple Silicon esto usa el
