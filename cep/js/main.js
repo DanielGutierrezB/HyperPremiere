@@ -951,8 +951,11 @@
         );
         return;
       }
-      // Colocación normal: café si fue borrador, magenta si fue alta calidad.
-      var color = (job.payload && job.payload.draft) ? HP_COLOR_BROWN : HP_COLOR_MAGENTA;
+      // Color: café = "borrador mejorable con Render HQ" — SOLO aplica a clips
+      // opacos (mp4) en borrador. Los clips con alpha ya salen en máxima calidad
+      // (PNG→ProRes 4444) aunque estés en borrador → magenta.
+      var isDraftOpaque = !!(job.payload && job.payload.draft && job.payload.background);
+      var color = isDraftOpaque ? HP_COLOR_BROWN : HP_COLOR_MAGENTA;
       job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
       var movArg = JSON.stringify(res.movPath);
       csInterface.evalScript(
@@ -1701,9 +1704,11 @@
           // dar feedback y regenerar (retomando el mismo puesto en la cola).
           var dc = document.createElement("span"); dc.className = "qj-ctrls";
           // (El "Ver" ahora es clic en el nombre del clip — ver arriba.)
-          // Render HQ solo si el job se hizo en borrador (aún no está en alta).
-          if (j.kind !== "renderVersionHQ" && j.payload && j.payload.draft) {
-            var hqb = iconBtn("Render HQ", "Re-renderizar este marcador en alta calidad",
+          // Render HQ SOLO tiene sentido en clips OPACOS (con fondo/mp4): ahí el
+          // borrador usa JPEG 80 y HQ sube a 95. En clips con ALPHA el borrador ya
+          // sale en PNG lossless → ProRes 4444 (máxima calidad), así que NO se ofrece.
+          if (j.kind !== "renderVersionHQ" && j.payload && j.payload.draft && j.payload.background) {
+            var hqb = iconBtn("Render HQ", "Re-renderizar este marcador opaco en alta calidad (el borrador usó compresión mayor)",
               (function (job) { return function () { renderJobHQ(job); }; })(j));
             hqb.className = "qbtn qbtn-hq"; dc.appendChild(hqb);
           }

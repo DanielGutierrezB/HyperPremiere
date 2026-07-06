@@ -22,7 +22,7 @@
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.0.40</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.0.41</span>
       </button>
     </div>
   </header>
@@ -72,8 +72,8 @@
   </div>
 
   <div id="batch-status" class="muted"></div>
-  <label class="draft-toggle" title="Render rápido de menor calidad para previsualizar">
-    <input type="checkbox" id="draft-mode"> <span>Modo borrador (render rápido)</span>
+  <label class="draft-toggle" title="Render más liviano para previsualizar. Solo afecta a clips CON FONDO (mp4, usa más compresión); los clips con transparencia (alpha) salen siempre en máxima calidad (ProRes 4444).">
+    <input type="checkbox" id="draft-mode"> <span>Modo borrador (render rápido · solo afecta clips con fondo)</span>
   </label>
 
   <!-- Contador de uso de la sesión de Claude (tokens acumulados). -->
