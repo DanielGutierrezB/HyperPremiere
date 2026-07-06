@@ -1426,11 +1426,18 @@
       reactAll.addEventListener("click", function () { HPQueue.reactivateAll(); });
       head.appendChild(reactAll);
     }
-    // Iniciar (si hay en espera y nada activo) / Pausar (si algo activo).
-    if (HPQueue.hasActive()) {
+    // Toggle Pausar ⇄ Reanudar. Si está pausada, SIEMPRE se muestra "Reanudar"
+    // (haya o no un job activo) — antes quedaba trabado sin opción de reanudar.
+    if (HPQueue.isPaused()) {
+      var resumeBtn = document.createElement("button"); resumeBtn.type = "button"; resumeBtn.className = "queue-start";
+      resumeBtn.textContent = "▶ Reanudar";
+      resumeBtn.title = "Reanuda la cola (sigue procesando los marcadores pendientes)";
+      resumeBtn.addEventListener("click", function () { HPQueue.start(); });
+      head.appendChild(resumeBtn);
+    } else if (HPQueue.hasActive()) {
       var pauseBtn = document.createElement("button"); pauseBtn.type = "button"; pauseBtn.className = "queue-clear";
-      pauseBtn.textContent = HPQueue.isPaused() ? "⏸ pausada" : "⏸ pausar";
-      pauseBtn.title = "Pausa la cola: no arranca nuevos jobs (el que corre termina)";
+      pauseBtn.textContent = "⏸ pausar";
+      pauseBtn.title = "Pausa la cola: no arranca nuevos marcadores (el que está corriendo termina su etapa). Después reanudás.";
       pauseBtn.addEventListener("click", function () { HPQueue.pause(); });
       head.appendChild(pauseBtn);
     } else if (HPQueue.hasQueued()) {
