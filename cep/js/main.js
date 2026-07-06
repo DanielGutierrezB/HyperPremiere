@@ -13,6 +13,7 @@
   // marcador (getMarkerData/addMarkerStill/…) sin ser un marcador real.
   var GEN_KEY = "__general__";
   var focusMarkerAfterRender = null; // markerKey a enfocar tras renderizar (desde "Ver")
+  var focusOpenEditor = false;       // además abrir el editor HTML de esa tarjeta
 
   // Timing auto-calibrado para estimar la cola: promedio de segundos por job de
   // modelo, y segundos de render por segundo de composición. Se afina con el uso.
@@ -1347,13 +1348,14 @@
   // "Ver" (clic en el nombre del clip): abre la secuencia + salta al marcador en
   // Premiere, y en el panel carga los marcadores de esa secuencia, va a la pestaña
   // Marcadores y enfoca/despliega la tarjeta de ese marcador.
-  function goToJobMarker(job) {
+  function goToJobMarker(job, openEditor) {
     if (!job) return;
     var seqArg = JSON.stringify(job.seqName);
     csInterface.evalScript(
       "hp_openSequenceAndSeek(" + seqArg + ", " + Number(job.markerStart) + ")",
       function () {
         focusMarkerAfterRender = job.markerKey; // renderMarkers lo enfoca al terminar
+        focusOpenEditor = !!openEditor;         // y abre su editor HTML si se pidió
         selectTab("markers");
         onLoadMarkers(); // relee la secuencia (ya activa) y renderiza sus marcadores
       }
@@ -1696,7 +1698,14 @@
           }
           if (j.kind === "generate" || j.kind === "feedback") {
             dc.appendChild(iconBtn("✎ Feedback", "Dar feedback y regenerar (mantiene el puesto en la cola)",
-              (function (id) { return function () { feedbackOpen[id] = !feedbackOpen[id]; renderQueue(HPQueue.jobs()); }; })(j.id)));
+              (function (id) { return function () {
+                var willOpen = !feedbackOpen[id];
+                feedbackOpen = {}; // solo una caja de feedback abierta a la vez
+                if (willOpen) feedbackOpen[id] = true;
+                renderQueue(HPQueue.jobs());
+              }; })(j.id)));
+            dc.appendChild(iconBtn("✎ Editar HTML", "Editar el HTML de este marcador y renderizarlo de nuevo (en la pestaña Marcadores)",
+              (function (job) { return function () { goToJobMarker(job, true); }; })(j)));
           }
           line.appendChild(dc);
         }
@@ -2154,7 +2163,7 @@
     // Si hay jobs en curso de esta secuencia, reflejar su progreso en las tarjetas.
     reflectQueueOnCards();
     // Enfoque pedido desde "Ver" (clic en el nombre del clip en la Cola).
-    if (focusMarkerAfterRender) { focusMarkerCard(focusMarkerAfterRender); focusMarkerAfterRender = null; }
+    if (focusMarkerAfterRender) { focusMarkerCard(focusMarkerAfterRender); focusMarkerAfterRender = null; focusOpenEditor = false; }
   }
 
   // Despliega, resalta y hace scroll a la tarjeta del marcador `markerKey`.
@@ -2165,7 +2174,12 @@
       var c = cards[i];
       if (c._markerKey !== markerKey) continue;
       try { c.open = true; } catch (e) {}
-      try { c.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { c.scrollIntoView(); }
+      // Abrir el editor de HTML de la tarjeta si se llegó con "Editar HTML".
+      if (focusOpenEditor) {
+        var ed = c.querySelector("details.html-editor");
+        if (ed) { try { ed.open = true; } catch (e) {} }
+      }
+      try { (focusOpenEditor && c.querySelector("details.html-editor") ? c.querySelector("details.html-editor") : c).scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { c.scrollIntoView(); }
       c.classList.add("is-focused");
       (function (card) { setTimeout(function () { card.classList.remove("is-focused"); }, 2200); })(c);
       break;
