@@ -1512,6 +1512,9 @@
     }
     Object.keys(byMarker).forEach(function (mk) {
       var j = byMarker[mk];
+      // Solo re-renderiza en HQ los que son mejorables: opacos hechos en borrador.
+      // Alpha (siempre ProRes 4444) y opacos ya en alta NO se tocan (sería no-op).
+      if (!(j.payload && j.payload.draft && j.payload.background)) return;
       HPQueue.add({
         kind: "renderVersionHQ",
         payload: {
@@ -1643,12 +1646,14 @@
         if (gi > 0) ctrls.appendChild(iconBtn("▲", "Subir esta secuencia", function () { HPQueue.moveSeq(g.seqName, -1); }));
         if (gi < groups.length - 1) ctrls.appendChild(iconBtn("▼", "Bajar esta secuencia", function () { HPQueue.moveSeq(g.seqName, 1); }));
       }
-      // Render HQ: re-renderiza en alta calidad la última versión de cada marcador
-      // de esta secuencia (útil tras previsualizar en borrador). Si hay ≥1 hecho.
-      var doneInGroup = g.jobs.filter(function (j) { return j.status === "done"; }).length;
-      if (doneInGroup > 0) {
+      // Render HQ (secuencia): solo si hay ≥1 clip MEJORABLE (opaco hecho en
+      // borrador). Alpha y opacos ya en alta no cuentan (Render HQ sería no-op).
+      var upgradable = g.jobs.filter(function (j) {
+        return j.status === "done" && j.payload && j.payload.draft && j.payload.background;
+      }).length;
+      if (upgradable > 0) {
         var hqSeq = g.seqName;
-        var hq = iconBtn("Render HQ", "Re-renderiza en alta calidad la última versión de cada marcador de esta secuencia", function () { renderSeqHQ(hqSeq); });
+        var hq = iconBtn("Render HQ", "Re-renderiza en alta los clips CON FONDO que se hicieron en borrador de esta secuencia", function () { renderSeqHQ(hqSeq); });
         hq.className = "qbtn qbtn-hq";
         ctrls.appendChild(hq);
       }
