@@ -1755,8 +1755,20 @@
     })).then(function (vals) {
       var total = vals.reduce(function (a, b) { return a + (b || 0); }, 0);
       line2.textContent = "Tokens de entrada estimados (toda la cola): ≈ " + addThousands(total) +
-        " · " + aiJobs.length + " llamada(s) a la IA";
+        " · " + aiJobs.length + " llamada(s) a la IA · costo " + estimateCostLabel(total);
     }).catch(function () { line2.textContent = ""; });
+  }
+
+  // Costo estimado de la cola, auto-calibrado con el costo REAL ya acumulado en la
+  // sesión ($/token de entrada). Local = gratis; sin datos aún = se calcula al correr.
+  function estimateCostLabel(inputTokens) {
+    if (currentProviderIsLocal) return "gratis (local)";
+    var u = HPStore.getSessionUsage();
+    if (u && u.costUsd > 0 && u.inputTokens > 0) {
+      var est = inputTokens * (u.costUsd / u.inputTokens);
+      return "≈ $" + (est < 0.1 ? est.toFixed(4) : est.toFixed(2));
+    }
+    return "s/d (se calcula al procesar)";
   }
 
   HPQueue.on(function () { renderQueue(HPQueue.jobs()); reflectQueueOnCards(); });
