@@ -178,46 +178,52 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   const profile = pickRenderProfile();
   const gpuMode = browserGpuMode();
   console.error(
-    '[hyperpremiere] perfil de render: ' + profile.workers + ' worker(s), ' +
-    'low-memory=' + profile.lowMemory + ', browser-gpu=' + gpuMode +
-    ' (RAM ' + profile.ramGb.toFixed(1) + 'GB, ' + profile.cpus + ' cores)'
+    '[hyperpremiere] hardware: RAM ' + profile.ramGb.toFixed(1) + 'GB, ' +
+    profile.cpus + ' cores → perfil base ' + profile.workers + ' worker(s), ' +
+    'low-memory=' + profile.lowMemory + ', browser-gpu=' + gpuMode
   );
-  const args = baseArgs.concat([
-    'render',
-    workDir,
-    '-o', outMovPath,
-    '--format', fmt,
-    '--quality', q,
-    '--workers', String(profile.workers),
-  ]);
-  if (profile.lowMemory) {
-    // Perfil de baja memoria: encodea de a poco en vez de bufferear todos los
-    // frames. Sin esto, marcadores largos (ej. 33s ≈ 1008 frames a 1080p) revientan
-    // con "Set maximum size exceeded" (límite de Buffer de Node). Fija 1 worker.
-    args.push('--low-memory-mode');
-  } else {
-    // Paralelo (RAM alta): acotamos el chunk de frames para que los marcadores
-    // largos no revienten el Buffer de Node aun sin low-memory-mode.
-    args.push('--target-chunk-frames', '300');
-  }
-  if (fmt === 'mp4') {
-    args.push('--crf', q === 'draft' ? '28' : '18');
-    // Encode H.264 por hardware (VideoToolbox). En Apple Silicon esto usa el
-    // motor de media dedicado, que es INDEPENDIENTE del GPU del browser (ANGLE
-    // Metal, el que crasheaba) → seguro y bastante más rápido en la etapa de
-    // codificación. Solo aplica a mp4/H.264: el ProRes .mov siempre encodea por
-    // software (prores_ks), ahí --gpu no cambia nada.
-    args.push('--gpu');
-  }
   void durationSec; // informativo; la duración vive en el HTML.
 
-  // Una corrida del CLI con un modo de GPU concreto ('hardware' | 'software').
-  function runOnce(effectiveMode) {
+  // Construye los args del CLI para UN intento concreto (gpu/workers/lowMemory).
+  function buildArgs(attempt) {
+    const a = baseArgs.concat([
+      'render',
+      workDir,
+      '-o', outMovPath,
+      '--format', fmt,
+      '--quality', q,
+      '--workers', String(attempt.workers),
+    ]);
+    if (attempt.lowMemory) {
+      // Perfil de baja memoria: encodea de a poco en vez de bufferear todos los
+      // frames. Sin esto, marcadores largos (ej. 33s ≈ 1008 frames a 1080p) revientan
+      // con "Set maximum size exceeded" (límite de Buffer de Node). Fija 1 worker.
+      a.push('--low-memory-mode');
+    } else {
+      // Paralelo (RAM alta): acotamos el chunk de frames para que los marcadores
+      // largos no revienten el Buffer de Node aun sin low-memory-mode.
+      a.push('--target-chunk-frames', '300');
+    }
+    if (fmt === 'mp4') {
+      a.push('--crf', q === 'draft' ? '28' : '18');
+      // Encode H.264 por hardware (VideoToolbox). En Apple Silicon esto usa el
+      // motor de media dedicado, que es INDEPENDIENTE del GPU del browser (ANGLE
+      // Metal, el que crasheaba) → seguro y bastante más rápido en la etapa de
+      // codificación. Solo aplica a mp4/H.264: el ProRes .mov siempre encodea por
+      // software (prores_ks), ahí --gpu no cambia nada.
+      a.push('--gpu');
+    }
+    return a;
+  }
+
+  // Una corrida del CLI con una config de intento concreta.
+  function runOnce(attempt) {
+    const args = buildArgs(attempt);
     return new Promise((resolve, reject) => {
       // 'software' fuerza SwiftShader (estable pero lento); 'hardware' deja que
       // hyperframes use la GPU por defecto (rápido, pero puede crashear en Premiere).
       const childEnv = Object.assign({}, process.env);
-      if (effectiveMode === 'software') {
+      if (attempt.gpu === 'software') {
         childEnv.PRODUCER_BROWSER_GPU_MODE = 'software';
       } else {
         delete childEnv.PRODUCER_BROWSER_GPU_MODE;
@@ -289,17 +295,57 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     });
   }
 
-  // Plan de intentos. En 'auto' probamos GPU y, si crashea, reintentamos el MISMO
-  // render por software (el path estable). Así cada máquina usa la GPU cuando puede
-  // y cae sola a software cuando ese contexto no la soporta, sin configurar nada.
-  const attempts = gpuMode === 'auto' ? ['hardware', 'software'] : [gpuMode];
+  // Escalera de intentos: del más rápido (GPU + paralelo) al más estable
+  // (software + 1 worker + low-memory, el perfil probado de la mini). Si un
+  // escalón crashea, bajamos al siguiente en vez de morir. Cada máquina termina
+  // usando el escalón más rápido que le funcione — sin configurar nada.
+  //
+  // Clave del fix v1.0.53: el fallback ya NO solo cambia la GPU (hardware→software);
+  // también BAJA los workers a 1. El crash "[Parallel] Capture failed: Worker N…"
+  // es el path paralelo reventando dentro del CEF de Premiere (browser que muere
+  // mid-captura o presión de memoria con varios Chrome + Premiere). Antes ambos
+  // intentos seguían en paralelo → ambos crasheaban → el error llegaba a Daniel.
+  function buildAttempts() {
+    const key = (x) => x.gpu + '/' + x.workers + '/' + x.lowMemory;
+    const seen = new Set();
+    const list = [];
+    const add = (x) => { if (!seen.has(key(x))) { seen.add(key(x)); list.push(x); } };
+
+    // Perfil universal probado-estable (el de la mini 8GB): serial + software.
+    const safe = { gpu: 'software', workers: 1, lowMemory: true };
+
+    if (gpuMode === 'software') {
+      // Forzado a software: paralelo-software (si hay RAM) → serial seguro.
+      if (profile.workers > 1) {
+        add({ gpu: 'software', workers: profile.workers, lowMemory: profile.lowMemory });
+      }
+      add(safe);
+      return list;
+    }
+
+    // 'hardware' o 'auto': arrancamos con GPU.
+    // 1) Lo más rápido que permita el hardware (paralelo si hay RAM alta).
+    add({ gpu: 'hardware', workers: profile.workers, lowMemory: profile.lowMemory });
+    // 2) GPU pero SERIAL: si lo que crashea es el paralelo, conservamos la
+    //    velocidad de la GPU (la palanca real, 10-30× vs software) sin la
+    //    fragilidad de varios workers. low-memory evita el buffer overflow.
+    add({ gpu: 'hardware', workers: 1, lowMemory: true });
+    // 3) Red de seguridad universal (solo en 'auto'): software + serial. Lento
+    //    pero no crashea; es el modo estable de siempre.
+    if (gpuMode === 'auto') add(safe);
+    return list;
+  }
+
+  const attempts = buildAttempts();
   let lastErr = null;
   for (let i = 0; i < attempts.length; i++) {
-    const mode = attempts[i];
+    const attempt = attempts[i];
     const isLast = i === attempts.length - 1;
-    console.error('[hyperpremiere] intento de captura: browser-gpu=' + mode);
+    console.error('[hyperpremiere] intento ' + (i + 1) + '/' + attempts.length +
+      ': browser-gpu=' + attempt.gpu + ', workers=' + attempt.workers +
+      ', low-memory=' + attempt.lowMemory);
     try {
-      await runOnce(mode);
+      await runOnce(attempt);
       lastErr = null;
       break;
     } catch (e) {
@@ -307,9 +353,11 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
       if (isLast) break;
       // Limpiar salida parcial antes de reintentar.
       try { if (fs.existsSync(outMovPath)) fs.unlinkSync(outMovPath); } catch (_) {}
-      console.error('[hyperpremiere] browser-gpu=' + mode + ' falló (' +
-        String(e.message).split('\n')[0] + ') → reintento por software');
-      report({ pct: 55, msg: 'La GPU falló, reintentando por software…' });
+      const next = attempts[i + 1];
+      console.error('[hyperpremiere] intento ' + (i + 1) + ' falló (' +
+        String(e.message).split('\n')[0] + ') → bajo a browser-gpu=' + next.gpu +
+        ', workers=' + next.workers);
+      report({ pct: 55, msg: 'Ese modo falló, reintentando en modo más estable…' });
     }
   }
   if (lastErr) throw lastErr;
