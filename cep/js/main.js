@@ -2062,6 +2062,8 @@
     // status y un indicador en el summary (visible aunque esté colapsada).
     card._applyJob = function (job) {
       if (!job) return;
+      // Cada emit reconstruye el status; paramos el reloj anterior para no dejar timers colgados.
+      if (card._clockTimer) { clearInterval(card._clockTimer); card._clockTimer = null; }
       var active = job.status === "queued" || job.status === "modeling" || job.status === "ready" || job.status === "running";
       if (active) {
         setButtonsDisabled(buttons, true);
@@ -2070,10 +2072,22 @@
         var bar = document.createElement("div"); bar.className = "hp-bar";
         var fill = document.createElement("div"); fill.className = "hp-bar-fill";
         fill.style.width = (job.pct || 0) + "%"; bar.appendChild(fill);
-        var m = document.createElement("div"); m.className = "hp-bar-msg"; m.textContent = job.msg || "";
+        var m = document.createElement("div"); m.className = "hp-bar-msg";
+        var msgTxt = document.createElement("span"); msgTxt.textContent = job.msg || "";
+        var clk = document.createElement("span"); clk.className = "hp-bar-clock";
+        m.appendChild(msgTxt); m.appendChild(clk);
         status.appendChild(bar); status.appendChild(m);
         sBadge.textContent = (job.status === "running" || job.status === "modeling") ? "⏳" : "…";
+        // Reloj en vivo: tiempo transcurrido junto a la barra + mensaje.
+        card._activeJob = job;
+        var tickClock = function () {
+          var j = card._activeJob; if (!j) return;
+          clk.textContent = j.startedAt ? " · ⏱ " + fmtDuration((Date.now() - j.startedAt) / 1000) : "";
+        };
+        tickClock();
+        card._clockTimer = setInterval(tickClock, 1000);
       } else if (job.status === "done") {
+        card._activeJob = null;
         setButtonsDisabled(buttons, false);
         status.className = "marker-status is-ok";
         status.textContent = job.msg || "✓ Listo";
@@ -2093,6 +2107,8 @@
     };
     // Sin job asociado (ej. se borró de la cola): re-habilita los botones.
     card._clearJob = function () {
+      if (card._clockTimer) { clearInterval(card._clockTimer); card._clockTimer = null; }
+      card._activeJob = null;
       setButtonsDisabled(buttons, false);
       status.className = "marker-status";
       status.textContent = "";

@@ -629,6 +629,7 @@ textarea:focus {
 }
 @keyframes hp-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .hp-bar-msg { font-size: 11px; color: #8b97a8; margin-top: 5px; }
+.hp-bar-clock { color: #fbbf24; font-variant-numeric: tabular-nums; }
 
 /* ── v0.1.13: contador de sesión (tokens) ────────────────────── */
 .session-usage {
