@@ -1173,6 +1173,11 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 }
 .qj-fb-input:focus { outline: none; border-color: var(--accent); }
 .qj-feedback .qbtn-react { flex: none; align-self: stretch; }
+.qj-fb-opt {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  font-size: 11px; color: var(--text-secondary, rgba(255,255,255,0.7)); cursor: pointer;
+}
+.qj-fb-opt input { margin: 0; cursor: pointer; }
 .marker-status.is-warn { color: var(--warn); }
 .tab-badge.is-waiting { background: var(--warn); color: #1a1400; }
 /* Botón "↻ Reactivar" por job y "Reactivar todos" en la cabecera de la cola */

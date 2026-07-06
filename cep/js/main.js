@@ -560,6 +560,12 @@
     for (var i = 0; i < s.length; i++) if (u[i]) out.push(s[i]);
     return out;
   }
+  // ¿El texto de un refinamiento se refiere a las imágenes adjuntas? Si NO las
+  // menciona, en un feedback podemos NO reenviarlas como visión (ahorro grande de
+  // tokens: las imágenes son lo más caro). Las imágenes marcadas "✓ usar" igual se
+  // incrustan en el gráfico por archivo, así que el logo/ícono sigue apareciendo.
+  var IMG_REF_RE = /(im[aá]genes?|logo|isotipo|logotipo|[íi]conos?|\bmarca\b|foto|captura|referenci|ilustraci)/i;
+  function feedbackNeedsImages(text) { return IMG_REF_RE.test(String(text || "")); }
   function renderStills(container, markerKey) {
     container.innerHTML = "";
     var data = HPStore.getMarkerData(markerKey);
@@ -978,6 +984,9 @@
         // Stills (visión) + assets (a incrustar) = marcador + generales.
         job.payload.stills = (md.stills || []).concat(gen.stills || []);
         job.payload.assets = assetSrcsOf(md).concat(assetSrcsOf(gen));
+        // Refinamiento que no trata sobre las imágenes → no reenviar los stills como
+        // visión (ahorro de tokens). Los assets "usar" se incrustan igual en el render.
+        if (job.payload.mode === "adjust" && job.payload._omitStills) job.payload.stills = [];
         job.payload.resources = (md.resources || []).concat(gen.resources || []);
         if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
         if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
@@ -1204,15 +1213,19 @@
       // pipeline lo retoma en la posición original (no al final). Si viene texto
       // de feedback, se regenera en modo "ajustar" (toma la versión previa como
       // base); si no, es una regeneración total.
-      regenerate: function (id, adjustmentText) {
+      regenerate: function (id, adjustmentText, sendImages) {
         for (var i = 0; i < jobs.length; i++) {
           var j = jobs[i];
           if (j.id !== id) continue;
           if (j.kind !== "generate" && j.kind !== "feedback") return; // solo IA
           var txt = (adjustmentText || "").trim();
           j.payload = j.payload || {};
-          if (txt) { j.payload.adjustment = txt; j.payload.mode = "adjust"; j.kind = "feedback"; }
-          else { j.payload.mode = "generate"; j.kind = "generate"; }
+          if (txt) {
+            j.payload.adjustment = txt; j.payload.mode = "adjust"; j.kind = "feedback";
+            // Solo reenviar imágenes si el feedback las necesita (ahorro de tokens).
+            j.payload._omitStills = (sendImages === false);
+          }
+          else { j.payload.mode = "generate"; j.kind = "generate"; delete j.payload._omitStills; }
           j.status = "queued"; j.pct = 0;
           j.msg = txt ? "Reencolado con feedback, esperando turno…" : "Reencolado, esperando turno…";
           j.prepared = null; j._usageCounted = false; j.version = undefined;
@@ -1318,7 +1331,11 @@
       background: !!data.background, draft: draftMode,
       markerSlug: markerKey, mode: mode
     };
-    if (mode === "adjust") payload.adjustment = data.instruction || "";
+    if (mode === "adjust") {
+      payload.adjustment = data.instruction || "";
+      // Auto: si la instrucción no menciona imágenes, no las reenvía como visión.
+      payload._omitStills = !feedbackNeedsImages(payload.adjustment);
+    }
     var job = {
       kind: mode === "generate" ? "generate" : "feedback",
       payload: payload, seqName: currentSequenceName, projectPath: currentProjectPath,
@@ -1532,6 +1549,9 @@
   // (id → texto), para que sobreviva a los re-render frecuentes de la cola.
   var feedbackOpen = {};
   var feedbackDraft = {};
+  // id → true/false cuando el usuario toca el check "reenviar imágenes"; undefined
+  // = automático (se decide según el texto del feedback).
+  var feedbackSendImages = {};
 
   // Panel de cola global: agrupado por secuencia, con reordenamiento
   // (secuencia arriba/abajo y marcador arriba/abajo dentro de su secuencia).
@@ -1749,8 +1769,12 @@
             return function (e) {
               e.stopPropagation();
               var t = feedbackDraft[id] || "";
-              feedbackOpen[id] = false; feedbackDraft[id] = "";
-              HPQueue.regenerate(id, t);
+              // Reenviar imágenes: si el usuario tocó el check, lo respetamos; si no,
+              // lo decide el texto del feedback (menciona imagen/logo/etc → sí).
+              var sImgs = feedbackSendImages[id];
+              if (sImgs === undefined) sImgs = feedbackNeedsImages(t);
+              feedbackOpen[id] = false; feedbackDraft[id] = ""; feedbackSendImages[id] = undefined;
+              HPQueue.regenerate(id, t, sImgs);
             };
           })(j.id));
           inRow.appendChild(go);
@@ -1760,6 +1784,27 @@
           // marcador y la regeneración los toma. Solo si el job es de la secuencia
           // actual (HPStore opera sobre ese contexto).
           if (j.seqName === currentSequenceName && j.projectPath === currentProjectPath) {
+            // Check "reenviar imágenes" — solo tiene sentido si el marcador tiene
+            // imágenes adjuntas. Default vivo: sigue la detección del texto hasta que
+            // el usuario lo toque. Desmarcado = ahorra tokens (no manda visión); los
+            // assets "✓ usar" se incrustan igual en el gráfico.
+            var _fmd = HPStore.getMarkerData(j.markerKey) || {};
+            var _fgd = HPStore.getMarkerData(GEN_KEY) || {};
+            var _nStills = ((_fmd.stills || []).length) + ((_fgd.stills || []).length);
+            if (_nStills > 0) {
+              var optRow = document.createElement("label"); optRow.className = "qj-fb-opt";
+              optRow.title = "Si tu ajuste NO trata sobre las imágenes, dejalo desmarcado y ahorrás tokens. Las imágenes marcadas ✓ usar igual se incrustan en el gráfico. Marcalo si el ajuste depende de VER una imagen (p. ej. \"usá los colores de la imagen 1\").";
+              optRow.addEventListener("click", function (e) { e.stopPropagation(); });
+              var cbImg = document.createElement("input"); cbImg.type = "checkbox";
+              var _init = (feedbackSendImages[j.id] !== undefined) ? feedbackSendImages[j.id] : feedbackNeedsImages(feedbackDraft[j.id] || "");
+              cbImg.checked = _init;
+              cbImg.addEventListener("change", (function (id) { return function (e) { feedbackSendImages[id] = e.target.checked; }; })(j.id));
+              var sp = document.createElement("span"); sp.textContent = "🖼️ Reenviar imágenes al modelo (usa más tokens)";
+              optRow.appendChild(cbImg); optRow.appendChild(sp);
+              fb.appendChild(optRow);
+              // Mientras el usuario no toque el check, el default sigue lo que escribe.
+              ta.addEventListener("input", (function (id, box) { return function () { if (feedbackSendImages[id] === undefined) box.checked = feedbackNeedsImages(feedbackDraft[id] || ""); }; })(j.id, cbImg));
+            }
             var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
             mnt.addEventListener("click", function (e) { e.stopPropagation(); });
             mnt.appendChild(createStillsControl(j.markerKey));
