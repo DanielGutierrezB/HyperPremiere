@@ -140,6 +140,69 @@ function getConfig() {
   return maskConfig(loadConfig());
 }
 
+// Prueba REAL de las credenciales del proveedor activo. A diferencia del semáforo
+// del panel (que solo mira si hay algo guardado), esto verifica de verdad:
+//   - claude-api: llamada mínima (max_tokens:1) al endpoint → distingue key mala (401)
+//     de modelo inexistente (404) de key OK (200).
+//   - claude-cli: comprueba que haya sesión/token OAuth guardado.
+// Devuelve { ok, error?, detail? } y nunca lanza.
+async function testProvider() {
+  const cfg = loadConfig();
+  const provider = cfg.provider;
+  try {
+    if (provider === 'claude-cli') {
+      if (!cfg.oauthToken) {
+        return { ok: false, error: 'No hay sesión de Claude. Tocá "Iniciar sesión" para autorizar.' };
+      }
+      return { ok: true, detail: 'Sesión de Claude activa.' };
+    }
+
+    if (provider === 'claude-api') {
+      const claudeApi = require('./providers/claude-api');
+      const key = claudeApi.normalizeApiKey(cfg.apiKey);
+      if (!key) return { ok: false, error: 'Falta la API key.' };
+      if (/^sk-ant-oat/i.test(key)) {
+        return { ok: false, error: 'Eso es un token de suscripción (sk-ant-oat…), no una API key. Cambiá el proveedor a "Claude (CLI / suscripción)" o pegá una API key real (sk-ant-api03-…).' };
+      }
+
+      const model = cfg.model || claudeApi.DEFAULT_MODEL;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      let res;
+      try {
+        res = await fetch(claudeApi.API_URL, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': key,
+            'anthropic-version': claudeApi.API_VERSION,
+          },
+          body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (res.ok) return { ok: true, detail: 'API key válida · modelo "' + model + '" OK.' };
+      const raw = await res.text();
+      if (res.status === 401) {
+        return { ok: false, error: 'API key inválida (401). Revisá que sea correcta, de una cuenta activa y con saldo.' };
+      }
+      if (res.status === 404 || (res.status === 400 && /model/i.test(raw))) {
+        return { ok: false, error: 'La API key es válida, pero el modelo "' + model + '" no existe en la API. Elegí otro modelo.' };
+      }
+      return { ok: false, error: 'HTTP ' + res.status + ': ' + raw.slice(0, 200) };
+    }
+
+    // openai-compat / ollama: no hacemos prueba profunda acá.
+    return { ok: true, skipped: true, detail: 'Sin prueba automática para este proveedor.' };
+  } catch (e) {
+    const msg = (e && e.name === 'AbortError') ? 'timeout (15s) — ¿hay conexión?' : ((e && e.message) || String(e));
+    return { ok: false, error: 'No se pudo probar: ' + msg };
+  }
+}
+
 // Lista los modelos instalados en Ollama (GET <baseUrl>/api/tags).
 // Devuelve { ok, models: [name, ...] } o { ok:false, error }.
 async function listOllamaModels(baseUrl) {
@@ -1002,6 +1065,7 @@ module.exports = {
   deriveObjective,
   getConfig,
   setConfig: saveConfig,
+  testProvider,
   listOllamaModels,
   loginClaude,
   getVersion,

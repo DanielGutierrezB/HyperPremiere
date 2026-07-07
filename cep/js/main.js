@@ -2561,6 +2561,31 @@
     return ok;
   }
 
+  // Prueba REAL las credenciales del proveedor activo contra el motor y refleja
+  // el resultado honesto en el semáforo (verde = probado y funciona; rojo = falló).
+  // No prueba ollama/openai-compat (el motor las marca como "sin prueba").
+  function verifyProvider() {
+    var p = cfgProviderSel.value;
+    if (p === "ollama" || p === "openai-compat") return;
+    if (!cfgSummary) return;
+    cfgSummary.textContent = "⏳ Probando credenciales…";
+    cfgSummary.className = "cfg-summary is-warn";
+    hpCall("testProvider")
+      .then(function (r) {
+        if (r && r.ok) {
+          cfgSummary.textContent = "✓ Probado y funciona" + (r.detail ? " — " + r.detail : "");
+          cfgSummary.className = "cfg-summary is-ok";
+        } else {
+          cfgSummary.textContent = "✗ " + ((r && r.error) || "credenciales no válidas");
+          cfgSummary.className = "cfg-summary is-warn";
+        }
+      })
+      .catch(function (e) {
+        cfgSummary.textContent = "✗ No se pudo probar: " + ((e && e.message) || "");
+        cfgSummary.className = "cfg-summary is-warn";
+      });
+  }
+
   function autoSave() {
     var body = { provider: cfgProviderSel.value, model: effectiveModel() };
     if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
@@ -2571,7 +2596,7 @@
       .then(function () {
         configStatus.textContent = "✓ Guardado";
         if (cfgApiKey.value.trim()) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.value = ""; cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
-        updateSummary();
+        if (updateSummary()) verifyProvider();
       })
       .catch(function (e) {
         configStatus.textContent = "Error al guardar: " + ((e && e.message) || "");
@@ -2644,7 +2669,7 @@
   cfgProviderSel.onChange = function () {
     configStatus.textContent = "Cambiando…";
     hpCall("setConfig", { provider: cfgProviderSel.value })
-      .then(function (cfg) { applyConfigToUI(cfg); configStatus.textContent = "✓ Guardado"; })
+      .then(function (cfg) { applyConfigToUI(cfg); configStatus.textContent = "✓ Guardado"; if (updateSummary()) verifyProvider(); })
       .catch(function (e) { configStatus.textContent = "Error: " + ((e && e.message) || ""); });
   };
   cfgModelSel.onChange = function () {
@@ -2782,6 +2807,7 @@
             populateModels(cfgProviderSel.value, effectiveModel());
             applyProviderUI();
             autoSave();
+            verifyProvider();
           } else {
             loginStatus.textContent = "Error: " + ((data && data.error) || "desconocido");
             loginStatus.className = "muted login-err";

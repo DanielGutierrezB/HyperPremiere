@@ -16,6 +16,20 @@ const DEFAULT_MODEL = 'claude-opus-4-8';
 const DEFAULT_MAX_TOKENS = 16000;
 const DEFAULT_TIMEOUT_MS = 240_000;
 
+// El portapapeles de Windows suele arrastrar \r, espacios o comillas al pegar.
+// Limpiamos para que el header x-api-key no se rompa por ruido invisible.
+function normalizeApiKey(raw) {
+  return String(raw || '').trim().replace(/^["']|["']$/g, '').trim();
+}
+
+// Un token de suscripción (sk-ant-oat…) NO es una API key: el endpoint de la API
+// lo rechaza con 401. Lo detectamos antes de gastar la llamada y explicamos qué hacer.
+function assertNotOAuthToken(apiKey) {
+  if (/^sk-ant-oat/i.test(apiKey)) {
+    throw new Error('claude-api: pegaste un token de suscripción (sk-ant-oat…), no una API key. Cambiá el proveedor a "Claude (CLI / suscripción)" y usá el botón de login, o pegá una API key real (sk-ant-api03-…) de console.anthropic.com.');
+  }
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.systemPrompt
@@ -27,9 +41,11 @@ const DEFAULT_TIMEOUT_MS = 240_000;
  */
 async function generate({ systemPrompt, userPrompt, images, model, config }) {
   const cfg = config || {};
-  if (!cfg.apiKey) {
+  const apiKey = normalizeApiKey(cfg.apiKey);
+  if (!apiKey) {
     throw new Error('claude-api: falta config.apiKey (API key de Anthropic)');
   }
+  assertNotOAuthToken(apiKey);
   if (!userPrompt || typeof userPrompt !== 'string') {
     throw new Error('claude-api: userPrompt es requerido');
   }
@@ -65,7 +81,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': cfg.apiKey,
+        'x-api-key': apiKey,
         'anthropic-version': API_VERSION,
       },
       body: JSON.stringify(body),
@@ -83,6 +99,12 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   const raw = await res.text();
   if (!res.ok) {
     // El API devuelve JSON de error, pero lo pasamos crudo por si no lo es.
+    if (res.status === 401) {
+      throw new Error('claude-api: HTTP 401 — API key inválida. Revisá que sea una key real de console.anthropic.com (empieza con sk-ant-api03-…), de una cuenta activa con saldo, y sin espacios de más.');
+    }
+    if (res.status === 404 || (res.status === 400 && /model/i.test(raw))) {
+      throw new Error(`claude-api: HTTP ${res.status} — el modelo "${model || DEFAULT_MODEL}" no existe en la API de Anthropic. Elegí otro modelo en la config. Detalle: ${raw.slice(0, 300)}`);
+    }
     throw new Error(`claude-api: HTTP ${res.status}: ${raw.slice(0, 2000)}`);
   }
 
@@ -118,4 +140,4 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   return { text: html, usage };
 }
 
-module.exports = { generate };
+module.exports = { generate, normalizeApiKey, assertNotOAuthToken, API_URL, API_VERSION, DEFAULT_MODEL };
