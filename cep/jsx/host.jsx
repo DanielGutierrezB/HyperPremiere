@@ -134,12 +134,18 @@ function hp_captureProgramFrame(outPath) {
         if (typeof qeSeq.exportFramePNG !== "function") return "error: exportFramePNG no disponible en QE";
 
         var time = qeSeq.CTI.timecode; // timecode del playhead (string), no ticks
-        var base = String(outPath).replace(/\.png$/i, "");
+
+        // Normalizar el destino a la carpeta temporal REAL del SO. main.js pasa una
+        // ruta estilo "/tmp/..." que en Windows no existe → QE no escribía nada y
+        // fallaba con "el frame no se generó". Folder.temp resuelve en Mac y Windows.
+        var fileName = String(outPath).replace(/^.*[\/\\]/, "").replace(/\.png$/i, "");
+        if (!fileName) fileName = "hp-still-" + (new Date().getTime());
+        var base = new File(Folder.temp.fsName + "/" + fileName).fsName;
 
         qeSeq.exportFramePNG(time, base);
         $.sleep(1200); // QE escribe el archivo de forma diferida
 
-        var candidates = [base + ".png", base, base + ".png.png", outPath, outPath + ".png"];
+        var candidates = [base + ".png", base, base + ".png.png"];
         for (var i = 0; i < candidates.length; i++) {
             var f = new File(candidates[i]);
             if (f.exists && f.length > 100) return "ok|" + candidates[i];
