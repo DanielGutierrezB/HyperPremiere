@@ -678,31 +678,200 @@ function gitRun(args) {
   });
 }
 
-// Chequea GitHub SIN aplicar: compara la versión local con origin/main.
-// Devuelve { ok, current, remote, behind, changed }.
-async function checkUpdate() {
-  const current = getVersion();
-  const f = await gitRun(['fetch', 'origin', 'main']);
-  if (f.code !== 0) return { ok: false, error: 'No se pudo consultar GitHub: ' + (f.err.trim() || 'fetch falló').slice(0, 200), current };
-  const rv = await gitRun(['show', 'origin/main:version.json']);
-  let remote = current;
-  try { remote = JSON.parse(rv.out).version || remote; } catch (e) {}
-  const cnt = await gitRun(['rev-list', '--count', 'HEAD..origin/main']);
-  const behind = parseInt((cnt.out || '0').trim(), 10) || 0;
-  return { ok: true, current, remote, behind, changed: behind > 0 };
+// ── Auto-update INDEPENDIENTE DE GIT ────────────────────────────────────────
+// El botón ⟳ debe funcionar para CUALQUIER instalación (ZXP empaquetado o dev
+// con git), sin exigir git ni un checkout al usuario final. Estrategia:
+//   - Instalación dev (hay .git en REPO_ROOT) → seguimos con git (fetch+reset).
+//   - Instalación empaquetada (sin .git)      → bajamos el zip público de GitHub
+//     y reemplazamos los archivos en su lugar, preservando bridge/node_modules
+//     (410 MB, se instala una sola vez) y con respaldo para poder revertir.
+const GH_OWNER = 'DanielGutierrezB';
+const GH_REPO = 'HyperPremiere';
+const GH_BRANCH = 'main';
+const RAW_VERSION_URL = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/version.json`;
+const ZIP_URL = `https://codeload.github.com/${GH_OWNER}/${GH_REPO}/zip/refs/heads/${GH_BRANCH}`;
+
+function isGitRepo() {
+  try { return fs.existsSync(path.join(REPO_ROOT, '.git')); } catch (e) { return false; }
 }
 
-// Actualiza el plugin comparando con GitHub y aplicando la versión remota.
-// Usa reset --hard a origin/main → SIEMPRE queda igual a GitHub (soporta que el
-// repo remoto haya sido reescrito por otro agente). Devuelve { ok, changed, version, previous, remoteVersion }.
+// Compara "1.0.55" vs "1.0.54". >0 si a>b, <0 si a<b, 0 iguales.
+function cmpVersions(a, b) {
+  const pa = String(a || '0').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// Lee la versión remota desde el version.json crudo de GitHub (con cache-buster).
+async function fetchRemoteVersion() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(RAW_VERSION_URL + '?t=' + Date.now(), { signal: controller.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = JSON.parse(await res.text());
+    return String(data.version || '').trim();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Corre un comando externo (no-git). Devuelve { code, out, err }, nunca lanza.
+function runCmd(cmd, args, timeoutMs) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      resolve({ code: -1, out: '', err: (e && e.message) || String(e) });
+      return;
+    }
+    let out = '', err = '';
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (e) {} resolve({ code: -1, out, err: 'timeout' }); }, timeoutMs || 120000);
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { err += c; });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: (e && e.message) || String(e) }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
+  });
+}
+
+// Descarga el zip del branch a un archivo local.
+async function downloadZip(destFile) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 180_000);
+  try {
+    const res = await fetch(ZIP_URL, { signal: controller.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' al descargar el zip');
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length) throw new Error('el zip vino vacío');
+    fs.writeFileSync(destFile, buf);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Extrae el zip a destDir usando la herramienta nativa del SO (sin dependencias).
+async function extractZip(zipFile, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const r = IS_WIN
+    ? await runCmd('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        `Expand-Archive -LiteralPath '${zipFile}' -DestinationPath '${destDir}' -Force`], 120000)
+    : await runCmd('unzip', ['-o', '-q', zipFile, '-d', destDir], 120000);
+  if (r.code !== 0) throw new Error('no se pudo descomprimir: ' + (r.err.trim() || ('código ' + r.code)).slice(0, 200));
+}
+
+// Filtro compartido: nunca copiamos node_modules, .git ni basura del SO.
+function skipPathForCopy(p) {
+  const n = String(p).replace(/\\/g, '/');
+  return /\/node_modules(\/|$)/.test(n) || /\/\.git(\/|$)/.test(n) || /\/\.DS_Store$/.test(n);
+}
+
+// Aplica la actualización empaquetada: baja el zip, arma el árbol instalable
+// (cep/* en la raíz + bridge/ + version.json) y lo escribe SOBRE REPO_ROOT.
+// Preserva bridge/node_modules (no lo toca) y respalda el código para revertir
+// si la escritura falla a mitad de camino.
+async function applyPackagedUpdate() {
+  const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-update-'));
+  const zipFile = path.join(tmpBase, 'src.zip');
+  const exDir = path.join(tmpBase, 'extract');
+  const stage = path.join(tmpBase, 'stage');
+  const backup = path.join(tmpBase, 'backup');
+  try {
+    await downloadZip(zipFile);
+    await extractZip(zipFile, exDir);
+
+    // El zip de un branch se extrae como "<repo>-<branch>/…": tomamos ese dir.
+    const rootName = fs.readdirSync(exDir).find((n) => {
+      try { return fs.statSync(path.join(exDir, n)).isDirectory(); } catch (e) { return false; }
+    });
+    if (!rootName) throw new Error('el zip no trajo contenido');
+    const srcRoot = path.join(exDir, rootName);
+    const srcCep = path.join(srcRoot, 'cep');
+    const srcBridge = path.join(srcRoot, 'bridge');
+    const srcVer = path.join(srcRoot, 'version.json');
+    if (!fs.existsSync(path.join(srcCep, 'index.html')) ||
+        !fs.existsSync(path.join(srcBridge, 'engine.js')) ||
+        !fs.existsSync(srcVer)) {
+      throw new Error('el zip no tiene la estructura esperada (cep/index.html + bridge/engine.js)');
+    }
+
+    // Árbol EMPAQUETADO en staging (igual que hace scripts/sign-zxp.js).
+    fs.mkdirSync(stage, { recursive: true });
+    fs.cpSync(srcCep, stage, { recursive: true, filter: (s) => !skipPathForCopy(s) });
+    fs.cpSync(srcBridge, path.join(stage, 'bridge'), { recursive: true, filter: (s) => !skipPathForCopy(s) });
+    fs.copyFileSync(srcVer, path.join(stage, 'version.json'));
+
+    // Respaldo del código vivo (sin node_modules) por si la escritura falla.
+    fs.cpSync(REPO_ROOT, backup, { recursive: true, filter: (s) => !skipPathForCopy(s) });
+
+    // Escribir SOBRE la instalación viva. No tocamos bridge/node_modules
+    // (el stage no lo contiene), así preservamos las deps ya instaladas.
+    try {
+      fs.cpSync(stage, REPO_ROOT, { recursive: true, force: true });
+    } catch (e) {
+      // Revertir con el respaldo.
+      try { fs.cpSync(backup, REPO_ROOT, { recursive: true, force: true }); } catch (_) {}
+      throw new Error('falló la escritura; restauré el respaldo: ' + ((e && e.message) || e));
+    }
+  } finally {
+    try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (e) {}
+  }
+}
+
+// Chequea GitHub SIN aplicar. Devuelve { ok, current, remote, changed }.
+async function checkUpdate() {
+  const current = getVersion();
+  if (isGitRepo()) {
+    const f = await gitRun(['fetch', 'origin', 'main']);
+    if (f.code !== 0) return { ok: false, error: 'No se pudo consultar GitHub: ' + (f.err.trim() || 'fetch falló').slice(0, 200), current };
+    const rv = await gitRun(['show', 'origin/main:version.json']);
+    let remote = current;
+    try { remote = JSON.parse(rv.out).version || remote; } catch (e) {}
+    const cnt = await gitRun(['rev-list', '--count', 'HEAD..origin/main']);
+    const behind = parseInt((cnt.out || '0').trim(), 10) || 0;
+    return { ok: true, current, remote, behind, changed: behind > 0 };
+  }
+  try {
+    const remote = await fetchRemoteVersion();
+    return { ok: true, current, remote, changed: !!remote && remote !== current };
+  } catch (e) {
+    return { ok: false, error: 'No se pudo consultar GitHub: ' + ((e && e.message) || e), current };
+  }
+}
+
+// Actualiza el plugin a la versión remota. Instalación git → reset --hard;
+// instalación empaquetada → descarga+reemplazo. Devuelve
+// { ok, changed, version, previous, remoteVersion }.
 async function selfUpdate() {
   const before = getVersion();
-  const chk = await checkUpdate();
-  if (!chk.ok) return { ok: false, error: chk.error };
-  if (!chk.changed) return { ok: true, changed: false, version: before, remoteVersion: chk.remote };
-  const r = await gitRun(['reset', '--hard', 'origin/main']);
-  if (r.code !== 0) return { ok: false, error: 'No se pudo aplicar la actualización: ' + (r.err.trim() || 'reset falló').slice(0, 200) };
-  return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
+
+  if (isGitRepo()) {
+    const chk = await checkUpdate();
+    if (!chk.ok) return { ok: false, error: chk.error };
+    if (!chk.changed) return { ok: true, changed: false, version: before, remoteVersion: chk.remote };
+    const r = await gitRun(['reset', '--hard', 'origin/main']);
+    if (r.code !== 0) return { ok: false, error: 'No se pudo aplicar la actualización: ' + (r.err.trim() || 'reset falló').slice(0, 200) };
+    return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
+  }
+
+  // Instalación empaquetada (ZXP): descarga + reemplazo, sin git.
+  let remote;
+  try { remote = await fetchRemoteVersion(); }
+  catch (e) { return { ok: false, error: 'No se pudo consultar GitHub: ' + ((e && e.message) || e) }; }
+  if (!remote) return { ok: false, error: 'No se pudo leer la versión remota de GitHub.' };
+  if (remote === before) return { ok: true, changed: false, version: before, remoteVersion: remote };
+
+  try {
+    await applyPackagedUpdate();
+    return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: remote };
+  } catch (e) {
+    return { ok: false, error: 'No se pudo actualizar: ' + ((e && e.message) || e) };
+  }
 }
 
 function escapeReg(s) {
