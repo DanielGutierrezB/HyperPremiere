@@ -16,6 +16,8 @@ const os = require('os');
 const path = require('path');
 
 const { getProvider, stripHtmlFence } = require('./providers');
+// fetch respaldado por el https nativo de Node (no el Chromium del panel CEP).
+const { hpFetch } = require('./providers/http');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition } = require('./render/hyperframes');
@@ -170,7 +172,7 @@ async function testProvider() {
       const timer = setTimeout(() => controller.abort(), 15_000);
       let res;
       try {
-        res = await fetch(claudeApi.API_URL, {
+        res = await hpFetch(claudeApi.API_URL, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -208,7 +210,7 @@ async function testProvider() {
 async function listOllamaModels(baseUrl) {
   const base = String(baseUrl || 'http://localhost:11434').replace(/\/+$/, '');
   try {
-    const res = await fetch(base + '/api/tags');
+    const res = await hpFetch(base + '/api/tags');
     if (!res.ok) return { ok: false, error: 'HTTP ' + res.status, models: [] };
     const data = await res.json();
     const models = (Array.isArray(data.models) ? data.models : [])
@@ -711,7 +713,7 @@ async function fetchRemoteVersion() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
   try {
-    const res = await fetch(RAW_VERSION_URL + '?t=' + Date.now(), { signal: controller.signal });
+    const res = await hpFetch(RAW_VERSION_URL + '?t=' + Date.now(), { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = JSON.parse(await res.text());
     return String(data.version || '').trim();
@@ -745,7 +747,7 @@ async function downloadZip(destFile) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 180_000);
   try {
-    const res = await fetch(ZIP_URL, { signal: controller.signal });
+    const res = await hpFetch(ZIP_URL, { signal: controller.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status + ' al descargar el zip');
     const buf = Buffer.from(await res.arrayBuffer());
     if (!buf.length) throw new Error('el zip vino vacío');

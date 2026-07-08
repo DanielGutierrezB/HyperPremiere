@@ -10,6 +10,7 @@
  */
 
 const { stripHtmlFence, makeUsage } = require('./index');
+const { hpFetch } = require('./http');
 
 const DEFAULT_TIMEOUT_MS = 240_000;
 
@@ -62,7 +63,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   let res;
   try {
-    res = await fetch(url, {
+    res = await hpFetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

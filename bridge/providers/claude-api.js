@@ -9,6 +9,9 @@
  */
 
 const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
+// Usamos el fetch de Node (https nativo), NO el del Chromium del panel CEP:
+// en Windows ese Chromium viejo devuelve 502/Failed to fetch tras proxy/AV.
+const { hpFetch } = require('./http');
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
@@ -77,7 +80,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   let res;
   try {
-    res = await fetch(API_URL, {
+    res = await hpFetch(API_URL, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

@@ -10,6 +10,7 @@
  */
 
 const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
+const { hpFetch } = require('./http');
 
 const DEFAULT_BASE_URL = 'http://localhost:11434';
 // Modelos locales grandes (30B/32B) en Apple Silicon: carga en frío + prompt
@@ -62,7 +63,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   let res;
   try {
-    res = await fetch(url, {
+    res = await hpFetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // keep_alive: deja el modelo residente 30 min → los marcadores siguientes
