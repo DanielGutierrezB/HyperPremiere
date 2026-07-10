@@ -91,6 +91,45 @@ function browserGpuMode() {
 }
 
 /**
+ * Sanea una composición generada por IA antes de renderizar. La salida del modelo
+ * es una frontera no confiable: aunque el prompt lo prohíbe, a veces devuelve
+ * patrones que ROMPEN el motor de captura determinista. Corregimos dos aquí:
+ *
+ *  1) Repeticiones INFINITAS de GSAP (`repeat: -1` / `repeat: Infinity`). Hacen
+ *     que la timeline dure Infinito, y el motor —que busca cada frame por tiempo
+ *     exacto— arma un set de tiempos sin cota y revienta con "Set maximum size
+ *     exceeded" a los pocos segundos (no es falta de RAM: pasa aun con
+ *     --low-memory-mode + streaming). Las bajamos a un conteo finito grande: el
+ *     loop se ve continuo dentro de la ventana capturada (data-duration) pero la
+ *     timeline queda acotada.
+ *  2) Fragmento sin documento HTML (sin <!DOCTYPE html>/<html>/<body>). El
+ *     navegador entra en quirks mode y el bundler no puede inyectar el runtime.
+ *     Lo envolvemos en un documento mínimo.
+ *
+ * Devuelve { html, fixes } con la lista de arreglos aplicados (para loguear).
+ */
+function sanitizeComposition(html) {
+  const fixes = [];
+  let out = String(html);
+
+  const infinite = /(\brepeat\s*:\s*)(-\s*1|Infinity)\b/g;
+  if (infinite.test(out)) {
+    out = out.replace(infinite, '$1999');
+    fixes.push('repeat infinito → 999 (finito)');
+  }
+
+  if (!/<!doctype\s+html|<html[\s>]|<body[\s>]/i.test(out)) {
+    out =
+      '<!DOCTYPE html>\n<html lang="es">\n<head>\n<meta charset="UTF-8">\n</head>\n<body>\n' +
+      out.trim() +
+      '\n</body>\n</html>\n';
+    fixes.push('fragmento envuelto en documento HTML');
+  }
+
+  return { html: out, fixes: fixes };
+}
+
+/**
  * Borra ghost files de macOS (._*) dentro de un directorio.
  * Estos archivos confunden al CLI de hyperframes al escanear el dir.
  */
@@ -137,7 +176,11 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   // hyperframes espera un PROYECTO: index.html + hyperframes.json en la raíz.
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperpremiere-render-'));
   const htmlPath = path.join(workDir, 'index.html');
-  fs.writeFileSync(htmlPath, html, 'utf8');
+  const sanitized = sanitizeComposition(html);
+  if (sanitized.fixes.length) {
+    console.error('[hyperpremiere] composición saneada: ' + sanitized.fixes.join(' · '));
+  }
+  fs.writeFileSync(htmlPath, sanitized.html, 'utf8');
   // Proyecto mínimo de hyperframes para que reconozca la carpeta.
   fs.writeFileSync(
     path.join(workDir, 'hyperframes.json'),
