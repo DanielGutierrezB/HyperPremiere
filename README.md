@@ -115,7 +115,9 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
     con `--workers 1 --low-memory-mode` (marcadores largos reventaban RAM sin esto).
   - `bridge/prompt/` — system prompt (incluye la **regla dura anti-solapamiento** de layout)
     + build-context (prompt por marcador, lean en refinamiento, imágenes numeradas).
-  - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`.
+  - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`;
+    `bridge/store/versions.js` — dueño único del esquema de nombres versionados
+    (`<slug> vN [modelo].ext`): parse, formato, próxima versión y listados.
 
 ## Distribución (autocontenido)
 

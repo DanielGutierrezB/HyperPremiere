@@ -25,13 +25,13 @@ const {
   slugify,
   ensureOutputDir,
   paths,
-  versionFile,
-  nextVersion,
   saveMeta,
   readMeta,
   saveStills,
   saveResources,
 } = require('./store/project-fs');
+// Nomenclatura versionada ("<slug> vN [modelo].ext"): parse/format canónicos.
+const { versionFile, nextVersion, listVersions, groupBySlug } = require('./store/versions');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -596,27 +596,18 @@ const REPO_ROOT = path.join(__dirname, '..');
 // Junta el HTML de la última versión de los OTROS marcadores ya generados en
 // esta clase, para dar continuidad (retomar/continuar lo hecho en otro marcador).
 function listOtherResources(baseDir, currentSlug) {
+  const bySlug = groupBySlug(baseDir, ['.html']);
   const out = [];
-  let entries;
-  try { entries = fs.readdirSync(baseDir); } catch (e) { return out; }
-  const latest = {}; // slug -> {version, file}
-  // Matchea "<slug> vN.html" y "<slug> vN [modelo].html".
-  const re = /^(.*) v(\d+)(?:[\s.\-\[].*)?\.html$/;
-  for (const name of entries) {
-    const m = name.match(re);
-    if (!m) continue;
-    const slug = m[1], ver = parseInt(m[2], 10);
-    if (slug === currentSlug) continue;
-    if (!latest[slug] || ver > latest[slug].version) latest[slug] = { version: ver, file: name };
-  }
   let budget = 6000; // tope total de chars para no inflar tokens
-  for (const slug in latest) {
+  for (const slug of Object.keys(bySlug)) {
+    if (slug === currentSlug) continue;
     if (budget <= 0) break;
+    const latest = bySlug[slug][bySlug[slug].length - 1]; // orden ascendente → última
     try {
-      let html = fs.readFileSync(path.join(baseDir, latest[slug].file), 'utf8');
+      let html = fs.readFileSync(path.join(baseDir, latest.name), 'utf8');
       if (html.length > 4000) html = html.slice(0, 4000) + '\n<!-- …(recortado)… -->';
       budget -= html.length;
-      out.push({ slug: slug + ' v' + latest[slug].version, html: html });
+      out.push({ slug: slug + ' v' + latest.version, html: html });
     } catch (e) {}
   }
   return out;
@@ -876,10 +867,6 @@ async function selfUpdate() {
   }
 }
 
-function escapeReg(s) {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // Lista las versiones ya generadas de un marcador (escaneo del baseDir).
 // Devuelve { ok, versions: [{ version, model }] } ordenado por versión.
 function listMarkerVersions(body) {
@@ -888,16 +875,7 @@ function listMarkerVersions(body) {
     const markerSlug = String(body.markerSlug || '').trim();
     if (!markerSlug) return { ok: false, error: 'falta markerSlug', versions: [] };
     const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
-    let entries = [];
-    try { entries = fs.readdirSync(baseDir); } catch (e) {}
-    const re = new RegExp('^' + escapeReg(markerSlug) + ' v(\\d+)(?: \\[(.+?)\\])?\\.html$');
-    const out = [];
-    for (const name of entries) {
-      const m = name.match(re);
-      if (m) out.push({ version: parseInt(m[1], 10), model: m[2] || '' });
-    }
-    out.sort((a, b) => a.version - b.version);
-    return { ok: true, versions: out };
+    return { ok: true, versions: listVersions(baseDir, markerSlug, '.html') };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e), versions: [] };
   }
@@ -1027,18 +1005,15 @@ async function renderLatest(body, onProgress) {
 // NO toca los .html (historial/editor) ni stills/recursos. Devuelve cuánto liberó.
 // Agrupa los archivos de VIDEO por marcador con su versión: { slug: [{name,version,path,size}] }.
 function groupMarkerVideos(baseDir) {
-  let entries = [];
-  try { entries = fs.readdirSync(baseDir); } catch (e) { return {}; }
-  const re = /^(.+) v(\d+)(?: \[.+?\])?\.(mov|mp4)$/;
+  const grouped = groupBySlug(baseDir, ['.mov', '.mp4']);
   const bySlug = {};
-  for (const name of entries) {
-    const m = name.match(re);
-    if (!m) continue;
-    const slug = m[1], ver = parseInt(m[2], 10);
-    const full = path.join(baseDir, name);
-    let size = 0; try { size = fs.statSync(full).size; } catch (e) {}
-    (bySlug[slug] = bySlug[slug] || []).push({ name, version: ver, path: full, size });
-  }
+  Object.keys(grouped).forEach((slug) => {
+    bySlug[slug] = grouped[slug].map((e) => {
+      const full = path.join(baseDir, e.name);
+      let size = 0; try { size = fs.statSync(full).size; } catch (err) {}
+      return { name: e.name, version: e.version, path: full, size };
+    });
+  });
   return bySlug;
 }
 
