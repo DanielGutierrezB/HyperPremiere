@@ -18,6 +18,8 @@ const path = require('path');
 const { getProvider, stripHtmlFence } = require('./providers');
 // fetch respaldado por el https nativo de Node (no el Chromium del panel CEP).
 const { hpFetch } = require('./providers/http');
+// Spawn de procesos externos (git, claude, npm, unzip): nunca lanza.
+const { run } = require('./exec');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition } = require('./render/hyperframes');
@@ -244,9 +246,6 @@ function stillToDataUrl(s) {
   return null;
 }
 
-// Guarda las imágenes provistas como ARCHIVOS embebibles (asset-01.png, …) en
-// `dir`. Devuelve los nombres. Se copian al workDir/assets del render para que el
-// HTML pueda referenciarlas con <img src="assets/asset-01.png">.
 // Lee ancho×alto de un buffer PNG o JPEG sin dependencias (parseo de cabecera).
 // Devuelve {w,h} o null.
 function imageDims(buf) {
@@ -273,8 +272,10 @@ function imageDims(buf) {
   return null;
 }
 
-// Guarda las imágenes provistas como archivos embebibles. Devuelve
-// [{name, w, h}] (dimensiones cuando se pudieron leer) para informarle al modelo.
+// Guarda las imágenes provistas como ARCHIVOS embebibles (asset-01.png, …) en
+// `dir`; se copian al workDir/assets del render para que el HTML pueda
+// referenciarlas con <img src="assets/asset-01.png">. Devuelve [{name, w, h}]
+// (dimensiones cuando se pudieron leer) para informarle al modelo.
 function saveAssets(dir, dataUrls) {
   const list = Array.isArray(dataUrls) ? dataUrls : [];
   // Limpiar SIEMPRE el dir (aunque no haya assets) para no arrastrar imágenes de
@@ -473,6 +474,18 @@ async function prepareGeneration(body, mode, onProgress) {
   };
 }
 
+// Historia acumulada de instrucciones: lee la meta de la versión anterior y
+// devuelve su history + su propia entrada. [] para v1 o si no hay meta previa.
+function buildHistory(baseDir, markerSlug, version) {
+  if (!(version > 1)) return [];
+  const prevMetaPath = versionFile(baseDir, markerSlug, version - 1, '.meta.json');
+  const prevMeta = prevMetaPath ? readMeta(prevMetaPath) : null;
+  if (!prevMeta) return [];
+  const history = Array.isArray(prevMeta.history) ? prevMeta.history.slice() : [];
+  history.push({ version: prevMeta.version, instruction: prevMeta.instruction, createdAt: prevMeta.createdAt });
+  return history;
+}
+
 // Etapa 2 (RENDER): renderiza el HTML preparado y guarda la metadata.
 async function renderPrepared(prepared, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
@@ -484,31 +497,16 @@ async function renderPrepared(prepared, onProgress) {
     assetsDir: prepared.assetsDir,
   });
 
-  let history = [];
-  if (prepared.version > 1) {
-    const prevMetaPath = versionFile(prepared.baseDir, prepared.markerSlug, prepared.version - 1, '.meta.json');
-    const prevMeta = prevMetaPath ? readMeta(prevMetaPath) : null;
-    if (prevMeta) {
-      history = Array.isArray(prevMeta.history) ? prevMeta.history.slice() : [];
-      history.push({ version: prevMeta.version, instruction: prevMeta.instruction, createdAt: prevMeta.createdAt });
-    }
-  }
   saveMeta(prepared.metaPath, {
     instruction: prepared.instruction, marker: prepared.marker, version: prepared.version,
     model: prepared.model, provider: prepared.provider, mode: prepared.mode,
     adjustment: prepared.mode === 'adjust' ? prepared.adjustment : undefined,
     background: prepared.background, format: prepared.videoExt,
-    createdAt: new Date(Date.now()).toISOString(), history,
+    createdAt: new Date(Date.now()).toISOString(),
+    history: buildHistory(prepared.baseDir, prepared.markerSlug, prepared.version),
   });
 
   return { ok: true, movPath: prepared.outMovPath, htmlPath: prepared.htmlPath, version: prepared.version, markerSlug: prepared.markerSlug, usage: prepared.usage, background: prepared.background };
-}
-
-// Atómico (modelo + render en una): compat / fallback sin pipeline.
-async function runGeneration(body, mode, onProgress) {
-  const prepared = await prepareGeneration(body, mode, onProgress);
-  if (!prepared || !prepared.ok) return prepared;
-  return renderPrepared(prepared, onProgress);
 }
 
 // Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al
@@ -569,26 +567,19 @@ async function deriveObjective(body) {
 }
 
 // Corre `claude setup-token`, abre el navegador, captura el token y lo guarda.
-function loginClaude() {
-  const { spawn } = require('child_process');
-  return new Promise((resolve, reject) => {
-    const child = spawn('claude', ['setup-token'], { stdio: ['ignore', 'pipe', 'pipe'], shell: IS_WIN });
-    let out = '', err = '';
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('login: timeout (5 min)')); }, 300000);
-    child.stdout.on('data', (c) => { out += c; });
-    child.stderr.on('data', (c) => { err += c; });
-    child.on('error', (e) => { clearTimeout(timer); reject(new Error('no se pudo ejecutar claude: ' + e.message)); });
-    child.on('close', () => {
-      clearTimeout(timer);
-      const m = (out + '\n' + err).match(/sk-ant-oat[0-9]+-[A-Za-z0-9_-]+/);
-      if (!m) return reject(new Error('login: no se encontró el token en la salida'));
-      const raw = loadRawConfig();
-      raw.oauthToken = m[0];
-      raw.provider = 'claude-cli';
-      saveRawConfig(raw);
-      resolve({ ok: true, provider: 'claude-cli' });
-    });
-  });
+async function loginClaude() {
+  const r = await run('claude', ['setup-token'], { timeoutMs: 300_000, shell: IS_WIN });
+  const m = (r.out + '\n' + r.err).match(/sk-ant-oat[0-9]+-[A-Za-z0-9_-]+/);
+  if (!m) {
+    if (r.code === -1 && r.err === 'timeout') throw new Error('login: timeout (5 min)');
+    if (r.code === -1) throw new Error('no se pudo ejecutar claude: ' + r.err);
+    throw new Error('login: no se encontró el token en la salida');
+  }
+  const raw = loadRawConfig();
+  raw.oauthToken = m[0];
+  raw.provider = 'claude-cli';
+  saveRawConfig(raw);
+  return { ok: true, provider: 'claude-cli' };
 }
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -637,20 +628,6 @@ function saveCapture(body) {
   } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
 }
 
-function readStill(filePath) {
-  try {
-    if (!filePath || !fs.existsSync(filePath)) {
-      return { ok: false, error: 'no existe el archivo: ' + filePath };
-    }
-    const b64 = fs.readFileSync(filePath).toString('base64');
-    try { fs.unlinkSync(filePath); } catch (e) {}
-    if (!b64) return { ok: false, error: 'el frame quedó vacío' };
-    return { ok: true, dataUrl: 'data:image/png;base64,' + b64 };
-  } catch (e) {
-    return { ok: false, error: (e && e.message) || String(e) };
-  }
-}
-
 function getVersion() {
   try {
     return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'version.json'), 'utf8')).version || '0.0.0';
@@ -659,16 +636,7 @@ function getVersion() {
 
 // Corre un comando git dentro del repo. Devuelve { code, out, err } (nunca lanza).
 function gitRun(args) {
-  const { spawn } = require('child_process');
-  return new Promise((resolve) => {
-    const child = spawn('git', ['-C', REPO_ROOT].concat(args), { stdio: ['ignore', 'pipe', 'pipe'], shell: IS_WIN });
-    let out = '', err = '';
-    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve({ code: -1, out, err: 'timeout' }); }, 90000);
-    child.stdout.on('data', (c) => { out += c; });
-    child.stderr.on('data', (c) => { err += c; });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: (e && e.message) || String(e) }); });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
-  });
+  return run('git', ['-C', REPO_ROOT].concat(args), { timeoutMs: 90_000, shell: IS_WIN });
 }
 
 // ── Auto-update INDEPENDIENTE DE GIT ────────────────────────────────────────
@@ -713,26 +681,6 @@ async function fetchRemoteVersion() {
   }
 }
 
-// Corre un comando externo (no-git). Devuelve { code, out, err }, nunca lanza.
-function runCmd(cmd, args, timeoutMs) {
-  const { spawn } = require('child_process');
-  return new Promise((resolve) => {
-    let child;
-    try {
-      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (e) {
-      resolve({ code: -1, out: '', err: (e && e.message) || String(e) });
-      return;
-    }
-    let out = '', err = '';
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (e) {} resolve({ code: -1, out, err: 'timeout' }); }, timeoutMs || 120000);
-    child.stdout.on('data', (c) => { out += c; });
-    child.stderr.on('data', (c) => { err += c; });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: (e && e.message) || String(e) }); });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
-  });
-}
-
 // Descarga el zip del branch a un archivo local.
 async function downloadZip(destFile) {
   const controller = new AbortController();
@@ -752,9 +700,9 @@ async function downloadZip(destFile) {
 async function extractZip(zipFile, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   const r = IS_WIN
-    ? await runCmd('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-        `Expand-Archive -LiteralPath '${zipFile}' -DestinationPath '${destDir}' -Force`], 120000)
-    : await runCmd('unzip', ['-o', '-q', zipFile, '-d', destDir], 120000);
+    ? await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        `Expand-Archive -LiteralPath '${zipFile}' -DestinationPath '${destDir}' -Force`])
+    : await run('unzip', ['-o', '-q', zipFile, '-d', destDir]);
   if (r.code !== 0) throw new Error('no se pudo descomprimir: ' + (r.err.trim() || ('código ' + r.code)).slice(0, 200));
 }
 
@@ -831,7 +779,9 @@ async function checkUpdate() {
   }
   try {
     const remote = await fetchRemoteVersion();
-    return { ok: true, current, remote, changed: !!remote && remote !== current };
+    // Solo hacia ADELANTE: si lo local es igual o más nuevo que main, no hay
+    // actualización (evita que ⟳ "baje" una instalación adelantada).
+    return { ok: true, current, remote, changed: !!remote && cmpVersions(remote, current) > 0 };
   } catch (e) {
     return { ok: false, error: 'No se pudo consultar GitHub: ' + ((e && e.message) || e), current };
   }
@@ -857,7 +807,8 @@ async function selfUpdate() {
   try { remote = await fetchRemoteVersion(); }
   catch (e) { return { ok: false, error: 'No se pudo consultar GitHub: ' + ((e && e.message) || e) }; }
   if (!remote) return { ok: false, error: 'No se pudo leer la versión remota de GitHub.' };
-  if (remote === before) return { ok: true, changed: false, version: before, remoteVersion: remote };
+  // Solo hacia adelante (igual que checkUpdate): nunca "bajar" de versión.
+  if (cmpVersions(remote, before) <= 0) return { ok: true, changed: false, version: before, remoteVersion: remote };
 
   try {
     await applyPackagedUpdate();
@@ -920,84 +871,60 @@ async function renderManualHtml(body, onProgress) {
   report({ pct: 40, msg: 'Renderizando el video con alpha…' });
   await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
 
-  let history = [];
-  if (version > 1) {
-    const prevMetaPath = versionFile(baseDir, markerSlug, version - 1, '.meta.json');
-    const prevMeta = prevMetaPath ? readMeta(prevMetaPath) : null;
-    if (prevMeta) {
-      history = Array.isArray(prevMeta.history) ? prevMeta.history.slice() : [];
-      history.push({ version: prevMeta.version, instruction: prevMeta.instruction, createdAt: prevMeta.createdAt });
-    }
-  }
   saveMeta(outPaths.meta, {
     instruction: '(edición manual)', marker, version, model: 'manual', provider: 'manual',
-    mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(), history,
+    mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(),
+    history: buildHistory(baseDir, markerSlug, version),
   });
 
   return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
 }
 
-// Re-renderiza la ÚLTIMA versión de un marcador en ALTA calidad, sin llamar al
-// modelo (reusa el HTML ya generado). Crea una versión nueva tagueada [hq].
-// Sirve para "Render HQ": previsualizás en borrador y luego pasás todo a HD.
-async function renderVersionHQ(body, onProgress) {
+// Re-renderiza la ÚLTIMA versión de un marcador (HTML ya diseñado en disco) SIN
+// volver a llamar a la IA. Dos modos:
+//   hq=true  → "Render HQ": re-render en ALTA reemplazando EN SU LUGAR el video
+//              existente (el que ya está en el timeline); no crea versión nueva
+//              y el panel recolorea el clip a magenta. Falla si no hay video.
+//   hq=false → "reintentar render": el modelo ya había terminado pero el render
+//              falló. Respeta la calidad pedida (draft/alta) y, si el video no
+//              llegó a escribirse, usa la ruta nueva de esa versión.
+async function rerenderLatest(body, hq, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   body = body || {};
   const markerSlug = String(body.markerSlug || '').trim();
-  if (!markerSlug) throw new Error('renderVersionHQ: falta markerSlug');
-  const marker = body.marker || {};
-  const durationSec = Number(marker.duration) || 0;
-  if (durationSec <= 0) throw new Error('renderVersionHQ: marker.duration debe ser > 0');
+  if (!markerSlug) throw new Error('re-render: falta markerSlug');
+  const durationSec = Number((body.marker || {}).duration) || 0;
+  if (durationSec <= 0) throw new Error('re-render: marker.duration debe ser > 0');
 
   const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
-  const list = listMarkerVersions({ projectPath: body.projectPath, sequenceName: body.sequenceName, markerSlug });
-  if (!list.ok || !list.versions.length) throw new Error('No hay versiones para ' + markerSlug);
-  const latest = list.versions[list.versions.length - 1].version;
-  const srcHtmlPath = versionFile(baseDir, markerSlug, latest, '.html');
+  const versions = listVersions(baseDir, markerSlug, '.html');
+  if (!versions.length) throw new Error('No hay versiones (HTML) para re-renderizar de ' + markerSlug);
+  const latest = versions[versions.length - 1];
+  const srcHtmlPath = versionFile(baseDir, markerSlug, latest.version, '.html');
   const html = srcHtmlPath ? fs.readFileSync(srcHtmlPath, 'utf8') : '';
-  if (!html) throw new Error('No se encontró el HTML de la última versión (v' + latest + ')');
+  if (!html) throw new Error('No se encontró el HTML de la última versión (v' + latest.version + ')');
 
   const withBackground = body.background === true;
   const videoExt = withBackground ? 'mp4' : 'mov';
-  // REEMPLAZAR en su lugar: renderizamos sobre el .mov de la ÚLTIMA versión (el
-  // que ya está en el timeline) en alta calidad. No creamos versión nueva; el
-  // panel recolorea el clip a magenta para marcar "procesado en HQ".
-  let movPath = versionFile(baseDir, markerSlug, latest, '.' + videoExt) ||
-    versionFile(baseDir, markerSlug, latest, '.mov') || versionFile(baseDir, markerSlug, latest, '.mp4');
-  if (!movPath) throw new Error('No se encontró el archivo de video de v' + latest + ' para reemplazar');
+  // Video existente de esa versión, tolerando que la extensión haya cambiado.
+  let movPath = versionFile(baseDir, markerSlug, latest.version, '.' + videoExt) ||
+    versionFile(baseDir, markerSlug, latest.version, '.mov') ||
+    versionFile(baseDir, markerSlug, latest.version, '.mp4');
+  if (!movPath) {
+    if (hq) throw new Error('No se encontró el archivo de video de v' + latest.version + ' para reemplazar');
+    movPath = paths(baseDir, markerSlug, latest.version, latest.model || 'x', videoExt).mov;
+  }
 
-  report({ pct: 30, msg: 'Render HQ (reemplazando v' + latest + ' en alta)…' });
-  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality: 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
-  return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground, replaced: true };
-}
-
-// Re-renderiza la ÚLTIMA versión (HTML ya diseñado en disco) SIN volver a llamar
-// a la IA — para "reintentar desde el punto de fallo" cuando el render falló pero
-// el modelo ya había terminado. Respeta la calidad (draft/alta) y coloca normal.
-async function renderLatest(body, onProgress) {
-  const report = typeof onProgress === 'function' ? onProgress : function () {};
-  body = body || {};
-  const markerSlug = String(body.markerSlug || '').trim();
-  if (!markerSlug) throw new Error('renderLatest: falta markerSlug');
-  const marker = body.marker || {};
-  const durationSec = Number(marker.duration) || 0;
-  if (durationSec <= 0) throw new Error('renderLatest: marker.duration debe ser > 0');
-  const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
-  const list = listMarkerVersions({ projectPath: body.projectPath, sequenceName: body.sequenceName, markerSlug });
-  if (!list.ok || !list.versions.length) throw new Error('No hay versiones (HTML) para re-renderizar de ' + markerSlug);
-  const latest = list.versions[list.versions.length - 1].version;
-  const srcHtmlPath = versionFile(baseDir, markerSlug, latest, '.html');
-  const html = srcHtmlPath ? fs.readFileSync(srcHtmlPath, 'utf8') : '';
-  if (!html) throw new Error('No se encontró el HTML de la última versión (v' + latest + ')');
-  const withBackground = body.background === true;
-  const videoExt = withBackground ? 'mp4' : 'mov';
-  const movPath = versionFile(baseDir, markerSlug, latest, '.' + videoExt) ||
-    versionFile(baseDir, markerSlug, latest, '.mov') || versionFile(baseDir, markerSlug, latest, '.mp4') ||
-    paths(baseDir, markerSlug, latest, list.versions[list.versions.length - 1].model || 'x', videoExt).mov;
-  const quality = body.draft ? 'draft' : 'high';
-  report({ pct: 30, msg: 'Re-render de v' + latest + ' (sin re-diseñar)…' });
+  const quality = (hq || !body.draft) ? 'high' : 'draft';
+  report({
+    pct: 30,
+    msg: hq ? 'Render HQ (reemplazando v' + latest.version + ' en alta)…'
+            : 'Re-render de v' + latest.version + ' (sin re-diseñar)…',
+  });
   await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality, assetsDir: path.join(baseDir, '_assets', markerSlug) });
-  return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest, markerSlug, background: withBackground };
+  const out = { ok: true, movPath, htmlPath: srcHtmlPath, version: latest.version, markerSlug, background: withBackground };
+  if (hq) out.replaced = true;
+  return out;
 }
 
 // Limpia VIDEOS de versiones viejas de una secuencia: por cada marcador deja
@@ -1119,38 +1046,31 @@ function dirSizeBytes(dir) {
   return total;
 }
 
-function prepareEngine(_arg, onProgress) {
+async function prepareEngine(_arg, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
-  return new Promise((resolve) => {
-    if (engineDepsReady()) { resolve({ ok: true, alreadyReady: true }); return; }
-    const { spawn } = require('child_process');
-    report({ pct: 4, msg: 'Instalando el motor (una sola vez, puede tardar varios minutos)…' });
-    let child;
-    try {
-      child = spawn('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'],
-        { cwd: __dirname, shell: IS_WIN, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (e) {
-      resolve({ ok: false, error: 'No se pudo ejecutar npm (¿Node instalado?): ' + ((e && e.message) || e) });
-      return;
-    }
-    let tail = '';
-    function push(chunk) {
-      const s = String(chunk); tail = (tail + s).slice(-2000);
+  if (engineDepsReady()) return { ok: true, alreadyReady: true };
+  report({ pct: 4, msg: 'Instalando el motor (una sola vez, puede tardar varios minutos)…' });
+  let tail = '';
+  // timeoutMs: 0 = sin tope — npm baja el Chromium de hyperframes y puede
+  // tardar muchos minutos en conexiones lentas.
+  const r = await run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+    cwd: __dirname, shell: IS_WIN, timeoutMs: 0,
+    onData: (s) => {
+      tail = (tail + s).slice(-2000);
       const line = s.split('\n').map((l) => l.trim()).filter(Boolean).pop();
       if (line) report({ msg: line.slice(0, 140) });
-    }
-    child.stdout.on('data', push);
-    child.stderr.on('data', push);
-    child.on('error', (e) => resolve({ ok: false, error: 'No se pudo ejecutar npm (¿Node instalado en el equipo?): ' + ((e && e.message) || e) }));
-    child.on('close', (code) => {
-      if (code === 0 && engineDepsReady()) {
-        report({ pct: 92, msg: 'Podando dependencias que no se usan…' });
-        var pr = pruneUnusedEngineDeps();
-        report({ pct: 100, msg: 'Motor listo (liberados ' + (pr.freedBytes / 1048576).toFixed(0) + ' MB no usados).' });
-        resolve({ ok: true, pruned: pr });
-      } else resolve({ ok: false, error: 'npm install terminó con código ' + code + '.\n' + tail.slice(-400) });
-    });
+    },
   });
+  if (r.code === -1) {
+    return { ok: false, error: 'No se pudo ejecutar npm (¿Node instalado en el equipo?): ' + r.err };
+  }
+  if (r.code !== 0 || !engineDepsReady()) {
+    return { ok: false, error: 'npm install terminó con código ' + r.code + '.\n' + tail.slice(-400) };
+  }
+  report({ pct: 92, msg: 'Podando dependencias que no se usan…' });
+  const pr = pruneUnusedEngineDeps();
+  report({ pct: 100, msg: 'Motor listo (liberados ' + (pr.freedBytes / 1048576).toFixed(0) + ' MB no usados).' });
+  return { ok: true, pruned: pr };
 }
 
 // ── Persistencia de la cola por proyecto ────────────────────────────────
@@ -1188,8 +1108,14 @@ function loadQueue(body) {
 }
 
 module.exports = {
-  generate: (body, onProgress) => runGeneration(body, 'generate', onProgress),
-  renderLatest,
+  // Pipeline de la cola en 2 etapas (solapar modelo/render):
+  prepareGenerate: (body, onProgress) => prepareGeneration(body, 'generate', onProgress),
+  prepareFeedback: (body, onProgress) => prepareGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
+  renderPrepared,
+  // Re-render de la última versión sin IA (Render HQ / reintento del render):
+  renderVersionHQ: (body, onProgress) => rerenderLatest(body, true, onProgress),
+  renderLatest: (body, onProgress) => rerenderLatest(body, false, onProgress),
+  renderManualHtml,
   saveQueue,
   loadQueue,
   cleanOldVersions,
@@ -1197,17 +1123,9 @@ module.exports = {
   cleanupPreview,
   engineStatus,
   prepareEngine,
-  pruneUnusedEngineDeps,
-  renderVersionHQ,
-  feedback: (body, onProgress) => runGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
-  // Etapas separadas para el pipeline de la cola (solapar modelo/render):
-  prepareGenerate: (body, onProgress) => prepareGeneration(body, 'generate', onProgress),
-  prepareFeedback: (body, onProgress) => prepareGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
-  renderPrepared,
   estimateTokens,
   listMarkerVersions,
   readMarkerHtml,
-  renderManualHtml,
   deriveObjective,
   getConfig,
   setConfig: saveConfig,
@@ -1217,6 +1135,5 @@ module.exports = {
   getVersion,
   checkUpdate,
   selfUpdate,
-  readStill,
   saveCapture,
 };

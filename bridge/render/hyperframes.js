@@ -112,9 +112,11 @@ function sanitizeComposition(html) {
   const fixes = [];
   let out = String(html);
 
-  const infinite = /(\brepeat\s*:\s*)(-\s*1|Infinity)\b/g;
-  if (infinite.test(out)) {
-    out = out.replace(infinite, '$1999');
+  // (comparar el resultado del replace evita el footgun de .test() con /g,
+  // que muta lastIndex y rompe en la segunda llamada)
+  const finite = out.replace(/(\brepeat\s*:\s*)(-\s*1|Infinity)\b/g, '$1999');
+  if (finite !== out) {
+    out = finite;
     fixes.push('repeat infinito → 999 (finito)');
   }
 
