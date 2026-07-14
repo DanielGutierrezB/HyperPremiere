@@ -3,12 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Puente Node local (arm64 nativo) entre el panel CEP de Premiere y HyperFrames",
+  "description": "Motor Node in-process del panel CEP de HyperPremiere (providers + prompt + render)",
   "engines": {
     "node": ">=18"
-  },
-  "scripts": {
-    "start": "node server.js"
   },
   "dependencies": {
     "hyperframes": "^0.7.28"
