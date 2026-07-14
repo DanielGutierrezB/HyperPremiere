@@ -262,15 +262,16 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
 
 // Saca de Premiere las versiones viejas ANTES de borrar sus archivos: (1) quita
 // sus clips de todas las secuencias, (2) elimina sus ítems del proyecto (bin) con
-// el truco mover-a-bin-temporal + deleteBin. `namesJson` = JSON array de nombres
-// de archivo (ej. "Marcador 1 v1 [modelo].mov"). Devuelve "ok|<n>" o "error: ...".
-function hp_purgeClipsByName(namesJson) {
+// el truco mover-a-bin-temporal + deleteBin. `namesJoined` = nombres de archivo
+// separados por "\n" (los nombres nunca contienen saltos de línea — ExtendScript
+// no trae JSON, así evitamos parsear con eval). Devuelve "ok|<n>|<m>" o "error: ...".
+function hp_purgeClipsByName(namesJoined) {
     try {
-        var arr = [];
-        try { arr = eval('(' + namesJson + ')'); } catch (ep) { return "error: nombres inválidos"; }
+        var arr = String(namesJoined || "").split("\n");
         var names = {};
         for (var a = 0; a < arr.length; a++) {
-            var nm = String(arr[a]);
+            var nm = arr[a];
+            if (!nm) continue;
             names[nm] = true;
             names[nm.replace(/\.[^.]+$/, "")] = true; // sin extensión
         }
@@ -354,66 +355,3 @@ function hp_recolorClipAt(seqName, atSeconds, colorLabel) {
     }
 }
 
-// Importa un .mov y lo coloca SIEMPRE en la pista superior si está libre;
-// si no, crea una pista de video nueva encima y lo pone ahí (nunca pisa nada).
-// El clip se importa a un bin "HyperPremiere" > "<secuencia>" para no dejarlo
-// suelto en la raíz del proyecto. Devuelve "ok" o "error: ...".
-function hp_placeClip(movPath, atSeconds, durationSec) {
-    try {
-        var seq = app.project.activeSequence;
-        if (!seq) return "error: no hay secuencia activa";
-
-        var f = new File(movPath);
-        if (!f.exists) return "error: no existe el archivo: " + movPath;
-
-        var start = Number(atSeconds) || 0;
-        var end = start + (Number(durationSec) || 5);
-
-        // Bin organizado: HyperPremiere > <nombre de la secuencia>.
-        // Si por algún motivo no se puede crear, cae a la raíz del proyecto.
-        var hpBin = hp_ensureBin(app.project.rootItem, "HyperPremiere");
-        var seqBin = hpBin ? hp_ensureBin(hpBin, String(seq.name || "secuencia")) : null;
-        var targetBin = seqBin || hpBin || app.project.rootItem;
-
-        // Importar al bin destino (suppressUI = true, no como stills).
-        app.project.importFiles([movPath], true, targetBin, false);
-
-        // Localizar el projectItem recién importado por nombre; fallback al último.
-        var root = targetBin;
-        var count = root.children.numItems;
-        var baseName = f.name.replace(/\.[^\.]+$/, "");
-        var item = null;
-        for (var i = count - 1; i >= 0; i--) {
-            var ch = root.children[i];
-            if (ch && ch.name && ch.name.indexOf(baseName) === 0) { item = ch; break; }
-        }
-        if (!item && count > 0) item = root.children[count - 1];
-        if (!item) return "error: no se pudo localizar el clip importado";
-
-        var vTracks = seq.videoTracks;
-        if (!vTracks || vTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";
-
-        // 1) Si la pista superior está libre en el rango, usarla.
-        var topIndex = vTracks.numTracks - 1;
-        var target = vTracks[topIndex];
-
-        if (!hp_trackIsFree(target, start, end)) {
-            // 2) Crear una pista de video nueva encima (QE) y usarla.
-            try {
-                app.enableQE();
-                var qeSeq = qe.project.getActiveSequence();
-                qeSeq.addTracks(1, vTracks.numTracks); // 1 pista de video tras la última
-                vTracks = seq.videoTracks; // re-leer tras agregar
-                target = vTracks[vTracks.numTracks - 1];
-            } catch (qerr) {
-                // Si QE falla, seguimos con la pista superior existente.
-                target = vTracks[vTracks.numTracks - 1];
-            }
-        }
-
-        target.overwriteClip(item, start);
-        return "ok";
-    } catch (e) {
-        return "error: " + e.toString();
-    }
-}
