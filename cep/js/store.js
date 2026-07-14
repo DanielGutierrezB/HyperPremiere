@@ -106,6 +106,13 @@
 
   var HPStore = {
     /**
+     * Clave especial para el "Prompt general" (instruccion + stills + recursos
+     * que aplican a TODOS los marcadores). Reusa toda la maquinaria de marcador
+     * (getMarkerData/addMarkerStill/...) sin ser un marcador real.
+     */
+    GENERAL_KEY: '__general__',
+
+    /**
      * Fija el contexto activo (proyecto + secuencia). Todas las lecturas y
      * escrituras posteriores operan sobre este namespace.
      */
@@ -155,6 +162,19 @@
         generated: Boolean(entry.generated),
         background: Boolean(entry.background)
       };
+    },
+
+    /**
+     * Stills del marcador marcados "✓ usar" (recursos a INCRUSTAR en el
+     * gráfico: logo/icono/foto), en su orden original.
+     */
+    getMarkerAssets: function (markerKey) {
+      var d = this.getMarkerData(markerKey);
+      var out = [];
+      for (var i = 0; i < d.stills.length; i++) {
+        if (d.stillUse[i]) out.push(d.stills[i]);
+      }
+      return out;
     },
 
     /** Marca un still como "recurso a usar" (true) o "referencia" (false). */
