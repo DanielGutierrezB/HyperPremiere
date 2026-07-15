@@ -115,7 +115,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
     // shell solo en Windows (shim .cmd); en mac/Linux args por array sin shell.
     const r = await run(bin, args, { timeoutMs, env: childEnv, shell: process.platform === 'win32' });
-    if (r.code === -1 && r.err === 'timeout') {
+    if (r.timedOut) {
       throw new Error(`claude-cli: timeout tras ${timeoutMs}ms`);
     }
     if (r.code === -1) {

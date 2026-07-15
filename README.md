@@ -103,12 +103,14 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
 - **Panel CEP** (`cep/`) — la interfaz dentro de Premiere (`com.codigo.hyperpremiere`), con
   Node embebido (`--enable-nodejs --mixed-context`), en módulos vanilla (sin bundler,
   cargados en orden por `index.html`): `js/util.js` (helpers puros), `js/log.js` (log de
-  diagnóstico), `js/engine-client.js` (carga/llamadas al motor), `js/store.js` (`HPStore`,
-  persiste por proyecto+secuencia), `js/transcript.js`, `js/widgets.js` (select propio,
-  editor de código, tooltips — CEF no dibuja los `title` nativos), `js/queue.js` (cola
-  `HPQueue`, máquina de estados), `js/queue-view.js` (pestaña Cola), `js/config-ui.js`
-  (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de marcadores + wiring).
-  `css/style.css`.
+  diagnóstico), `js/engine-client.js` (`HPEngine`, carga/llamadas al motor Node),
+  `js/host-client.js` (`HPHost`, frontera única con ExtendScript), `js/store.js`
+  (`HPStore`, persiste por proyecto+secuencia), `js/transcript.js`, `js/widgets.js`
+  (select propio, editor de código, tooltips — CEF no dibuja los `title` nativos),
+  `js/stills.js` (control de imágenes/recursos por marcador), `js/queue.js` (cola
+  `HPQueue`, máquina de estados), `js/queue-view.js` (pestaña Cola + limpieza),
+  `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
+  marcadores + wiring). `css/style.css`.
 - **ExtendScript** (`cep/jsx/host.jsx`) — lee marcadores, mueve el playhead, importa y
   coloca/recolorea el clip por nombre, exporta el frame del programa, purga clips al limpiar.
 - **Motor Node in-process** (`bridge/`) — corre **dentro del panel** vía `require` (sin

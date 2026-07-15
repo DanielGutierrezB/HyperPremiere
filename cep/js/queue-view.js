@@ -1,21 +1,19 @@
 /**
  * HPQueueView — vista de la pestaña Cola: lista agrupada por secuencia con
  * controles (reordenar, pausar, reactivar, feedback inline, Render HQ,
- * limpiar) y el estimado de tiempo/tokens/costo de lo pendiente.
+ * limpiar versiones viejas) y el estimado de tiempo/tokens/costo pendiente.
  *
- * Solo DOM: el estado vive en HPQueue. Lo que necesita del resto del panel
- * entra por HPQueueView.init(deps):
- *   getContext()          → { projectPath, sequenceName } actuales
+ * Solo DOM: el estado vive en HPQueue (y la selección de imágenes de
+ * feedback en HPStills). Deps de main vía init(deps):
  *   goToJobMarker(job, openEditor) → abrir secuencia + enfocar la tarjeta
- *   createStillsControl(markerKey, fbJobId) → control de imágenes (feedback)
- *   cleanOldVersions()    → flujo "🧹 limpiar versiones viejas" (confirma + borra)
- *   setOutput(text, isError) → mensaje en la barra de salida del panel
+ *   setOutput(text, isError)      → mensaje en la barra de salida del panel
  *
  * Vanilla JS, sin ES modules: se expone como window.HPQueueView.
  */
 (function (global) {
   "use strict";
 
+  var hpLog = HPLog.log;
   var fmtDuration = HPUtil.fmtDuration;
   var addThousands = HPUtil.addThousands;
 
@@ -25,22 +23,6 @@
   // (id → texto), para que sobreviva a los re-render frecuentes de la cola.
   var feedbackOpen = {};
   var feedbackDraft = {};
-  // Selección de qué imágenes reenviar en un feedback, por job:
-  //   feedbackImgSel[jobId] = { base: <nº de stills al abrir>, sel: { index: bool } }
-  // Regla: imágenes existentes (index < base) NO se reenvían por defecto (gris);
-  // las nuevas (index >= base) SÍ. `sel[index]` guarda el override manual del usuario.
-  var feedbackImgSel = {};
-  function fbSend(jobId, index) {
-    var rec = feedbackImgSel[jobId];
-    if (!rec) return false;
-    if (rec.sel[index] !== undefined) return rec.sel[index];
-    return index >= rec.base;
-  }
-  function fbToggle(jobId, index) {
-    var rec = feedbackImgSel[jobId];
-    if (!rec) return;
-    rec.sel[index] = !fbSend(jobId, index);
-  }
 
   function iconBtn(txt, title, cb) {
     var b = document.createElement("button");
@@ -65,8 +47,8 @@
     });
   }
 
-  // Re-renderiza en HQ la última versión de cada marcador de una secuencia
-  // (según los jobs de esa secuencia en la cola). Encola y arranca.
+  // Re-renderiza en HQ la última versión de cada marcador MEJORABLE (opaco en
+  // borrador) de una secuencia, según los jobs de esa secuencia en la cola.
   function renderSeqHQ(seqName) {
     var jobs = HPQueue.jobs();
     var byMarker = {};
@@ -75,20 +57,96 @@
       if (j.seqName === seqName && j.markerKey) byMarker[j.markerKey] = j; // el último gana
     }
     Object.keys(byMarker).forEach(function (mk) {
-      var j = byMarker[mk];
-      // Solo re-renderiza en HQ los que son mejorables: opacos hechos en borrador.
-      // Alpha (siempre ProRes 4444) y opacos ya en alta NO se tocan (sería no-op).
-      if (!(j.payload && j.payload.draft && j.payload.background)) return;
-      HPQueue.add({
-        kind: "renderVersionHQ",
-        payload: {
-          projectPath: j.projectPath, sequenceName: seqName, markerSlug: mk,
-          marker: { start: j.markerStart, end: j.markerStart + j.markerDuration, duration: j.markerDuration },
-          background: !!(j.payload && j.payload.background)
-        },
-        seqName: seqName, projectPath: j.projectPath, markerKey: mk,
-        label: mk + " (Render HQ)", markerStart: j.markerStart, markerDuration: j.markerDuration
+      if (HPQueue.isUpgradable(byMarker[mk])) renderJobHQ(byMarker[mk]);
+    });
+  }
+
+  // ── Limpieza de versiones viejas ──────────────────────────────────────
+
+  // Ejecuta la limpieza REAL (ya confirmada): secuencia → proyecto → disco.
+  function performCleanup(targets) {
+    deps.setOutput("🧹 Limpiando versiones viejas…", false);
+    hpLog("Limpiando versiones viejas en " + targets.length + " secuencia(s)…");
+    var listPromises = targets.map(function (t) {
+      return HPEngine.call("listOldVersions", t).then(function (r) { return (r && r.ok) ? (r.files || []) : []; }).catch(function () { return []; });
+    });
+    Promise.all(listPromises).then(function (lists) {
+      var names = [];
+      lists.forEach(function (files) { files.forEach(function (f) { if (f && f.name) names.push(f.name); }); });
+      if (!names.length) { deps.setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
+      // Paso 2: sacarlos de secuencia + proyecto ANTES de borrar (evita re-vincular).
+      HPHost.purgeClipsByName(names, function (purge) {
+        hpLog("purge en Premiere: " + purge + " (" + names.length + " nombres)");
+        var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
+        targets.forEach(function (t) {
+          HPEngine.call("cleanOldVersions", t).then(function (res) {
+            if (res && res.ok) { totalDeleted += res.deleted || 0; totalBytes += res.freedBytes || 0; }
+            else errs.push((res && res.error) || "error");
+          }).catch(function (e) { errs.push((e && e.message) || "error"); })
+            .then(function () {
+              if (--pending === 0) {
+                var mb = (totalBytes / (1024 * 1024)).toFixed(1);
+                var okPurge = String(purge || "").indexOf("ok|") === 0;
+                var msg = "🧹 Limpieza lista: " + totalDeleted + " video(s) borrados · " + mb + " MB liberados." +
+                  (okPurge ? " Quitados de la secuencia y del proyecto." : " (No pude quitarlos del proyecto: " + purge + ")") +
+                  " Los HTMLs se conservan.";
+                if (errs.length) msg += " · " + errs.length + " error(es) al borrar";
+                deps.setOutput(msg, errs.length > 0 || !okPurge);
+                hpLog(msg);
+              }
+            });
+        });
       });
+    });
+  }
+
+  // Botón "limpiar versiones viejas": PRIMERO muestra el detalle (qué se borra ↔
+  // qué se conserva) y pide confirmación; recién al aceptar borra.
+  function cleanOldVersions() {
+    var seen = {}, targets = [];
+    function addTarget(pp, sn) {
+      if (!sn) return;
+      var k = String(pp) + "::" + String(sn);
+      if (seen[k]) return; seen[k] = true;
+      targets.push({ projectPath: pp, sequenceName: sn });
+    }
+    var jobs = HPQueue.jobs();
+    for (var i = 0; i < jobs.length; i++) addTarget(jobs[i].projectPath, jobs[i].seqName);
+    var ctx = HPStore.getContext();
+    addTarget(ctx.projectPath, ctx.sequenceName);
+    if (!targets.length) { deps.setOutput("No hay secuencias en la cola para limpiar.", false); return; }
+
+    var previewPromises = targets.map(function (t) {
+      return HPEngine.call("cleanupPreview", t)
+        .then(function (r) { return (r && r.ok) ? r : { groups: [], totalDeletes: 0, totalBytes: 0, sequenceName: t.sequenceName }; })
+        .catch(function () { return { groups: [], totalDeletes: 0, totalBytes: 0, sequenceName: t.sequenceName }; });
+    });
+    Promise.all(previewPromises).then(function (previews) {
+      var totalDeletes = 0, totalBytes = 0;
+      previews.forEach(function (p) { totalDeletes += p.totalDeletes || 0; totalBytes += p.totalBytes || 0; });
+      if (!totalDeletes) { deps.setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
+      HPWidgets.confirmOverlay("Limpiar versiones viejas", function (body) {
+        var intro = document.createElement("p");
+        var strong = document.createElement("strong"); strong.textContent = totalDeletes + " video(s)";
+        intro.appendChild(document.createTextNode("Se van a borrar "));
+        intro.appendChild(strong);
+        intro.appendChild(document.createTextNode(" viejos (" + (totalBytes / 1048576).toFixed(1) + " MB). Se conserva la última versión de cada marcador. Los HTMLs no se tocan."));
+        body.appendChild(intro);
+        previews.forEach(function (p) {
+          if (!p.groups || !p.groups.length) return;
+          var sh = document.createElement("div"); sh.className = "section-label"; sh.textContent = p.sequenceName || "secuencia";
+          body.appendChild(sh);
+          p.groups.forEach(function (g) {
+            g.deletes.forEach(function (d) {
+              var row = document.createElement("div"); row.className = "cleanup-row";
+              var del = document.createElement("span"); del.className = "cl-del"; del.textContent = "🗑 " + d.name;
+              var keep = document.createElement("span"); keep.className = "cl-keep"; keep.textContent = "conserva: " + (g.keep ? g.keep.name : "?");
+              row.appendChild(del); row.appendChild(keep);
+              body.appendChild(row);
+            });
+          });
+        });
+      }, "Borrar " + totalDeletes + " video(s)", function () { performCleanup(targets); });
     });
   }
 
@@ -107,11 +165,7 @@
   // Footer con estimación de la cola (marcadores en espera): tiempo y tokens de
   // entrada estimados para procesar TODO lo pendiente, así se decide antes de lanzar.
   function renderQueueEstimate(panel, jobs) {
-    var pend = [];
-    for (var i = 0; i < jobs.length; i++) {
-      var s = jobs[i].status;
-      if (s === "queued" || s === "modeling" || s === "ready" || s === "running") pend.push(jobs[i]);
-    }
+    var pend = jobs.filter(function (j) { return HPQueue.isPending(j.status); });
     if (!pend.length) return;
     var genCount = 0, compSec = 0;
     for (var k = 0; k < pend.length; k++) {
@@ -147,6 +201,54 @@
     }).catch(function () { line2.textContent = ""; });
   }
 
+  // Caja de feedback inline de un job terminado: texto + regenerar + control de
+  // imágenes con selección de reenvío (solo si el job es de la secuencia actual).
+  function buildFeedbackBox(j) {
+    var fb = document.createElement("div"); fb.className = "qj-feedback-wrap";
+    var inRow = document.createElement("div"); inRow.className = "qj-feedback";
+    var ta = document.createElement("textarea"); ta.className = "qj-fb-input"; ta.rows = 2;
+    ta.placeholder = "Qué ajustar… (se regenera manteniendo el puesto en la cola)";
+    ta.value = feedbackDraft[j.id] || "";
+    ta.addEventListener("input", function (e) { feedbackDraft[j.id] = e.target.value; });
+    ta.addEventListener("click", function (e) { e.stopPropagation(); });
+    inRow.appendChild(ta);
+    var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
+    go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
+    go.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var t = feedbackDraft[j.id] || "";
+      // Índices de las imágenes que el usuario dejó activas (📤) para reenviar.
+      var sendIdx = HPStills.fbCollect(j.id, j.markerKey);
+      feedbackOpen[j.id] = false; feedbackDraft[j.id] = ""; HPStills.fbClear(j.id);
+      HPQueue.regenerate(j.id, t, sendIdx);
+    });
+    inRow.appendChild(go);
+    fb.appendChild(inRow);
+    // Imágenes/elementos para el feedback — mismo control que la tarjeta
+    // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
+    // marcador y la regeneración los toma. Solo si el job es de la secuencia
+    // actual (HPStore opera sobre ese contexto).
+    var ctx = HPStore.getContext();
+    if (j.seqName === ctx.sequenceName && j.projectPath === ctx.projectPath) {
+      // Selección de reenvío por imagen. Se inicializa una vez por apertura: las
+      // imágenes YA adjuntas quedan apagadas (no se reenvían → ahorro de tokens);
+      // las NUEVAS que agregues acá entran activas. Cada miniatura tiene su 📤.
+      HPStills.fbInit(j.id, j.markerKey);
+      var hint = document.createElement("div"); hint.className = "qj-fb-hint";
+      hint.textContent = "Estás refinando lo ya generado: las imágenes adjuntas NO se reenvían (📤 para reactivar la que necesites). Las nuevas que agregues se envían solas. Las ✓ usar se incrustan igual.";
+      fb.appendChild(hint);
+      var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
+      mnt.addEventListener("click", function (e) { e.stopPropagation(); });
+      mnt.appendChild(HPStills.createControl(j.markerKey, j.id));
+      fb.appendChild(mnt);
+    } else {
+      var note = document.createElement("div"); note.className = "qj-msg";
+      note.textContent = "Para adjuntar imágenes a este marcador, abrí su secuencia en la pestaña Marcadores.";
+      fb.appendChild(note);
+    }
+    return fb;
+  }
+
   // Panel de cola global: agrupado por secuencia, con reordenamiento
   // (secuencia arriba/abajo y marcador arriba/abajo dentro de su secuencia).
   function render(jobs) {
@@ -156,9 +258,8 @@
     var savedScroll = scroller ? scroller.scrollTop : 0;
     var pending = 0, waiting = 0, i;
     for (i = 0; i < jobs.length; i++) {
-      var st = jobs[i].status;
-      if (st === "queued" || st === "modeling" || st === "ready" || st === "running") pending++;
-      else if (st === "waiting") waiting++;
+      if (HPQueue.isPending(jobs[i].status)) pending++;
+      else if (jobs[i].status === "waiting") waiting++;
     }
     // Badge de la pestaña Cola (incluye los que esperan tokens para que se noten).
     var badge = document.getElementById("tab-queue-count");
@@ -237,7 +338,7 @@
     var cleanBtn = document.createElement("button"); cleanBtn.type = "button"; cleanBtn.className = "queue-clear";
     cleanBtn.textContent = "🧹 limpiar versiones viejas";
     cleanBtn.title = "Borra del disco los videos de versiones anteriores de cada marcador (deja solo la última). Conserva los HTMLs y el historial.";
-    cleanBtn.addEventListener("click", function () { deps.cleanOldVersions(); });
+    cleanBtn.addEventListener("click", function () { cleanOldVersions(); });
     head.appendChild(cleanBtn);
     panel.appendChild(head);
 
@@ -263,7 +364,7 @@
       // Render HQ (secuencia): solo si hay ≥1 clip MEJORABLE (opaco hecho en
       // borrador). Alpha y opacos ya en alta no cuentan (Render HQ sería no-op).
       var upgradable = g.jobs.filter(function (j) {
-        return j.status === "done" && j.payload && j.payload.draft && j.payload.background;
+        return j.status === "done" && HPQueue.isUpgradable(j);
       }).length;
       if (upgradable > 0) {
         var hqSeq = g.seqName;
@@ -303,7 +404,7 @@
           wc.appendChild(rb);
           wc.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
           line.appendChild(wc);
-        } else if (j.status === "modeling" || j.status === "ready" || j.status === "running") {
+        } else if (HPQueue.isActive(j.status)) {
           // Job activo: se puede cancelar (lo en vuelo termina en 2º plano y se descarta).
           var ac = document.createElement("span"); ac.className = "qj-ctrls";
           ac.appendChild(iconBtn("✕ cancelar", "Cancelar este marcador (para rehacerlo). Lo que esté en vuelo se descarta.",
@@ -326,7 +427,7 @@
           // Render HQ SOLO tiene sentido en clips OPACOS (con fondo/mp4): ahí el
           // borrador usa JPEG 80 y HQ sube a 95. En clips con ALPHA el borrador ya
           // sale en PNG lossless → ProRes 4444 (máxima calidad), así que NO se ofrece.
-          if (j.kind !== "renderVersionHQ" && j.payload && j.payload.draft && j.payload.background) {
+          if (j.kind !== "renderVersionHQ" && HPQueue.isUpgradable(j)) {
             var hqb = iconBtn("Render HQ", "Re-renderizar este marcador opaco en alta calidad (el borrador usó compresión mayor)",
               (function (job) { return function () { renderJobHQ(job); }; })(j));
             hqb.className = "qbtn qbtn-hq"; dc.appendChild(hqb);
@@ -349,57 +450,7 @@
         row.appendChild(msg);
         // Caja de feedback inline (solo en jobs terminados y si el usuario la abrió).
         if (j.status === "done" && feedbackOpen[j.id]) {
-          var fb = document.createElement("div"); fb.className = "qj-feedback-wrap";
-          var inRow = document.createElement("div"); inRow.className = "qj-feedback";
-          var ta = document.createElement("textarea"); ta.className = "qj-fb-input"; ta.rows = 2;
-          ta.placeholder = "Qué ajustar… (se regenera manteniendo el puesto en la cola)";
-          ta.value = feedbackDraft[j.id] || "";
-          ta.addEventListener("input", (function (id) { return function (e) { feedbackDraft[id] = e.target.value; }; })(j.id));
-          ta.addEventListener("click", function (e) { e.stopPropagation(); });
-          inRow.appendChild(ta);
-          var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
-          go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
-          go.addEventListener("click", (function (id, mk) {
-            return function (e) {
-              e.stopPropagation();
-              var t = feedbackDraft[id] || "";
-              // Índices de las imágenes que el usuario dejó activas (📤) para reenviar.
-              var sendIdx = [];
-              if (feedbackImgSel[id]) {
-                var cnt = ((HPStore.getMarkerData(mk) || {}).stills || []).length;
-                for (var ii = 0; ii < cnt; ii++) if (fbSend(id, ii)) sendIdx.push(ii);
-              }
-              feedbackOpen[id] = false; feedbackDraft[id] = ""; delete feedbackImgSel[id];
-              HPQueue.regenerate(id, t, sendIdx);
-            };
-          })(j.id, j.markerKey));
-          inRow.appendChild(go);
-          fb.appendChild(inRow);
-          // Imágenes/elementos para el feedback — mismo control que la tarjeta
-          // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
-          // marcador y la regeneración los toma. Solo si el job es de la secuencia
-          // actual (HPStore opera sobre ese contexto).
-          var ctx = deps.getContext();
-          if (j.seqName === ctx.sequenceName && j.projectPath === ctx.projectPath) {
-            // Selección de reenvío por imagen. Se inicializa una vez por apertura: las
-            // imágenes YA adjuntas quedan apagadas (no se reenvían → ahorro de tokens);
-            // las NUEVAS que agregues acá entran activas. Cada miniatura tiene su 📤.
-            if (feedbackImgSel[j.id] === undefined) {
-              feedbackImgSel[j.id] = { base: ((HPStore.getMarkerData(j.markerKey) || {}).stills || []).length, sel: {} };
-            }
-            var hint = document.createElement("div"); hint.className = "qj-fb-hint";
-            hint.textContent = "Estás refinando lo ya generado: las imágenes adjuntas NO se reenvían (📤 para reactivar la que necesites). Las nuevas que agregues se envían solas. Las ✓ usar se incrustan igual.";
-            fb.appendChild(hint);
-            var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
-            mnt.addEventListener("click", function (e) { e.stopPropagation(); });
-            mnt.appendChild(deps.createStillsControl(j.markerKey, j.id));
-            fb.appendChild(mnt);
-          } else {
-            var note = document.createElement("div"); note.className = "qj-msg";
-            note.textContent = "Para adjuntar imágenes a este marcador, abrí su secuencia en la pestaña Marcadores.";
-            fb.appendChild(note);
-          }
-          row.appendChild(fb);
+          row.appendChild(buildFeedbackBox(j));
         }
         if (j.status === "running" || j.status === "modeling") {
           var bar = document.createElement("div"); bar.className = "hp-bar";
@@ -417,10 +468,6 @@
   global.HPQueueView = {
     /** Cablea las dependencias del panel. Llamar UNA vez antes de renderizar. */
     init: function (d) { deps = d; },
-    render: render,
-    // Selección de reenvío de imágenes en feedback (la usa el control de
-    // stills de las tarjetas cuando se monta dentro de la caja de feedback).
-    fbSend: fbSend,
-    fbToggle: fbToggle
+    render: render
   };
 })(typeof window !== "undefined" ? window : this);

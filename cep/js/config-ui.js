@@ -60,10 +60,6 @@
     "ollama": "opcional — por defecto http://localhost:11434"
   };
 
-  function defaultModelFor(p) {
-    return (p === "claude-cli" || p === "claude-api") ? "claude-sonnet-5" : "";
-  }
-
   function showRow(id, show) {
     var el = document.getElementById(id);
     if (el) el.setAttribute("data-hidden", show ? "false" : "true");
@@ -221,7 +217,8 @@
     if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
     else { cfgApiKey.removeAttribute("data-has"); cfgApiKey.setAttribute("placeholder", "Pegá tu API key"); }
     if (cfg.hasSession && loginStatus) { loginStatus.textContent = "✓ Sesión de Claude activa"; loginStatus.className = "muted login-ok"; }
-    populateModels(cfgProviderSel.value, cfg.model || defaultModelFor(cfgProviderSel.value));
+    // cfg.model viene del motor, que ya aplica el default por proveedor.
+    populateModels(cfgProviderSel.value, cfg.model);
     applyProviderUI();
     updateSummary();
     if (cfgProviderSel.value === "ollama") refreshOllamaModels(cfg.model);

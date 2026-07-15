@@ -571,7 +571,7 @@ async function loginClaude() {
   const r = await run('claude', ['setup-token'], { timeoutMs: 300_000, shell: IS_WIN });
   const m = (r.out + '\n' + r.err).match(/sk-ant-oat[0-9]+-[A-Za-z0-9_-]+/);
   if (!m) {
-    if (r.code === -1 && r.err === 'timeout') throw new Error('login: timeout (5 min)');
+    if (r.timedOut) throw new Error('login: timeout (5 min)');
     if (r.code === -1) throw new Error('no se pudo ejecutar claude: ' + r.err);
     throw new Error('login: no se encontró el token en la salida');
   }

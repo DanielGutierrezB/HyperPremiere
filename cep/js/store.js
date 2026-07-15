@@ -15,6 +15,9 @@
 
   // Clave activa de localStorage; null hasta que se llame a setContext().
   var activeKey = null;
+  // Contexto activo CRUDO (el hash de activeKey no es reversible): es la
+  // fuente de verdad de "proyecto + secuencia" para todos los módulos.
+  var activeContext = { projectPath: '', sequenceName: '' };
 
   /**
    * Hash simple (djb2) de una cadena. Suficiente para generar un namespace
@@ -117,8 +120,26 @@
      * escrituras posteriores operan sobre este namespace.
      */
     setContext: function (projectPath, sequenceName) {
-      var ns = simpleHash(String(projectPath) + '::' + String(sequenceName));
+      activeContext = { projectPath: String(projectPath || ''), sequenceName: String(sequenceName || '') };
+      var ns = simpleHash(activeContext.projectPath + '::' + activeContext.sequenceName);
       activeKey = STORAGE_PREFIX + ns;
+    },
+
+    /** Contexto activo: { projectPath, sequenceName }. */
+    getContext: function () {
+      return { projectPath: activeContext.projectPath, sequenceName: activeContext.sequenceName };
+    },
+
+    /**
+     * Corre `fn` con el contexto (projectPath, sequenceName) y SIEMPRE
+     * restaura el contexto anterior al salir. Para operar sobre el namespace
+     * de otro proyecto/secuencia (ej. un job de la cola de otra secuencia).
+     */
+    withContext: function (projectPath, sequenceName, fn) {
+      var prev = this.getContext();
+      this.setContext(projectPath, sequenceName);
+      try { return fn(); }
+      finally { this.setContext(prev.projectPath, prev.sequenceName); }
     },
 
     /** Objetivo general de la edicion. */

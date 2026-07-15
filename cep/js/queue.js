@@ -11,13 +11,10 @@
  *                    ↘ waiting (sin tokens; se reactiva a mano)
  *                    ↘ error   (reintentable desde el punto de fallo)
  *
- * Lo que la cola necesita del resto del panel entra por HPQueue.init(deps):
- *   getContext()  → { projectPath, sequenceName } actuales del panel
- *   isLocalProvider() → true si el proveedor corre en esta máquina (no solapar)
- *   modelName()   → nombre del modelo activo (solo para el log)
- *   onUsage(u)    → acumular tokens consumidos (contador de sesión)
- *   placeClip(movPath, seqName, startSec, durationSec, colorLabel, cb)
- *   recolorClip(seqName, startSec, colorLabel, cb)
+ * Colabora con los otros módulos por sus globals (mismo patrón que todo el
+ * panel): HPStore (contexto + datos del marcador + uso de sesión), HPEngine
+ * (motor Node), HPHost (colocar/recolorear clips en Premiere), HPConfigUI
+ * (proveedor activo) y HPTranscript. La UI se entera por HPQueue.on(cb).
  *
  * Vanilla JS, sin ES modules: se expone como window.HPQueue.
  */
@@ -32,8 +29,6 @@
   // café (marrón) = borrador; magenta = procesado en alta calidad.
   var COLOR_BROWN = 14;
   var COLOR_MAGENTA = 11;
-
-  var deps = null; // lo llena init(); la cola no se usa antes de eso
 
   // ── Timing auto-calibrado (estimación de la cola) ────────────────────
   // Promedio de segundos por job de modelo, y segundos de render por segundo
@@ -66,11 +61,26 @@
   var subs = [];
   function emit() { for (var i = 0; i < subs.length; i++) { try { subs[i](jobs); } catch (e) {} } persist(); }
 
+  // ── Vocabulario de estados (un solo lugar) ─────────────────────────
+  // "activo" = tomado por el pipeline (modelando, esperando render o rendereando).
+  function isActive(status) {
+    return status === "modeling" || status === "ready" || status === "running";
+  }
+  // "pendiente" = va a procesarse (en cola o activo).
+  function isPending(status) {
+    return status === "queued" || isActive(status);
+  }
+  // "mejorable con Render HQ" = clip OPACO (con fondo/mp4) hecho en borrador.
+  // Alpha siempre sale en ProRes 4444 (máxima calidad) → HQ sería un no-op.
+  function isUpgradable(job) {
+    return !!(job.payload && job.payload.draft && job.payload.background);
+  }
+
   // ── Persistencia por proyecto (queue.json) ────────────────────────
   // Estados en curso (modeling/ready/running) se guardan como "queued": si
   // cerraste a mitad, al reabrir quedan pendientes (no colgados).
   function normStatus(s) {
-    return (s === "modeling" || s === "ready" || s === "running") ? "queued" : s;
+    return isActive(s) ? "queued" : s;
   }
   // Copia liviana del job para el archivo: sin lo pesado ni regenerable
   // (stills base64, transcript, prepared). Eso se rehidrata desde HPStore
@@ -95,7 +105,7 @@
     if (persistTimer) return; // debounce: 1 escritura por ventana; captura el estado al disparar
     persistTimer = setTimeout(function () {
       persistTimer = null;
-      var projectPath = deps.getContext().projectPath;
+      var projectPath = HPStore.getContext().projectPath;
       if (!projectPath) return; // proyecto sin guardar: no persistimos a carpeta
       var lean = [];
       for (var i = 0; i < jobs.length; i++) if (jobs[i].projectPath === projectPath) lean.push(serializeJob(jobs[i]));
@@ -106,10 +116,9 @@
   function markGenerated(job) {
     // Persistir el flag en el namespace del job (aunque estés en otra secuencia).
     try {
-      var ctx = deps.getContext();
-      HPStore.setContext(job.projectPath, job.seqName);
-      HPStore.setMarkerGenerated(job.markerKey, true);
-      HPStore.setContext(ctx.projectPath, ctx.sequenceName);
+      HPStore.withContext(job.projectPath, job.seqName, function () {
+        HPStore.setMarkerGenerated(job.markerKey, true);
+      });
     } catch (e) {}
   }
 
@@ -146,11 +155,20 @@
     hpLog("Job " + (stage === "model" ? "MODELO" : "RENDER") + " FALLÓ [" + job.label + "] · rate=" + !!f.rate + " · " + f.msg, "ERROR");
   }
 
+  // Acumula el uso de tokens en el contador de sesión y avisa a la UI.
+  function countUsage(job, usage) {
+    if (!usage || job._usageCounted) return;
+    job.usage = usage;
+    HPStore.addSessionUsage(usage);
+    job._usageCounted = true;
+    emit();
+  }
+
   function finishPlace(job, res) {
     // Job cancelado mientras renderizaba: no colocamos nada, liberamos el carril.
     if (job._cancelled) { renderBusy = false; hpLog("Job CANCELADO [" + job.label + "] tras render — descartado."); emit(); pump(); return; }
     job.version = res.version;
-    if (res.usage && !job._usageCounted) { job.usage = res.usage; deps.onUsage(res.usage); job._usageCounted = true; }
+    countUsage(job, res.usage);
     function done(msgTxt) {
       var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
       var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
@@ -168,7 +186,7 @@
     // NO colocamos clip nuevo, solo recoloreamos el clip existente a MAGENTA.
     if (res.replaced || job.kind === "renderVersionHQ") {
       job.pct = 98; job.msg = "Marcando como HQ (magenta)…"; emit();
-      deps.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, function (r) {
+      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, function (r) {
         done(r === "ok" ? "✓ HQ reemplazado (magenta)" : "HQ hecho; recoloreá a mano: " + r);
       });
       return;
@@ -176,10 +194,9 @@
     // Color: café = "borrador mejorable con Render HQ" — SOLO aplica a clips
     // opacos (mp4) en borrador. Los clips con alpha ya salen en máxima calidad
     // (PNG→ProRes 4444) aunque estés en borrador → magenta.
-    var isDraftOpaque = !!(job.payload && job.payload.draft && job.payload.background);
-    var color = isDraftOpaque ? COLOR_BROWN : COLOR_MAGENTA;
+    var color = isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA;
     job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
-    deps.placeClip(res.movPath, job.seqName, job.markerStart, job.markerDuration, color, function (place) {
+    HPHost.placeClip(res.movPath, job.seqName, job.markerStart, job.markerDuration, color, function (place) {
       done(place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place);
     });
   }
@@ -189,45 +206,44 @@
   // (que se guardan livianos); en jobs frescos es idempotente.
   function rehydratePayload(job) {
     if (!job.payload) return;
-    var ctx = deps.getContext();
     try {
-      HPStore.setContext(job.projectPath, job.seqName);
-      var segments = HPStore.getTranscript() || [];
-      var md = HPStore.getMarkerData(job.markerKey) || {};
-      var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}; // prompt general
-      job.payload.transcript = segments;
-      job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
-      // Stills (visión) + assets (a incrustar) = marcador + generales.
-      job.payload.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
-      // Refinamiento (adjust): solo reenviamos como visión las imágenes que el editor
-      // dejó activas (stillsSend = índices en los stills del marcador). Ahorro de
-      // tokens. Los assets "usar" se incrustan en el render igual, se reenvíen o no.
-      if (job.payload.mode === "adjust" && Array.isArray(job.payload.stillsSend)) {
-        var _all = md.stills || [];
-        job.payload.stills = job.payload.stillsSend
-          .map(function (ix) { return _all[ix]; })
-          .filter(function (s) { return !!s; });
-      } else {
-        job.payload.stills = (md.stills || []).concat(gen.stills || []);
-      }
-      job.payload.resources = (md.resources || []).concat(gen.resources || []);
-      if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
-      if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
-      if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
+      HPStore.withContext(job.projectPath, job.seqName, function () {
+        var segments = HPStore.getTranscript() || [];
+        var md = HPStore.getMarkerData(job.markerKey) || {};
+        var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}; // prompt general
+        job.payload.transcript = segments;
+        job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
+        // Stills (visión) + assets (a incrustar) = marcador + generales.
+        job.payload.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
+        // Refinamiento (adjust): solo reenviamos como visión las imágenes que el editor
+        // dejó activas (stillsSend = índices en los stills del marcador). Ahorro de
+        // tokens. Los assets "usar" se incrustan en el render igual, se reenvíen o no.
+        if (job.payload.mode === "adjust" && Array.isArray(job.payload.stillsSend)) {
+          var _all = md.stills || [];
+          job.payload.stills = job.payload.stillsSend
+            .map(function (ix) { return _all[ix]; })
+            .filter(function (s) { return !!s; });
+        } else {
+          job.payload.stills = (md.stills || []).concat(gen.stills || []);
+        }
+        job.payload.resources = (md.resources || []).concat(gen.resources || []);
+        if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
+        if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
+        if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
+      });
     } catch (e) { hpLog("rehydratePayload falló [" + job.label + "]: " + ((e && e.message) || e), "WARN"); }
-    finally { try { HPStore.setContext(ctx.projectPath, ctx.sequenceName); } catch (e2) {} }
   }
 
   function startModel(job) {
     modelBusy = true; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
     rehydratePayload(job); emit();
     var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
-    hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (deps.modelName() || "?"));
+    hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?"));
     HPEngine.callProg(method, job.payload, onP(job)).then(function (prep) {
       if (job._cancelled) { modelBusy = false; hpLog("Job CANCELADO [" + job.label + "] tras modelo — descartado."); emit(); pump(); return; }
       if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
       job.prepared = prep;
-      if (prep.usage) { job.usage = prep.usage; deps.onUsage(prep.usage); job._usageCounted = true; }
+      countUsage(job, prep.usage);
       job.status = "ready"; job.msg = "En espera de render…";
       // Calibración: segundos que tardó el modelo (para estimar la cola).
       var _ms = (Date.now() - (job.startedAt || Date.now())) / 1000;
@@ -266,7 +282,7 @@
   function pump() {
     if (paused) return; // staging: no arrancar nuevos jobs
     // En local (Ollama) NO se solapa: modelo y render usan la misma máquina.
-    var overlap = !deps.isLocalProvider();
+    var overlap = !HPConfigUI.isLocalProvider();
     // Carril RENDER (uno a la vez; en local, además, no mientras el modelo corre).
     if (!renderBusy && (overlap || !modelBusy)) {
       for (var i = 0; i < jobs.length; i++) {
@@ -318,8 +334,10 @@
   }
 
   global.HPQueue = {
-    /** Cablea las dependencias del panel. Llamar UNA vez antes de usar la cola. */
-    init: function (d) { deps = d; },
+    // Vocabulario de estados compartido con las vistas (un solo dueño).
+    isActive: isActive,
+    isPending: isPending,
+    isUpgradable: isUpgradable,
 
     // Estimación de la cola (auto-calibrada con el uso real).
     timing: {
@@ -368,7 +386,7 @@
     pause: function () { paused = true; emit(); },
     isPaused: function () { return paused; },
     hasActive: function () {
-      for (var i = 0; i < jobs.length; i++) { var s = jobs[i].status; if (s === "modeling" || s === "ready" || s === "running") return true; }
+      for (var i = 0; i < jobs.length; i++) if (isActive(jobs[i].status)) return true;
       return false;
     },
     hasQueued: function () { for (var i = 0; i < jobs.length; i++) if (jobs[i].status === "queued") return true; return false; },
@@ -496,7 +514,7 @@
       // Conserva los activos, los en cola y los "waiting" (esos el usuario los
       // quiere reactivar cuando tenga tokens); limpia solo done/error.
       jobs = jobs.filter(function (j) {
-        return j.status === "queued" || j.status === "modeling" || j.status === "ready" || j.status === "running" || j.status === "waiting";
+        return isPending(j.status) || j.status === "waiting";
       });
       emit();
     },
@@ -508,7 +526,7 @@
       for (var i = 0; i < jobs.length; i++) {
         var j = jobs[i];
         if (j.id !== id) { next.push(j); continue; }
-        if (j.status === "modeling" || j.status === "ready" || j.status === "running") {
+        if (isActive(j.status)) {
           j._cancelled = true; // su promesa en vuelo se descartará al resolver
           hpLog("Cancelando job activo [" + j.label + "] (se descarta al terminar la etapa en vuelo).");
         }
@@ -521,8 +539,7 @@
     // está en vuelo (IA/render) no se puede matar, pero su resultado se descarta.
     clearAll: function () {
       for (var i = 0; i < jobs.length; i++) {
-        var s = jobs[i].status;
-        if (s === "modeling" || s === "ready" || s === "running") jobs[i]._cancelled = true;
+        if (isActive(jobs[i].status)) jobs[i]._cancelled = true;
       }
       hpLog("Vaciar cola: " + jobs.length + " job(s) eliminados (activos marcados como cancelados).");
       jobs = [];

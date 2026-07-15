@@ -1,8 +1,8 @@
 'use strict';
 
 // run(cmd, args, opts) — corre un proceso externo y SIEMPRE resuelve
-// { code, out, err } (nunca rechaza). code -1 = no se pudo lanzar el proceso
-// o venció el timeout (en ese caso err === 'timeout').
+// { code, out, err, timedOut } (nunca rechaza). code -1 = no se pudo lanzar
+// el proceso o venció el timeout (timedOut: true).
 //
 // Es la implementación ÚNICA del patrón "spawn + acumular stdout/stderr +
 // timer + kill" que antes estaba repetido cuatro veces (gitRun y runCmd en
@@ -49,7 +49,7 @@ function run(cmd, args, opts) {
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
         try { child.kill('SIGKILL'); } catch (e) {}
-        finish({ code: -1, out, err: 'timeout' });
+        finish({ code: -1, out, err: 'timeout', timedOut: true });
       }, timeoutMs);
     }
 
