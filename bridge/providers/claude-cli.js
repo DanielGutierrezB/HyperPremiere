@@ -19,11 +19,11 @@
  * imagenes directamente en headless, migrar a ese mecanismo.
  */
 
-const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
+const { run } = require('../exec');
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas y se demora)
 
@@ -113,45 +113,19 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     var oauth = cfg.oauthToken || cfg.apiKey || process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (oauth) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauth;
 
-    const stdout = await new Promise((resolve, reject) => {
-      // shell: false (default) + args por array => sin interpretacion de shell.
-      const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv, shell: process.platform === 'win32' });
-
-      let out = '';
-      let err = '';
-      let settled = false;
-
-      const timer = setTimeout(() => {
-        finish(new Error(`claude-cli: timeout tras ${timeoutMs}ms`));
-        child.kill('SIGKILL');
-      }, timeoutMs);
-
-      function finish(error, value) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (error) reject(error);
-        else resolve(value);
-      }
-
-      child.stdout.on('data', (chunk) => { out += chunk; });
-      child.stderr.on('data', (chunk) => { err += chunk; });
-
-      // 'error' cubre binario inexistente / sin permisos.
-      child.on('error', (e) => {
-        finish(new Error(`claude-cli: no se pudo ejecutar "${bin}": ${e.message}`));
-      });
-
-      child.on('close', (code) => {
-        if (code !== 0) {
-          finish(new Error(
-            `claude-cli: salio con codigo ${code}. stderr: ${err.trim() || '(vacio)'}`
-          ));
-        } else {
-          finish(null, out);
-        }
-      });
-    });
+    // shell solo en Windows (shim .cmd); en mac/Linux args por array sin shell.
+    const r = await run(bin, args, { timeoutMs, env: childEnv, shell: process.platform === 'win32' });
+    if (r.timedOut) {
+      throw new Error(`claude-cli: timeout tras ${timeoutMs}ms`);
+    }
+    if (r.code === -1) {
+      // Cubre binario inexistente / sin permisos.
+      throw new Error(`claude-cli: no se pudo ejecutar "${bin}": ${r.err}`);
+    }
+    if (r.code !== 0) {
+      throw new Error(`claude-cli: salio con codigo ${r.code}. stderr: ${r.err.trim() || '(vacio)'}`);
+    }
+    const stdout = r.out;
 
     // Con --output-format json, stdout es un objeto JSON. Fallback: si un CLI
     // viejo devolvió texto crudo, lo tratamos como HTML sin usage.
