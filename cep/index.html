@@ -20,9 +20,10 @@
     <div class="header-tools">
       <span id="hdr-status" class="hdr-chip is-idle" title="Estado de la secuencia">sin secuencia</span>
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
+      <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.2.5</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.2.6</span>
       </button>
     </div>
   </header>
@@ -122,6 +123,7 @@
         <textarea id="objective" rows="3" placeholder="Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."></textarea>
         <div class="transcript-row">
           <button id="btn-transcribe-seq" type="button" class="btn-primary" title="Transcribe el video de esta secuencia con tu Whisper local (large-v3, detecta el idioma solo — sirve para clases que mezclan español e inglés) y lo alinea automáticamente al timeline. Sin nube, sin tokens. Requiere `whisper` o `mlx_whisper` instalado.">🎙 Transcribir esta secuencia</button>
+          <span id="whisper-badge" class="whisper-badge" data-hidden="true"></span>
           <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar transcript (JSON)</button>
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
@@ -151,8 +153,15 @@
       <div id="markers" class="markers"></div>
     </div>
 
-    <details class="config-section">
-      <summary>Configuración del modelo <span id="cfg-summary" class="cfg-summary"></span></summary>
+  </main>
+
+  <!-- Configuración del modelo: overlay que abre el botón ⚙ del header. -->
+  <div id="config-overlay" class="help-overlay" data-hidden="true">
+    <div class="help-card">
+      <div class="help-head">
+        <span>Configuración del modelo <span id="cfg-summary" class="cfg-summary"></span></span>
+        <button id="btn-config-close" class="icon-btn" type="button" title="Cerrar la configuración" aria-label="Cerrar">✕</button>
+      </div>
       <div class="config-body">
         <label class="field-label">Proveedor</label>
         <div id="cfg-provider" class="hp-select"></div>
@@ -187,8 +196,8 @@
           <span id="config-status" class="muted"></span>
         </div>
       </div>
-    </details>
-  </main>
+    </div>
+  </div>
 
   <!-- Vista de Cola (pestaña): ocupa todo el panel para ver colas largas. -->
   <div id="view-queue" class="queue-view" data-hidden="true">
