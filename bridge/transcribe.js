@@ -22,13 +22,31 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { run } = require('./exec');
+const { run, killTree } = require('./exec');
 const { ensureOutputDir } = require('./store/project-fs');
 
 const IS_WIN = process.platform === 'win32';
 
 // Modelo por defecto; se puede cambiar por máquina sin tocar código.
 const WHISPER_MODEL = process.env.HYPERPREMIERE_WHISPER_MODEL || 'large-v3';
+// Watchdog de INACTIVIDAD de whisper: si pasa este lapso sin NINGUNA salida,
+// está colgado y se mata (la carga del modelo y la transcripción imprimen
+// algo con regularidad; 15 min mudo no es normal).
+const WHISPER_IDLE_MS = Number(process.env.HYPERPREMIERE_WHISPER_IDLE_MS) || 900_000;
+
+// Proceso en curso (ffmpeg o whisper) para poder CANCELAR desde el panel.
+let currentChild = null;
+let cancelled = false;
+
+/** Cancela la transcripción en curso (mata el proceso activo y sus hijos). */
+function cancelTranscription() {
+  cancelled = true;
+  if (currentChild) {
+    killTree(currentChild);
+    return { ok: true, cancelled: true };
+  }
+  return { ok: true, cancelled: false };
+}
 
 // Herramientas soportadas, en orden de preferencia. `whisper` primero: es el
 // CLI que ya tiene el modelo descargado si "tenés whisper large-v3".
@@ -135,25 +153,54 @@ async function transcribeMedia(body, onProgress) {
   }
 
   const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-whisper-'));
+  cancelled = false;
+  let heartbeat = null;
   try {
     // 1) Audio mono 16 kHz (más rápido y estable que darle el video entero).
-    report({ pct: 5, msg: 'Extrayendo el audio de la secuencia…' });
+    report({ pct: 5, msg: 'Extrayendo el audio de la secuencia (ffmpeg)…' });
     let input = path.join(tmpBase, 'audio.wav');
-    const ff = await run('ffmpeg', ['-y', '-i', mediaPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', input], { timeoutMs: 900_000 });
+    const ff = await run('ffmpeg', ['-y', '-i', mediaPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', input], {
+      timeoutMs: 900_000, idleTimeoutMs: 120_000,
+      onSpawn: (child) => { currentChild = child; },
+    });
+    currentChild = null;
+    if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
     if (ff.code !== 0) {
       // Sin ffmpeg (o falló): Whisper puede leer el medio directo con su propio ffmpeg.
       input = mediaPath;
+      report({ pct: 8, msg: 'ffmpeg no pudo extraer el audio — le paso el medio directo a whisper…' });
     }
 
     const durationSec = await mediaDurationSec(input);
 
-    // 2) Whisper local, idioma automático. Sin tope de tiempo: large-v3 en CPU
-    //    puede tardar bastante con una clase larga; el progreso se ve en vivo.
-    report({ pct: 10, msg: 'Transcribiendo con ' + tool.bin + ' (' + WHISPER_MODEL + ', idioma automático)…' });
+    // 2) Whisper local, idioma automático. Sin tope TOTAL (una clase larga en
+    //    CPU tarda lo que tarda) pero con watchdog de INACTIVIDAD: si queda
+    //    mudo demasiado tiempo, está colgado y se mata con diagnóstico.
+    report({ pct: 10, msg: 'Arrancando ' + tool.bin + ' (' + WHISPER_MODEL + ', idioma automático)… la primera vez puede bajar el modelo (~3 GB).' });
+    let lastOutputAt = Date.now();
+    let sawOutput = false;
+    // Latido: si whisper está callado (cargando/bajando el modelo), avisar con
+    // regularidad que sigue vivo — antes esto se veía como "se quedó ahí".
+    // El intervalo se deriva del watchdog para que siempre alcance a latir.
+    const heartbeatMs = Math.max(300, Math.min(10_000, Math.floor(WHISPER_IDLE_MS / 4)));
+    heartbeat = setInterval(() => {
+      const idleMs = Date.now() - lastOutputAt;
+      if (idleMs >= heartbeatMs) {
+        report({
+          msg: tool.bin + ' sin salida hace ' + Math.round(idleMs / 1000) + 's — ' +
+            (sawOutput ? 'sigue procesando…' : 'cargando o bajando el modelo ' + WHISPER_MODEL + '…') +
+            ' (se corta solo tras ' + Math.round(WHISPER_IDLE_MS / 60000) + ' min mudo)',
+        });
+      }
+    }, heartbeatMs);
     const r = await run(tool.bin, whisperArgs(tool, input, tmpBase), {
       timeoutMs: 0,
+      idleTimeoutMs: WHISPER_IDLE_MS,
       shell: IS_WIN,
+      onSpawn: (child) => { currentChild = child; },
       onData: (s) => {
+        lastOutputAt = Date.now();
+        sawOutput = true;
         const ts = lastTimestampSec(s);
         if (ts !== null && durationSec > 0) {
           const pct = 10 + Math.min(88, Math.round((ts / durationSec) * 88));
@@ -161,7 +208,19 @@ async function transcribeMedia(body, onProgress) {
         }
       },
     });
+    currentChild = null;
+    clearInterval(heartbeat); heartbeat = null;
     const cmdLine = tool.bin + ' ' + whisperArgs(tool, input, tmpBase).join(' ');
+    if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
+    if (r.idle) {
+      return {
+        ok: false,
+        error: tool.bin + ' quedó COLGADO (' + Math.round(WHISPER_IDLE_MS / 60000) + ' min sin ninguna salida) y lo maté.' +
+          '\nComando: ' + cmdLine +
+          '\nSalida hasta ahí: ' + ((r.out + '\n' + r.err).trim().slice(-500) || '(nada — ni siquiera arrancó a imprimir)') +
+          '\nPistas: corré ese comando a mano en una terminal para ver qué pasa; si es la primera vez, la descarga del modelo necesita conexión.',
+      };
+    }
     if (r.code !== 0) {
       return { ok: false, error: tool.bin + ' terminó con código ' + r.code + '.\nComando: ' + cmdLine + '\nSalida: ' + (r.err || r.out).slice(-500) };
     }
@@ -209,8 +268,10 @@ async function transcribeMedia(body, onProgress) {
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   } finally {
+    currentChild = null;
+    if (heartbeat) clearInterval(heartbeat);
     try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (e) {}
   }
 }
 
-module.exports = { transcribeMedia, detectWhisper };
+module.exports = { transcribeMedia, detectWhisper, cancelTranscription };
