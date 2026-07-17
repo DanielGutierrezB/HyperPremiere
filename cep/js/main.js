@@ -261,17 +261,31 @@
   var btnTranscribe = document.getElementById("btn-transcribe-seq");
   var transcribeProgress = document.getElementById("transcribe-progress");
   var transcribeFill = document.getElementById("transcribe-fill");
+  var transcribing = false; // mientras corre, el botón se vuelve "Cancelar"
   function showTranscribeBar(show) {
     if (transcribeProgress) transcribeProgress.setAttribute("data-hidden", show ? "false" : "true");
     if (transcribeFill && show) transcribeFill.style.width = "0%";
   }
   if (btnTranscribe) {
     btnTranscribe.addEventListener("click", function () {
-      btnTranscribe.disabled = true;
-      var prevLabel = btnTranscribe.textContent;
-      btnTranscribe.textContent = "🎙 Transcribiendo…";
+      // Segundo clic durante la corrida = CANCELAR (mata ffmpeg/whisper).
+      if (transcribing) {
+        hpLog("Usuario canceló la transcripción.");
+        btnTranscribe.textContent = "✕ Cancelando…";
+        hpCall("cancelTranscription").catch(function () {});
+        return;
+      }
+      transcribing = true;
+      var prevLabel = "🎙 Transcribir esta secuencia";
+      btnTranscribe.textContent = "✕ Cancelar transcripción";
+      btnTranscribe.title = "Cancela la transcripción en curso (mata el proceso de whisper)";
       function status(msg) { if (transcriptStatus) transcriptStatus.textContent = msg; }
-      function done() { btnTranscribe.disabled = false; btnTranscribe.textContent = prevLabel; showTranscribeBar(false); }
+      function done() {
+        transcribing = false;
+        btnTranscribe.disabled = false;
+        btnTranscribe.textContent = prevLabel;
+        showTranscribeBar(false);
+      }
       showTranscribeBar(true);
       status("Buscando el clip principal de la secuencia…");
       hpLog("Transcripción local: pidiendo clip principal…");
@@ -283,15 +297,28 @@
         hpLog("Transcripción local: clip “" + info.clipName + "” → " + info.mediaPath + " (desfase " + info.offset + "s)");
         status("Transcribiendo “" + info.clipName + "”…");
 
+        // El progreso también va al ⬇ Log (throttleado): si algo se cuelga,
+        // el log muestra hasta dónde llegó — antes quedaba mudo tras el clip.
+        var lastProgLog = 0;
         HPEngine.callProg("transcribeMedia", {
           mediaPath: info.mediaPath, projectPath: currentProjectPath, sequenceName: currentSequenceName
         }, function (p) {
           if (!p) return;
-          if (p.msg) status(p.msg);
+          if (p.msg) {
+            status(p.msg);
+            var now = Date.now();
+            if (now - lastProgLog > 15000) { lastProgLog = now; hpLog("Transcripción: " + p.msg); }
+          }
           if (typeof p.pct === "number" && transcribeFill) {
             transcribeFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
           }
         }).then(function (r) {
+          if (r && r.cancelled) {
+            status("Transcripción cancelada.");
+            hpLog("Transcripción local cancelada por el usuario.");
+            done();
+            return;
+          }
           if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
           HPStore.setTranscript(r.segments);
           // Alinear automáticamente al timeline con el desfase del clip.

@@ -21,7 +21,7 @@ const { hpFetch } = require('./providers/http');
 // Spawn de procesos externos (git, claude, npm, unzip): nunca lanza.
 const { run } = require('./exec');
 // Transcripción local de la secuencia con Whisper (sin nube, sin tokens).
-const { transcribeMedia } = require('./transcribe');
+const { transcribeMedia, cancelTranscription } = require('./transcribe');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition } = require('./render/hyperframes');
@@ -1160,6 +1160,7 @@ module.exports = {
   listMarkerVersions,
   readMarkerHtml,
   transcribeMedia,
+  cancelTranscription,
   deriveObjective,
   getConfig,
   setConfig: saveConfig,
