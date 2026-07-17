@@ -165,6 +165,23 @@
     },
 
     /**
+     * Desfase transcript ↔ timeline en segundos (por secuencia):
+     * tiempoTranscript = tiempoSecuencia + desfase. Positivo si se recortó
+     * el inicio del video; negativo si se agregó una intro. Default 0.
+     */
+    getTranscriptOffset: function () {
+      var v = Number(readState().transcriptOffset);
+      return isFinite(v) ? v : 0;
+    },
+
+    setTranscriptOffset: function (seconds) {
+      var state = readState();
+      var v = Number(seconds);
+      state.transcriptOffset = isFinite(v) ? v : 0;
+      writeState(state);
+    },
+
+    /**
      * Datos de un marcador. Nunca devuelve null: si no hay nada guardado,
      * devuelve { instruction: "", stills: [] }.
      */

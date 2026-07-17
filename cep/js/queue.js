@@ -212,7 +212,8 @@
         var md = HPStore.getMarkerData(job.markerKey) || {};
         var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}; // prompt general
         job.payload.transcript = segments;
-        job.payload.markerTranscript = HPTranscript.sliceByRange(segments, job.markerStart, job.markerStart + job.markerDuration);
+        job.payload.markerTranscript = HPTranscript.sliceForMarker(
+          segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
         // Stills (visión) + assets (a incrustar) = marcador + generales.
         job.payload.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
         // Refinamiento (adjust): solo reenviamos como visión las imágenes que el editor

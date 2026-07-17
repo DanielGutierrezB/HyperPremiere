@@ -251,9 +251,40 @@
     return out;
   }
 
+  /**
+   * sliceForMarker(segments, startSec, endSec, offsetSec): fragmento del
+   * transcript para un marcador, corrigiendo el DESFASE entre la base de
+   * tiempo del transcript y la del timeline.
+   *
+   * El transcript suele venir del video ORIGINAL; si el editor recortó el
+   * inicio o corrió el clip en la secuencia, todo queda desplazado una
+   * constante: tiempoTranscript = tiempoSecuencia + offsetSec (positivo si
+   * se recortó el inicio; negativo si se agregó una intro).
+   *
+   * Se recorta en el rango DESPLAZADO y se devuelven los segmentos REBASADOS
+   * a tiempo de secuencia, así los consumidores (timecodes relativos al
+   * marcador en el prompt) siguen operando en una sola base de tiempo.
+   */
+  function sliceForMarker(segments, startSec, endSec, offsetSec) {
+    offsetSec = isFiniteNumber(offsetSec) ? offsetSec : 0;
+    var out = sliceByRange(segments, startSec + offsetSec, endSec + offsetSec);
+    if (!offsetSec) return out;
+    var rebased = [];
+    for (var i = 0; i < out.length; i++) {
+      rebased.push({
+        start: out[i].start - offsetSec,
+        end: out[i].end - offsetSec,
+        text: out[i].text,
+        speaker: out[i].speaker
+      });
+    }
+    return rebased;
+  }
+
   global.HPTranscript = {
     parse: parse,
     timecodeToSeconds: timecodeToSeconds,
-    sliceByRange: sliceByRange
+    sliceByRange: sliceByRange,
+    sliceForMarker: sliceForMarker
   };
 })(typeof window !== 'undefined' ? window : this);
