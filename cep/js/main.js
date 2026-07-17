@@ -341,6 +341,49 @@
       });
   }
 
+  // Importa el transcript parseado: CALIBRA sus unidades contra la duración
+  // real de la secuencia (un JSON con tiempos en frames/ms queda corrido de
+  // forma MULTIPLICATIVA y ningún desfase lo arregla — este era el bug de
+  // fondo), reinicia el desfase a 0 (un transcript nuevo no hereda el desfase
+  // del anterior) y muestra el veredicto transcript vs secuencia.
+  function adoptTranscript(segments) {
+    HPHost.getSequenceDuration(function (res) {
+      var seqDur = 0;
+      if (String(res || "").indexOf("ok|") === 0) seqDur = parseFloat(String(res).substring(3)) || 0;
+
+      var cal = HPTranscript.calibrateUnits(segments, seqDur);
+      HPStore.setTranscript(cal.segments);
+      // Transcript nuevo = base de tiempo nueva: el desfase anterior no aplica.
+      HPStore.setTranscriptOffset(0);
+      hydrateOffset();
+      updateTranscriptStatus();
+      refreshTranscriptSlices();
+
+      var tDur = transcriptDuration(cal.segments);
+      var verdict;
+      if (cal.label) {
+        verdict = "⚠ Los tiempos venían en " + cal.label + " — corregidos. " +
+          "Transcript " + formatTime(tDur) + " · secuencia " + formatTime(seqDur) + " ✓";
+      } else if (cal.match === false) {
+        verdict = "⚠ El transcript dura " + formatTime(tDur) + " pero la secuencia " + formatTime(seqDur) +
+          " — los tiempos NO coinciden con esta secuencia (¿es de otro corte?). Revisá el fragmento de un marcador.";
+      } else if (cal.match === true) {
+        verdict = segments.length + " segmentos · transcript " + formatTime(tDur) + " · secuencia " + formatTime(seqDur) + " ✓";
+      } else {
+        verdict = segments.length + " segmentos · " + formatTime(tDur) + " total (no pude leer la duración de la secuencia para validar)";
+      }
+      transcriptStatus.textContent = verdict;
+      hpLog("Transcript importado: " + segments.length + " segmentos · dur " + tDur + "s · seq " + seqDur + "s · calibración: " +
+        (cal.label || (cal.match === false ? "NO COINCIDE" : "ok")) + " · desfase reiniciado a 0");
+
+      // La IA deriva el objetivo de la clase desde el transcript.
+      // Solo si el objetivo está vacío (no pisar lo que el editor haya escrito).
+      if (!HPStore.getObjective() || !HPStore.getObjective().trim()) {
+        deriveObjectiveFromTranscript(cal.segments);
+      }
+    });
+  }
+
   function onTranscriptFileChosen() {
     var file = transcriptFileInput.files && transcriptFileInput.files[0];
     if (!file) return;
@@ -352,13 +395,7 @@
         transcriptStatus.textContent = "No se reconocieron segmentos en el archivo.";
         return;
       }
-      HPStore.setTranscript(res.segments);
-      updateTranscriptStatus();
-      // La IA deriva el objetivo de la clase desde el transcript.
-      // Solo si el objetivo está vacío (no pisar lo que el editor haya escrito).
-      if (!HPStore.getObjective() || !HPStore.getObjective().trim()) {
-        deriveObjectiveFromTranscript(res.segments);
-      }
+      adoptTranscript(res.segments);
     };
     reader.onerror = function () {
       transcriptStatus.textContent = "No se pudo leer el archivo.";

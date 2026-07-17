@@ -121,6 +121,37 @@ function hp_getProjectPath() {
     }
 }
 
+// Duración REAL de la secuencia activa en segundos (fin del último clip entre
+// TODAS las pistas de video y audio). Sirve como referencia para validar las
+// unidades de tiempo de un transcript importado. Devuelve "ok|<segundos>" o
+// "error: ...".
+function hp_getSequenceDuration() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return "error: no hay secuencia activa";
+        function maxEnd(tracks, current) {
+            try {
+                for (var t = 0; t < tracks.numTracks; t++) {
+                    var track = tracks[t];
+                    if (!track.clips) continue;
+                    for (var i = 0; i < track.clips.numItems; i++) {
+                        var e = track.clips[i].end.seconds;
+                        if (e > current) current = e;
+                    }
+                }
+            } catch (e2) {}
+            return current;
+        }
+        var dur = 0;
+        dur = maxEnd(seq.videoTracks, dur);
+        dur = maxEnd(seq.audioTracks, dur);
+        if (dur <= 0) return "error: la secuencia no tiene clips";
+        return "ok|" + dur;
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // Info del clip PRINCIPAL de la secuencia: el clip MÁS LARGO de TODA la
 // secuencia, mirando pistas de VIDEO y de AUDIO por igual — en muchos flujos
 // la narración de la clase es un WAV en una pista de audio que atraviesa todo
