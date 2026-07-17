@@ -18,12 +18,17 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
 
 1. Ponés **marcadores nativos con duración** en tu secuencia donde querés un recurso y
    pulsás **Cargar marcadores** → una **tarjeta** por marcador.
-2. Le das **contexto**: el **Objetivo de la clase** (o cargás el transcript JSON y lo
-   deriva solo) y un **Prompt general** con estilo/marca/tipografía/colores que aplican
-   a TODOS los marcadores (no lo repetís en cada uno). Si el transcript viene del video
-   **original** y editaste el timeline (recortaste el inicio, agregaste una intro), el
-   campo **Desfase (s)** corrige el corrimiento — **Detectar del timeline** lo estima
-   solo, los fragmentos se actualizan en vivo para verificar, y se guarda por secuencia.
+2. Le das **contexto**: el **Objetivo de la clase** y el transcript. Lo más directo es
+   **🎙 Transcribir esta secuencia**: usa tu **Whisper local** (large-v3, sin nube ni
+   tokens), detecta el idioma solo (sirve mezclando español e inglés), se alinea
+   automáticamente al timeline y deja un respaldo (`transcript-whisper.json`) en la
+   carpeta de la secuencia. Requiere `whisper` (pip install openai-whisper) o
+   `mlx_whisper` en el PATH; el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
+   También podés **cargar un transcript JSON**: si viene del video original y editaste
+   el timeline, corregí el corrimiento con **Desfase (s)** o **Detectar del timeline**
+   (los fragmentos se actualizan en vivo; se guarda por secuencia). Al final, el
+   **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODOS los
+   marcadores (no lo repetís en cada uno).
 3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa**
    (📸) y arrastrar **imágenes / PDFs / referencias** (drag & drop).
 4. La IA diseña una animación **HyperFrames**, se **renderiza** y se **coloca sobre el

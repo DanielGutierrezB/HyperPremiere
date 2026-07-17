@@ -211,23 +211,77 @@
       setOffset(offsetInput.value, "");
     }, DEBOUNCE_MS));
   }
+  // Info del clip principal de la secuencia como objeto, o null (con log).
+  function parsePrimaryClipInfo(res) {
+    var info = null;
+    try { info = JSON.parse(String(res || "")); } catch (e) {}
+    if (!info || !info.ok) {
+      hpLog("getPrimaryClipInfo falló: " + ((info && info.error) || res || "sin respuesta"), "WARN");
+      return null;
+    }
+    return info;
+  }
+
   if (btnDetectOffset) {
     btnDetectOffset.addEventListener("click", function () {
       if (offsetStatus) offsetStatus.textContent = "Detectando…";
-      HPHost.getTranscriptOffsetGuess(function (res) {
-        res = String(res || "");
-        if (res.indexOf("ok|") !== 0) {
-          if (offsetStatus) offsetStatus.textContent = "No pude detectar: " + (res || "sin respuesta");
-          hpLog("Detección de desfase falló: " + res, "WARN");
+      HPHost.getPrimaryClipInfo(function (res) {
+        var info = parsePrimaryClipInfo(res);
+        if (!info) {
+          if (offsetStatus) offsetStatus.textContent = "No pude detectar: revisá que la secuencia tenga clips";
           return;
         }
-        // "ok|<segundos>|<nombre del clip>" (el nombre puede traer '|': tomamos el resto).
-        var rest = res.substring(3);
-        var sep = rest.indexOf("|");
-        var secs = Math.round(Number(sep === -1 ? rest : rest.substring(0, sep)) * 10) / 10;
-        var clipName = sep === -1 ? "" : rest.substring(sep + 1);
-        setOffset(secs, "del clip “" + (clipName || "?") + "”");
-        hpLog("Desfase detectado del timeline: " + secs + "s (clip: " + clipName + ")");
+        var secs = Math.round(Number(info.offset || 0) * 10) / 10;
+        setOffset(secs, "del clip “" + (info.clipName || "?") + "”");
+        hpLog("Desfase detectado del timeline: " + secs + "s (clip: " + info.clipName + ")");
+      });
+    });
+  }
+
+  // ── Transcribir la secuencia con Whisper LOCAL ───────────────────────
+  // Transcribe el MEDIO original del clip principal (large-v3, idioma
+  // automático — sirve para clases que mezclan español e inglés) y alinea
+  // el resultado al timeline con el desfase del clip. Sin nube, sin tokens.
+  var btnTranscribe = document.getElementById("btn-transcribe-seq");
+  if (btnTranscribe) {
+    btnTranscribe.addEventListener("click", function () {
+      btnTranscribe.disabled = true;
+      var prevLabel = btnTranscribe.textContent;
+      btnTranscribe.textContent = "🎙 Transcribiendo…";
+      function status(msg) { if (transcriptStatus) transcriptStatus.textContent = msg; }
+      function done() { btnTranscribe.disabled = false; btnTranscribe.textContent = prevLabel; }
+      status("Buscando el clip principal de la secuencia…");
+      hpLog("Transcripción local: pidiendo clip principal…");
+
+      HPHost.getPrimaryClipInfo(function (res) {
+        var info = parsePrimaryClipInfo(res);
+        if (!info) { status("No pude leer la secuencia: ¿tiene clips?"); done(); return; }
+        if (!info.mediaPath) { status("El clip “" + (info.clipName || "?") + "” no tiene ruta de medio (¿es un gráfico/sintético?)."); done(); return; }
+        hpLog("Transcripción local: clip “" + info.clipName + "” → " + info.mediaPath + " (desfase " + info.offset + "s)");
+
+        HPEngine.callProg("transcribeMedia", {
+          mediaPath: info.mediaPath, projectPath: currentProjectPath, sequenceName: currentSequenceName
+        }, function (p) {
+          if (p && p.msg) status(p.msg);
+        }).then(function (r) {
+          if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
+          HPStore.setTranscript(r.segments);
+          // Alinear automáticamente al timeline con el desfase del clip.
+          setOffset(Math.round(Number(info.offset || 0) * 10) / 10, "del clip “" + (info.clipName || "?") + "”");
+          updateTranscriptStatus();
+          status(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
+            r.tool + " ✓ (respaldo en la carpeta de la secuencia)");
+          hpLog("Transcripción local OK: " + r.segments.length + " segmentos · " + r.language + " · " + r.savedPath);
+          // Derivar el objetivo si está vacío (igual que al importar un JSON).
+          if (!HPStore.getObjective() || !HPStore.getObjective().trim()) {
+            deriveObjectiveFromTranscript(r.segments);
+          }
+          done();
+        }).catch(function (e) {
+          status("Error: " + ((e && e.message) || "no se pudo transcribir"));
+          hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
+          done();
+        });
       });
     });
   }
