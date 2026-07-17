@@ -122,11 +122,26 @@
     } catch (e) {}
   }
 
-  // Pipeline de 2 carriles: MODELO (nube) y RENDER (local). El render corre de
-  // a uno (es lo pesado en RAM); el modelo del siguiente puede ir mientras el
-  // actual renderiza — SOLO si el proveedor es cloud (en local no se solapa,
-  // porque el modelo también usa la máquina).
-  var modelBusy = false, renderBusy = false;
+  // Pipeline de 2 carriles: MODELO (nube) y RENDER (local).
+  //  - RENDER: SIEMPRE de a uno (cada render es un Chrome capturando frames;
+  //    varios revientan la RAM).
+  //  - MODELO (LLM): el trabajo en la nube NO compite por recursos locales, así
+  //    que corren VARIOS en paralelo (hasta MODEL_CONCURRENCY) → para un lote,
+  //    los diseños se resuelven solapados en vez de uno por uno. Con proveedor
+  //    LOCAL (Ollama) el modelo usa la máquina: se fuerza a 1 y no se solapa
+  //    con el render.
+  var modelRunning = 0, renderBusy = false;
+  // Techo de llamadas al LLM en paralelo (solo nube). Configurable desde el
+  // panel; conservador por defecto para no disparar rate limits (el flujo
+  // waiting→reactivar ya cubre los 429, pero mejor no provocarlos).
+  var MODEL_CONCURRENCY_DEFAULT = 3;
+  var modelConcurrency = MODEL_CONCURRENCY_DEFAULT;
+  try {
+    var _mc = parseInt(global.localStorage.getItem("hyperpremiere::model-concurrency"), 10);
+    if (!isNaN(_mc) && _mc >= 1 && _mc <= 8) modelConcurrency = _mc;
+  } catch (e) {}
+  // Cupo efectivo de modelo AHORA: 1 en local (comparte máquina), el techo en nube.
+  function modelCap() { return HPConfigUI.isLocalProvider() ? 1 : modelConcurrency; }
   // paused: la cola no ARRANCA nuevos jobs (los que corren terminan). Sirve
   // para "Enviar a la cola" (staging) sin que empiece a procesar.
   var paused = false;
@@ -236,12 +251,13 @@
   }
 
   function startModel(job) {
-    modelBusy = true; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
+    modelRunning++; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
     rehydratePayload(job); emit();
     var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
-    hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?"));
+    hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?") + " · en paralelo=" + modelRunning);
     HPEngine.callProg(method, job.payload, onP(job)).then(function (prep) {
-      if (job._cancelled) { modelBusy = false; hpLog("Job CANCELADO [" + job.label + "] tras modelo — descartado."); emit(); pump(); return; }
+      modelRunning--;
+      if (job._cancelled) { hpLog("Job CANCELADO [" + job.label + "] tras modelo — descartado."); emit(); pump(); return; }
       if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
       job.prepared = prep;
       countUsage(job, prep.usage);
@@ -250,11 +266,12 @@
       var _ms = (Date.now() - (job.startedAt || Date.now())) / 1000;
       if (_ms > 1 && _ms < 3600) { TIMING.modelJobs++; TIMING.modelSec += _ms; saveTiming(); }
       hpLog("Job MODELO ok [" + job.label + "] → listo para render");
-      modelBusy = false; emit(); pump();
+      emit(); pump();
     }).catch(function (err) {
-      if (job._cancelled) { modelBusy = false; emit(); pump(); return; }
+      modelRunning--;
+      if (job._cancelled) { emit(); pump(); return; }
       failJob(job, err, "model"); // falló el diseño → reintentar re-llama a la IA
-      modelBusy = false; emit(); pump();
+      emit(); pump();
     });
   }
 
@@ -285,18 +302,24 @@
     // En local (Ollama) NO se solapa: modelo y render usan la misma máquina.
     var overlap = !HPConfigUI.isLocalProvider();
     // Carril RENDER (uno a la vez; en local, además, no mientras el modelo corre).
-    if (!renderBusy && (overlap || !modelBusy)) {
+    if (!renderBusy && (overlap || modelRunning === 0)) {
       for (var i = 0; i < jobs.length; i++) {
         var j = jobs[i];
         if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ" || j.kind === "renderLatest"))) { startRender(j); break; }
       }
     }
-    // Carril MODELO (en local, no mientras el render corre).
-    if (!modelBusy && (overlap || !renderBusy)) {
+    // Carril MODELO: arranca TANTOS jobs de IA como permita el cupo (nube:
+    // MODEL_CONCURRENCY en paralelo; local: 1 y no mientras el render corre).
+    // startModel incrementa modelRunning en su 1ª línea, así que la condición
+    // ve el conteo actualizado en cada vuelta.
+    while (modelRunning < modelCap() && (overlap || (!renderBusy && modelRunning === 0))) {
+      var next = null;
       for (var k = 0; k < jobs.length; k++) {
         var m = jobs[k];
-        if (m.status === "queued" && (m.kind === "generate" || m.kind === "feedback")) { startModel(m); break; }
+        if (m.status === "queued" && (m.kind === "generate" || m.kind === "feedback")) { next = m; break; }
       }
+      if (!next) break;
+      startModel(next);
     }
   }
 
@@ -339,6 +362,18 @@
     isActive: isActive,
     isPending: isPending,
     isUpgradable: isUpgradable,
+
+    // Cuántas llamadas al LLM corren en paralelo (nube). Persistente.
+    getModelConcurrency: function () { return modelConcurrency; },
+    setModelConcurrency: function (n) {
+      n = parseInt(n, 10);
+      if (isNaN(n) || n < 1) n = 1;
+      if (n > 8) n = 8;
+      modelConcurrency = n;
+      try { global.localStorage.setItem("hyperpremiere::model-concurrency", String(n)); } catch (e) {}
+      pump(); // por si el nuevo cupo permite arrancar más ya mismo
+      return n;
+    },
 
     // Estimación de la cola (auto-calibrada con el uso real).
     timing: {
