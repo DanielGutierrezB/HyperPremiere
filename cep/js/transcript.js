@@ -100,6 +100,20 @@
     return NaN;
   }
 
+  /**
+   * Fin de un ítem con tiempos: end explícito, o start + duration (formatos
+   * como el transcript exportado de Premiere traen duración en vez de fin —
+   * sin esto, cada segmento quedaba con duración CERO y el recorte por
+   * marcador perdía todo segmento que empezara antes del marcador).
+   */
+  function rawEnd(obj, startSec) {
+    var end = rawTime(obj, ['end', 'end_time', 'endTime', 'stop', 'to']);
+    if (!isNaN(end)) return end;
+    var dur = rawTime(obj, ['duration', 'dur']);
+    if (!isNaN(dur) && !isNaN(startSec)) return startSec + dur;
+    return NaN;
+  }
+
   function pickText(obj) {
     for (var i = 0; i < TEXT_KEYS.length; i++) {
       var v = obj[TEXT_KEYS[i]];
@@ -143,12 +157,12 @@
     if (!item || typeof item !== 'object') return null;
 
     var start = rawTime(item, ['start', 'start_time', 'startTime', 'begin', 'from', 'ts']);
-    var end = rawTime(item, ['end', 'end_time', 'endTime', 'stop', 'to']);
+    var end = rawEnd(item, start);
     var text = pickText(item);
     var speaker = pickSpeaker(item);
 
-    // Formato con words: [{word, start, end}] — construir texto y tiempos
-    // a partir de las palabras cuando falten a nivel de segmento.
+    // Formato con words: [{word|text, start, end|duration}] — construir texto
+    // y tiempos a partir de las palabras cuando falten a nivel de segmento.
     if (Array.isArray(item.words) && item.words.length) {
       var wordsText = [];
       var wStart = NaN, wEnd = NaN;
@@ -158,7 +172,7 @@
         var token = typeof w.word === 'string' ? w.word : (typeof w.text === 'string' ? w.text : '');
         if (token) wordsText.push(token);
         var ws = rawTime(w, ['start', 'start_time', 'startTime']);
-        var we = rawTime(w, ['end', 'end_time', 'endTime']);
+        var we = rawEnd(w, ws);
         if (!isNaN(ws) && (isNaN(wStart) || ws < wStart)) wStart = ws;
         if (!isNaN(we) && (isNaN(wEnd) || we > wEnd)) wEnd = we;
       }
@@ -172,6 +186,53 @@
     if (isNaN(end) || end < start) end = start;
 
     return { start: start, end: end, text: text, speaker: speaker };
+  }
+
+  /**
+   * Divide un segmento con words TEMPORIZADAS en ORACIONES (cortando donde
+   * eos=true), con el tiempo real de cada oración. Los exports de Premiere
+   * traen bloques de 20-30s sin texto propio: como blob, un marcador de 10s
+   * arrastraría párrafos enteros; por oración, el recorte cae exacto.
+   * Devuelve [] si el formato no aplica (sin words o sin timing por palabra)
+   * — en ese caso el caller usa normalizeItem (blob), como siempre.
+   */
+  function explodeSentences(item) {
+    if (!item || typeof item !== 'object') return [];
+    if (pickText(item)) return []; // el segmento ya trae su texto (ej. Whisper): respetarlo
+    if (!Array.isArray(item.words) || !item.words.length) return [];
+    var speaker = pickSpeaker(item);
+
+    var out = [];
+    var cur = { words: [], start: NaN, end: NaN };
+    function close() {
+      if (!cur.words.length) return;
+      var s = isNaN(cur.start) ? NaN : cur.start;
+      var e = isNaN(cur.end) ? s : cur.end;
+      out.push({ start: s, end: e, text: cur.words.join(' '), speaker: speaker });
+      cur = { words: [], start: NaN, end: NaN };
+    }
+    for (var i = 0; i < item.words.length; i++) {
+      var w = item.words[i];
+      if (!w || typeof w !== 'object') continue;
+      var token = typeof w.word === 'string' ? w.word : (typeof w.text === 'string' ? w.text : '');
+      if (!token) continue;
+      var ws = rawTime(w, ['start', 'start_time', 'startTime']);
+      var we = rawEnd(w, ws);
+      if (isNaN(cur.start) && !isNaN(ws)) cur.start = ws;
+      if (!isNaN(we)) cur.end = isNaN(cur.end) ? we : Math.max(cur.end, we);
+      else if (!isNaN(ws)) cur.end = isNaN(cur.end) ? ws : Math.max(cur.end, ws);
+      cur.words.push(token);
+      if (w.eos === true) close();
+    }
+    close();
+
+    // Sin timing utilizable por palabra el resultado sería inservible
+    // (todas las oraciones sin tiempos): que decida normalizeItem.
+    for (var k = 0; k < out.length; k++) {
+      if (isNaN(out[k].start)) return [];
+      if (isNaN(out[k].end) || out[k].end < out[k].start) out[k].end = out[k].start;
+    }
+    return out;
   }
 
   /**
@@ -195,14 +256,22 @@
       var segments = [];
       var maxTime = 0;
       var maxRaw = 0;
-      var i, seg;
+      var i, j, seg;
 
       for (i = 0; i < arr.length; i++) {
-        seg = normalizeItem(arr[i]);
-        if (!seg) continue;
-        segments.push(seg);
-        if (seg.start > maxRaw) maxRaw = seg.start;
-        if (seg.end > maxRaw) maxRaw = seg.end;
+        // Preferir la división por ORACIONES cuando hay words temporizadas
+        // (exports de Premiere: bloques de 20-30s sin texto propio).
+        var sentences = explodeSentences(arr[i]);
+        var items = sentences.length ? sentences : (function () {
+          var one = normalizeItem(arr[i]);
+          return one ? [one] : [];
+        })();
+        for (j = 0; j < items.length; j++) {
+          seg = items[j];
+          segments.push(seg);
+          if (seg.start > maxRaw) maxRaw = seg.start;
+          if (seg.end > maxRaw) maxRaw = seg.end;
+        }
       }
 
       // Heurística de unidades: si algún tiempo supera un umbral, se asume esa
