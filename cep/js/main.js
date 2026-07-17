@@ -149,8 +149,7 @@
     if (!transcriptStatus) return;
     var segments = HPStore.getTranscript();
     var hasTranscript = segments && segments.length > 0;
-    // La fila de desfase solo tiene sentido con un transcript cargado.
-    if (offsetRow) offsetRow.setAttribute("data-hidden", hasTranscript ? "false" : "true");
+    updateOffsetRowVisibility(hasTranscript);
     if (!hasTranscript) {
       transcriptStatus.textContent = "";
       return;
@@ -168,6 +167,16 @@
   var offsetInput = document.getElementById("transcript-offset");
   var offsetStatus = document.getElementById("offset-status");
   var btnDetectOffset = document.getElementById("btn-detect-offset");
+  // Desde que las unidades se calibran solas y el formato de Premiere se
+  // parsea bien, el desfase manual quedó para UN caso: un transcript que NO
+  // coincide con la secuencia (es de otro corte / del video original). La
+  // fila se muestra SOLO entonces (o si ya hay un desfase distinto de 0).
+  var offsetRowNeeded = false;
+  function updateOffsetRowVisibility(hasTranscript) {
+    if (!offsetRow) return;
+    var show = !!hasTranscript && (offsetRowNeeded || HPStore.getTranscriptOffset() !== 0);
+    offsetRow.setAttribute("data-hidden", show ? "false" : "true");
+  }
 
   function hydrateOffset() {
     if (offsetInput) offsetInput.value = String(HPStore.getTranscriptOffset());
@@ -219,6 +228,7 @@
       offsetStatus.textContent = (sourceMsg || "") +
         (v ? ((sourceMsg ? " · " : "") + "corrido " + (v > 0 ? "+" : "") + v + "s") : (sourceMsg ? "" : "sin desfase"));
     }
+    updateOffsetRowVisibility((HPStore.getTranscript() || []).length > 0);
     refreshTranscriptSlices();
   }
 
@@ -382,6 +392,9 @@
       HPStore.setTranscript(cal.segments);
       // Transcript nuevo = base de tiempo nueva: el desfase anterior no aplica.
       HPStore.setTranscriptOffset(0);
+      // La fila de desfase solo aparece si este transcript NO coincide con la
+      // secuencia (su único caso de uso legítimo que queda).
+      offsetRowNeeded = (cal.match === false);
       hydrateOffset();
       updateTranscriptStatus();
       refreshTranscriptSlices();
@@ -1156,6 +1169,28 @@
     setHeaderStatus("motor OK", "ok");
     hpLog("Panel listo — motor OK desde " + HPEngine.path());
     checkEngineDeps();
+    checkWhisperStatus();
+  }
+
+  // ── Indicador de Whisper local (junto al botón 🎙) ──────────────────
+  function checkWhisperStatus() {
+    var badge = document.getElementById("whisper-badge");
+    if (!badge) return;
+    hpCall("whisperStatus").then(function (st) {
+      if (!st || !st.ok) return;
+      badge.setAttribute("data-hidden", "false");
+      if (st.available) {
+        badge.className = "whisper-badge";
+        badge.textContent = "✓ " + st.tool + " · " + st.model;
+        badge.title = "Whisper local detectado: “" + st.tool + "” con el modelo " + st.model +
+          " (se cambia con HYPERPREMIERE_WHISPER_MODEL). 🎙 transcribe sin nube y sin tokens.";
+      } else {
+        badge.className = "whisper-badge is-missing";
+        badge.textContent = "sin whisper local";
+        badge.title = "No encontré whisper ni mlx_whisper en el PATH. Instalá uno para transcribir localmente: pip install openai-whisper (clásico) o pip install mlx-whisper (Apple Silicon).";
+      }
+      hpLog("Whisper local: " + (st.available ? (st.tool + " · " + st.model) : "NO detectado"));
+    }).catch(function () {});
   }
 
   // ── Preparación del motor (autocontenido, 1ª corrida) ───────────────

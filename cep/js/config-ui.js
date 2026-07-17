@@ -22,7 +22,7 @@
 
   var cfgProviderSel = null;
   var cfgModelSel = null;
-  var cfgModelCustom, cfgApiKey, cfgBaseUrl, btnSaveConfig, configStatus, cfgSummary, configSection;
+  var cfgModelCustom, cfgApiKey, cfgBaseUrl, btnSaveConfig, configStatus, cfgSummary;
   var btnLoginClaude, loginStatus;
 
   // Modelos compatibles por proveedor. Claude corre por CLI o API; los demás
@@ -228,8 +228,7 @@
     hpCall("getConfig")
       .then(function (cfg) {
         applyConfigToUI(cfg);
-        // Si ya está bien configurado, arranca colapsado (flujo progresivo).
-        if (updateSummary() && configSection) configSection.open = false;
+        updateSummary();
       })
       .catch(function (e) {
         if (configStatus) configStatus.textContent = (e && e.message) || "Motor no disponible";
@@ -245,9 +244,22 @@
     btnSaveConfig = document.getElementById("btn-save-config");
     configStatus = document.getElementById("config-status");
     cfgSummary = document.getElementById("cfg-summary");
-    configSection = document.querySelector(".config-section");
     btnLoginClaude = document.getElementById("btn-login-claude");
     loginStatus = document.getElementById("login-status");
+
+    // Overlay de configuración: se abre con el botón ⚙ del header (antes era
+    // un desplegable incómodo al fondo del panel).
+    var overlay = document.getElementById("config-overlay");
+    var btnOpen = document.getElementById("btn-config");
+    var btnClose = document.getElementById("btn-config-close");
+    function showConfig(show) {
+      if (overlay) overlay.setAttribute("data-hidden", show ? "false" : "true");
+    }
+    if (btnOpen) btnOpen.addEventListener("click", function () {
+      showConfig(overlay && overlay.getAttribute("data-hidden") !== "false");
+    });
+    if (btnClose) btnClose.addEventListener("click", function () { showConfig(false); });
+    if (overlay) overlay.addEventListener("click", function (e) { if (e.target === overlay) showConfig(false); });
 
     // Opciones fijas del proveedor.
     cfgProviderSel.setOptions([

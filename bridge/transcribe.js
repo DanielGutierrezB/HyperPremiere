@@ -274,4 +274,13 @@ async function transcribeMedia(body, onProgress) {
   }
 }
 
-module.exports = { transcribeMedia, detectWhisper, cancelTranscription };
+/**
+ * ¿Hay un Whisper local instalado? Para el indicador del panel.
+ * Devuelve { ok, available, tool, model }.
+ */
+async function whisperStatus() {
+  const tool = await detectWhisper();
+  return { ok: true, available: !!tool, tool: tool ? tool.bin : '', model: WHISPER_MODEL };
+}
+
+module.exports = { transcribeMedia, detectWhisper, cancelTranscription, whisperStatus };
