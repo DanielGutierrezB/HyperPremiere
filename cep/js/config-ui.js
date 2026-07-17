@@ -261,6 +261,16 @@
     if (btnClose) btnClose.addEventListener("click", function () { showConfig(false); });
     if (overlay) overlay.addEventListener("click", function (e) { if (e.target === overlay) showConfig(false); });
 
+    // Diseños en paralelo (concurrencia del carril de modelo de la cola).
+    var cfgConcurrency = document.getElementById("cfg-concurrency");
+    if (cfgConcurrency) {
+      cfgConcurrency.value = String(HPQueue.getModelConcurrency());
+      cfgConcurrency.addEventListener("change", function () {
+        var n = HPQueue.setModelConcurrency(cfgConcurrency.value);
+        cfgConcurrency.value = String(n);
+      });
+    }
+
     // Opciones fijas del proveedor.
     cfgProviderSel.setOptions([
       { value: "claude-cli", label: "Claude (CLI / suscripción)" },

@@ -77,8 +77,12 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
 
 ## La cola
 
-- **Serial**, con pipeline de 2 carriles (modelo ↔ render): genera el HTML del siguiente
-  marcador mientras renderiza el actual. Con Ollama local es estrictamente serial (RAM).
+- **Pipeline de 2 carriles (modelo ↔ render):** el **render** va de a uno (cada uno es un
+  Chrome capturando frames; varios revientan la RAM), pero el **modelo (LLM)** corre
+  **varios en paralelo** (configurable, "Diseños en paralelo (IA)" en ⚙; default 3) porque
+  el trabajo en la nube no compite por recursos locales → para un lote, los diseños se
+  resuelven solapados y el render nunca espera. Con **Ollama local** el modelo vuelve a 1
+  (comparte la máquina) y no se solapa con el render.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
 - Controles: **pausar/reanudar** (retoma desde el llamado a la IA o desde el render, según
   dónde estaba), **cancelar** un ítem, **reintentar** ante fallo (si el modelo ya había

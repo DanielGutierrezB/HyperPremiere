@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.2.6</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.3.0</span>
       </button>
     </div>
   </header>
@@ -189,6 +189,13 @@
           <label class="field-label" for="cfg-baseurl">Base URL</label>
           <input type="text" id="cfg-baseurl" placeholder="ej: https://api.openai.com/v1">
           <span id="baseurl-hint" class="muted"></span>
+        </div>
+
+        <div class="cfg-row">
+          <label class="field-label" for="cfg-concurrency">Diseños en paralelo (IA)</label>
+          <input type="number" id="cfg-concurrency" class="offset-input" min="1" max="8" step="1" value="3"
+                 title="Cuántos marcadores puede DISEÑAR la IA a la vez (solo nube). El render sigue de a uno. Más = la cola avanza más rápido, pero sube el riesgo de tocar límites de uso (429). Con Ollama local siempre es 1.">
+          <span class="muted">el render sigue de a uno · local = 1</span>
         </div>
 
         <div class="config-actions">
