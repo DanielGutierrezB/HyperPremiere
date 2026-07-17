@@ -255,6 +255,10 @@ textarea:focus {
   flex: none;
 }
 
+/* Barra de progreso de la transcripción local (Whisper). */
+#transcribe-progress { margin: 6px 0 2px; }
+#transcribe-progress[data-hidden="true"] { display: none; }
+
 /* Corrección del desfase transcript ↔ timeline (fila bajo "Cargar transcript"). */
 #offset-row[data-hidden="true"] { display: none; }
 #offset-row .field-label { margin: 0; flex: none; }
