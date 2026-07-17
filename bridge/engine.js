@@ -437,6 +437,13 @@ async function prepareGeneration(body, mode, onProgress) {
   function isValidComposition(h) {
     return h && /data-composition-id/.test(h) && /data-duration\s*=\s*["']?\s*[0-9.]*[1-9]/.test(h) && /__timelines/.test(h);
   }
+  // Auditoría del propio modelo (ver system.md, "PLAN → CÓDIGO → AUDITORÍA"):
+  // si el modelo declaró una falla concreta de diseño, devolvemos qué falló
+  // para pedir UNA corrección dirigida. null = auditoría OK o ausente.
+  function auditFailure(h) {
+    const m = String(h || '').match(/<!--\s*AUDIT:\s*FALLA:?\s*([\s\S]*?)-->/i);
+    return m ? m[1].trim().slice(0, 400) : null;
+  }
 
   let gen = await provider.generate({
     systemPrompt, userPrompt, images: stillsList, model: config.model, config,
@@ -457,6 +464,30 @@ async function prepareGeneration(body, mode, onProgress) {
     });
     addUsage(gen.usage);
     html = stripHtmlFence(gen.text);
+  }
+
+  // Corrección dirigida ÚNICA si la auditoría del propio modelo declaró una
+  // falla de diseño (elementos pisados, texto fuera de zona segura, etc.).
+  // Solo gasta una llamada extra cuando el modelo ADMITIÓ el problema; con
+  // AUDIT: OK no cuesta nada. Se le pasa su HTML para que corrija esa falla
+  // puntual conservando lo que está bien (no rediseña desde cero).
+  const falla = auditFailure(html);
+  if (falla) {
+    report({ pct: 48, msg: 'Tu auditoría detectó una falla de diseño — corrigiéndola…' });
+    const auditPrompt = userPrompt +
+      '\n\n## Corrección dirigida (tu PROPIA auditoría encontró esta falla)\n' +
+      'Generaste la composición de abajo y tu auditoría declaró: "' + falla + '".\n' +
+      'Corregí EXACTAMENTE esa falla conservando todo lo que está bien (idea, estilo, timing). ' +
+      'Aplicá el protocolo de layout (regiones que no se pisan, zona segura de 80px, presupuesto de texto). ' +
+      'Devolvé SOLO el HTML completo corregido, con su auditoría final en <!-- AUDIT: ... -->.\n' +
+      '\n### Tu versión con la falla\n```html\n' + html + '\n```';
+    gen = await provider.generate({
+      systemPrompt, userPrompt: auditPrompt, images: stillsList, model: config.model, config,
+    });
+    addUsage(gen.usage);
+    const corrected = stripHtmlFence(gen.text);
+    // No empeorar: solo adoptar la corrección si sigue cumpliendo el contrato.
+    if (isValidComposition(corrected)) html = corrected;
   }
 
   if (!html) throw new Error(`El proveedor "${config.provider}" devolvió respuesta vacía`);
