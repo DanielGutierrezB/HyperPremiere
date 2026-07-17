@@ -288,10 +288,80 @@
     return rebased;
   }
 
+  /**
+   * calibrateUnits(segments, referenceDurationSec): valida y corrige las
+   * UNIDADES de tiempo de un transcript contra una duración de referencia
+   * REAL (la de la secuencia). Es la defensa contra formatos que traen los
+   * tiempos en otra unidad (p.ej. FRAMES): un error de unidad es
+   * multiplicativo y NINGÚN desfase constante lo corrige.
+   *
+   * ratio = duraciónTranscript / duraciónReferencia:
+   *   ~1        → segundos, todo bien (match true)
+   *   ~24/25/30 → frames a ese fps → se divide (match true, label)
+   *   ~1000     → milisegundos    → se divide (match true, label)
+   *   otro      → no se toca, match false (el caller avisa fuerte)
+   *
+   * Sin referencia (0/NaN) devuelve los segmentos intactos con match null.
+   * Muta los tiempos de los segmentos recibidos y devuelve
+   * { segments, factor, label, match }.
+   */
+  function calibrateUnits(segments, referenceDurationSec) {
+    var out = { segments: segments, factor: 1, label: null, match: null };
+    if (!Array.isArray(segments) || !segments.length) return out;
+    if (!isFiniteNumber(referenceDurationSec) || referenceDurationSec <= 0) return out;
+
+    var maxEnd = 0;
+    for (var i = 0; i < segments.length; i++) {
+      if (segments[i] && segments[i].end > maxEnd) maxEnd = segments[i].end;
+    }
+    if (maxEnd <= 0) return out;
+
+    var ratio = maxEnd / referenceDurationSec;
+    // Segundos: el transcript puede terminar algo antes que la secuencia
+    // (outro sin voz) o apenas después (redondeos) — banda generosa.
+    if (ratio >= 0.5 && ratio <= 1.5) {
+      out.match = (ratio >= 0.7 && ratio <= 1.3);
+      return out;
+    }
+
+    var CANDIDATES = [
+      { f: 23.976, label: "frames (23.976 fps)" },
+      { f: 24, label: "frames (24 fps)" },
+      { f: 25, label: "frames (25 fps)" },
+      { f: 29.97, label: "frames (29.97 fps)" },
+      { f: 30, label: "frames (30 fps)" },
+      { f: 50, label: "frames (50 fps)" },
+      { f: 59.94, label: "frames (59.94 fps)" },
+      { f: 60, label: "frames (60 fps)" },
+      { f: 1000, label: "milisegundos" }
+    ];
+    var best = null;
+    for (i = 0; i < CANDIDATES.length; i++) {
+      var q = ratio / CANDIDATES[i].f;
+      if (q >= 0.7 && q <= 1.3) {
+        var d = Math.abs(q - 1);
+        if (!best || d < best.d) best = { c: CANDIDATES[i], d: d };
+      }
+    }
+    if (!best) {
+      out.match = false; // unidades irreconocibles: no tocar, que el caller avise
+      return out;
+    }
+    for (i = 0; i < segments.length; i++) {
+      segments[i].start = segments[i].start / best.c.f;
+      segments[i].end = segments[i].end / best.c.f;
+    }
+    out.factor = best.c.f;
+    out.label = best.c.label;
+    out.match = true;
+    return out;
+  }
+
   global.HPTranscript = {
     parse: parse,
     timecodeToSeconds: timecodeToSeconds,
     sliceByRange: sliceByRange,
-    sliceForMarker: sliceForMarker
+    sliceForMarker: sliceForMarker,
+    calibrateUnits: calibrateUnits
   };
 })(typeof window !== 'undefined' ? window : this);

@@ -22,7 +22,7 @@
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.2.2</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.2.3</span>
       </button>
     </div>
   </header>
@@ -39,7 +39,7 @@
         <p><strong>2. Dale contexto.</strong> Escribí el <em>Objetivo de la clase</em> (o cargá el transcript JSON y lo deriva solo). En <em>Prompt general</em> ponés estilo, marca, tipografía y colores que aplican a TODOS los marcadores (no lo repetís en cada uno). Por marcador escribís una instrucción específica, podés capturar el frame del programa (📸) y arrastrar imágenes/PDFs/referencias.</p>
 
         <p class="help-diff"><strong>— Transcript: generarlo o importarlo —</strong><br>
-        <strong>🎙 Transcribir esta secuencia</strong> usa tu Whisper LOCAL (large-v3): transcribe el video del clip principal de la secuencia, detecta el idioma solo (sirve mezclando español e inglés) y se alinea automáticamente al timeline. Sin nube, sin tokens; guarda un respaldo (transcript-whisper.json) en la carpeta de la secuencia. Requiere <code>whisper</code> (pip install openai-whisper) o <code>mlx_whisper</code> en el PATH. También podés <strong>importar un JSON</strong>: si viene del video original y editaste el timeline, el texto queda corrido — corregilo con <strong>Desfase (s)</strong> (positivo = recortaste el inicio; negativo = agregaste intro) o con <strong>Detectar del timeline</strong>. Al cambiar el desfase, los fragmentos de las tarjetas se actualizan al instante; se guarda por secuencia.</p>
+        <strong>🎙 Transcribir esta secuencia</strong> usa tu Whisper LOCAL (large-v3): transcribe el video del clip principal de la secuencia, detecta el idioma solo (sirve mezclando español e inglés) y se alinea automáticamente al timeline. Sin nube, sin tokens; guarda un respaldo (transcript-whisper.json) en la carpeta de la secuencia. Requiere <code>whisper</code> (pip install openai-whisper) o <code>mlx_whisper</code> en el PATH. También podés <strong>importar un JSON</strong>: al cargarlo, las <strong>unidades de tiempo se validan y corrigen solas</strong> contra la duración real de la secuencia (frames, milisegundos…) y el estado te muestra el veredicto (transcript vs secuencia ✓/⚠) — un transcript de la misma secuencia debe caer solo, sin ajustar nada. El <strong>Desfase (s)</strong> queda solo para transcripts de OTRA base de tiempo (video original + timeline editado): positivo = recortaste el inicio; negativo = agregaste intro; <strong>Detectar del timeline</strong> lo estima. Cada transcript nuevo reinicia el desfase a 0.</p>
         <p><strong>3. Generá.</strong> El modelo diseña una animación HTML (HyperFrames), la renderiza y la coloca en el timeline sobre el marcador. Todo pasa por una <strong>cola</strong> que procesa de a uno (mientras uno renderiza, el siguiente ya se va diseñando).</p>
 
         <p class="help-diff"><strong>— Imágenes: referencia vs. usar —</strong><br>

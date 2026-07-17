@@ -46,6 +46,14 @@
     getPrimaryClipInfo: function (cb) {
       call("hp_getPrimaryClipInfo()", cb);
     },
+    /**
+     * Duración real de la secuencia (fin del último clip, todas las pistas).
+     * Devuelve "ok|<segundos>" o "error: …". Referencia para validar las
+     * unidades de tiempo de un transcript importado.
+     */
+    getSequenceDuration: function (cb) {
+      call("hp_getSequenceDuration()", cb);
+    },
     /** Importa el video y lo coloca en la secuencia con etiqueta de color. */
     placeClip: function (movPath, seqName, startSec, durationSec, colorLabel, cb) {
       call("hp_placeClipInSequence(" + JSON.stringify(movPath) + ", " + JSON.stringify(seqName) + ", " +
