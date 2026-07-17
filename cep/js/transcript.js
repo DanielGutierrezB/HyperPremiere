@@ -8,12 +8,13 @@
  *
  * Supuestos documentados:
  *   - FPS por defecto: 30 (para timecodes "hh:mm:ss:ff"). Se puede pasar otro fps.
- *   - Heurística de milisegundos: si un tiempo numérico es > 100000 se asume que
- *     viene en milisegundos y se divide por 1000. Razón: 100000 segundos son ~27.7
- *     horas, una duración improbable para un clip; 100000 ms son solo 100 s, un
- *     valor muy común. La heurística se aplica de forma consistente a todo el
- *     transcript: si CUALQUIER tiempo supera el umbral, se asume que TODOS los
- *     tiempos vienen en ms (para no mezclar unidades dentro del mismo archivo).
+ *   - Heurística de unidades (consistente para TODO el archivo, no se mezclan):
+ *       > 1e10   → ticks de Premiere (254016000000 por segundo; formatos
+ *                  exportados de Premiere traen los tiempos así) — se divide
+ *                  por TICKS_PER_SECOND.
+ *       > 100000 → milisegundos (100000 s serían ~27.7 h, improbable; 100000 ms
+ *                  son solo 100 s, un valor muy común) — se divide por 1000.
+ *     Si CUALQUIER tiempo supera un umbral, se asume esa unidad para TODOS.
  *   - Entradas inválidas (null, JSON roto, formas desconocidas) devuelven
  *     { segments: [], meta: { count: 0, duration: 0 } } sin lanzar excepciones.
  */
@@ -21,8 +22,10 @@
   'use strict';
 
   var DEFAULT_FPS = 30;
-  // Umbral para la heurística segundos vs milisegundos (ver cabecera).
-  var MS_THRESHOLD = 100000;
+  // Umbrales para la heurística de unidades (ver cabecera).
+  var MS_THRESHOLD = 100000;      // > esto: milisegundos
+  var TICKS_THRESHOLD = 1e10;     // > esto: ticks de Premiere
+  var TICKS_PER_SECOND = 254016000000;
 
   // Claves donde puede vivir el array de segmentos dentro de un objeto contenedor.
   var CONTAINER_KEYS = ['segments', 'transcript', 'results', 'data'];
@@ -191,22 +194,26 @@
 
       var segments = [];
       var maxTime = 0;
-      var anyOverThreshold = false;
+      var maxRaw = 0;
       var i, seg;
 
       for (i = 0; i < arr.length; i++) {
         seg = normalizeItem(arr[i]);
         if (!seg) continue;
         segments.push(seg);
-        if (seg.start > MS_THRESHOLD || seg.end > MS_THRESHOLD) anyOverThreshold = true;
+        if (seg.start > maxRaw) maxRaw = seg.start;
+        if (seg.end > maxRaw) maxRaw = seg.end;
       }
 
-      // Heurística ms: si algún tiempo supera el umbral, se asume que TODO el
-      // transcript viene en milisegundos y se convierte de forma consistente.
-      if (anyOverThreshold) {
+      // Heurística de unidades: si algún tiempo supera un umbral, se asume esa
+      // unidad para TODO el transcript (ticks de Premiere > ms > segundos).
+      var divisor = maxRaw > TICKS_THRESHOLD ? TICKS_PER_SECOND
+        : maxRaw > MS_THRESHOLD ? 1000
+        : 1;
+      if (divisor !== 1) {
         for (i = 0; i < segments.length; i++) {
-          segments[i].start = segments[i].start / 1000;
-          segments[i].end = segments[i].end / 1000;
+          segments[i].start = segments[i].start / divisor;
+          segments[i].end = segments[i].end / divisor;
         }
       }
 

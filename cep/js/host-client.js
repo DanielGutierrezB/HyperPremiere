@@ -39,11 +39,12 @@
       call("hp_captureProgramFrame(" + JSON.stringify(tmpPath) + ")", cb);
     },
     /**
-     * Estima el desfase transcript↔timeline desde el clip más largo del
-     * timeline. Devuelve "ok|<segundos>|<nombre del clip>" o "error: …".
+     * Info del clip principal de la secuencia (JSON string):
+     * { ok, offset, mediaPath, clipName } — para el desfase del transcript
+     * y para transcribir el medio original con Whisper local.
      */
-    getTranscriptOffsetGuess: function (cb) {
-      call("hp_getTranscriptOffsetGuess()", cb);
+    getPrimaryClipInfo: function (cb) {
+      call("hp_getPrimaryClipInfo()", cb);
     },
     /** Importa el video y lo coloca en la secuencia con etiqueta de color. */
     placeClip: function (movPath, seqName, startSec, durationSec, colorLabel, cb) {

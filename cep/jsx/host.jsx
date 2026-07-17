@@ -121,17 +121,17 @@ function hp_getProjectPath() {
     }
 }
 
-// Estima el DESFASE transcript ↔ timeline mirando el clip MÁS LARGO de la
-// primera pista (video; si no hay, audio) con contenido — normalmente la
-// grabación de la clase. Si el editor recortó el inicio del video o corrió
-// el clip, inPoint (tiempo del MEDIO original) y start (posición en el
-// timeline) difieren: desfase = inPoint - start, tal que
-// tiempoTranscript = tiempoSecuencia + desfase.
-// Devuelve "ok|<segundos>|<nombre del clip>" o "error: ...".
-function hp_getTranscriptOffsetGuess() {
+// Info del clip PRINCIPAL de la secuencia (el MÁS LARGO de la primera pista
+// con contenido; video primero, si no audio) — normalmente la grabación de la
+// clase. Devuelve JSON:
+//   { ok: true, offset, mediaPath, clipName }  |  { ok: false, error }
+// donde offset = inPoint - start (desfase transcript ↔ timeline: si el editor
+// recortó el inicio del medio o corrió el clip, tiempoMedio = tiempoSecuencia
+// + offset) y mediaPath es la ruta del archivo original (para transcribirlo).
+function hp_getPrimaryClipInfo() {
     try {
         var seq = app.project.activeSequence;
-        if (!seq) return "error: no hay secuencia activa";
+        if (!seq) return '{"ok":false,"error":"no hay secuencia activa"}';
         function longestOfFirstTrack(tracks) {
             try {
                 for (var t = 0; t < tracks.numTracks; t++) {
@@ -149,11 +149,15 @@ function hp_getTranscriptOffsetGuess() {
             return null;
         }
         var clip = longestOfFirstTrack(seq.videoTracks) || longestOfFirstTrack(seq.audioTracks);
-        if (!clip) return "error: la secuencia no tiene clips";
+        if (!clip) return '{"ok":false,"error":"la secuencia no tiene clips"}';
         var offset = clip.inPoint.seconds - clip.start.seconds;
-        return "ok|" + offset + "|" + clip.name;
+        var mediaPath = "";
+        try { if (clip.projectItem) mediaPath = String(clip.projectItem.getMediaPath() || ""); } catch (e2) {}
+        return '{"ok":true,"offset":' + offset +
+            ',"mediaPath":"' + hp_escapeJsonString(mediaPath) +
+            '","clipName":"' + hp_escapeJsonString(clip.name) + '"}';
     } catch (e) {
-        return "error: " + e.toString();
+        return '{"ok":false,"error":"' + hp_escapeJsonString(e.toString()) + '"}';
     }
 }
 
