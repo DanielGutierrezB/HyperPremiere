@@ -79,6 +79,29 @@ function lastTimestampSec(chunk) {
   return last;
 }
 
+// RED DE SEGURIDAD: reconstruye los segmentos desde la salida VERBOSE de
+// Whisper ("[00:00.000 --> 00:07.320]  texto…"). Todas las variantes del CLI
+// (openai, mlx, whisper.cpp) imprimen este formato aunque difieran en cómo
+// escriben archivos — si el JSON de salida no aparece, esto salva la corrida.
+function segmentsFromVerbose(output) {
+  const out = [];
+  const re = /\[(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)\s*-->\s*(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)\]\s*(.+)/g;
+  let m;
+  while ((m = re.exec(String(output || ''))) !== null) {
+    const start = (m[1] ? parseInt(m[1], 10) * 3600 : 0) + parseInt(m[2], 10) * 60 + parseFloat(m[3]);
+    const end = (m[4] ? parseInt(m[4], 10) * 3600 : 0) + parseInt(m[5], 10) * 60 + parseFloat(m[6]);
+    const text = m[7].trim();
+    if (text) out.push({ start, end, text });
+  }
+  return out;
+}
+
+// "Detected language: Spanish" de la salida de Whisper (best-effort).
+function languageFromVerbose(output) {
+  const m = String(output || '').match(/Detected language:\s*([A-Za-zÁ-úñ]+)/i);
+  return m ? m[1] : '';
+}
+
 // Args del CLI según la herramienta. SIN --language: detección automática.
 function whisperArgs(tool, inputPath, outDir) {
   if (tool.style === 'mlx') {
@@ -138,18 +161,37 @@ async function transcribeMedia(body, onProgress) {
         }
       },
     });
+    const cmdLine = tool.bin + ' ' + whisperArgs(tool, input, tmpBase).join(' ');
     if (r.code !== 0) {
-      return { ok: false, error: tool.bin + ' terminó con código ' + r.code + ': ' + (r.err || r.out).slice(-400) };
+      return { ok: false, error: tool.bin + ' terminó con código ' + r.code + '.\nComando: ' + cmdLine + '\nSalida: ' + (r.err || r.out).slice(-500) };
     }
 
-    // 3) Leer el JSON que escribió Whisper (un solo .json en el dir de salida).
+    // 3) Leer el JSON que escribió Whisper (un .json en el dir de salida). Si la
+    //    variante instalada no escribió el archivo (pasa con algunos CLIs),
+    //    reconstruimos los segmentos desde su salida verbose — misma info.
+    let segments = [];
+    let language = '';
     const jsonName = fs.readdirSync(tmpBase).find((n) => n.toLowerCase().endsWith('.json'));
-    if (!jsonName) return { ok: false, error: tool.bin + ' terminó pero no escribió el JSON de salida.' };
-    const data = JSON.parse(fs.readFileSync(path.join(tmpBase, jsonName), 'utf8'));
-    const segments = (Array.isArray(data.segments) ? data.segments : [])
-      .map((s) => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
-      .filter((s) => s.text);
-    if (!segments.length) return { ok: false, error: 'La transcripción salió vacía (¿el clip tiene audio?).' };
+    if (jsonName) {
+      const data = JSON.parse(fs.readFileSync(path.join(tmpBase, jsonName), 'utf8'));
+      segments = (Array.isArray(data.segments) ? data.segments : [])
+        .map((s) => ({ start: Number(s.start) || 0, end: Number(s.end) || 0, text: String(s.text || '').trim() }))
+        .filter((s) => s.text);
+      language = data.language || '';
+    }
+    if (!segments.length) {
+      segments = segmentsFromVerbose(r.out + '\n' + r.err);
+      language = language || languageFromVerbose(r.out + '\n' + r.err);
+    }
+    if (!segments.length) {
+      return {
+        ok: false,
+        error: tool.bin + ' terminó pero no escribió el JSON ni imprimió segmentos (¿el clip tiene audio? ¿es la variante correcta del CLI?).' +
+          '\nComando: ' + cmdLine +
+          '\nArchivos en la salida: ' + fs.readdirSync(tmpBase).join(', ') +
+          '\nSalida: ' + (r.out + '\n' + r.err).slice(-500),
+      };
+    }
 
     // 4) Respaldo en la carpeta de la secuencia (mismo formato que se importa).
     let savedPath = '';
@@ -157,13 +199,13 @@ async function transcribeMedia(body, onProgress) {
       const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
       savedPath = path.join(baseDir, 'transcript-whisper.json');
       fs.writeFileSync(savedPath, JSON.stringify({
-        language: data.language || '', model: WHISPER_MODEL, tool: tool.bin,
+        language, model: WHISPER_MODEL, tool: tool.bin,
         mediaPath: mediaPath, createdAt: new Date().toISOString(), segments,
       }, null, 2), 'utf8');
     } catch (e) {}
 
     report({ pct: 100, msg: '✓ Transcripción lista (' + segments.length + ' segmentos).' });
-    return { ok: true, segments, language: data.language || '', tool: tool.bin, savedPath };
+    return { ok: true, segments, language, tool: tool.bin, savedPath };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   } finally {

@@ -175,7 +175,9 @@
   }
 
   // Refresca en vivo los fragmentos de transcript de las tarjetas ya
-  // renderizadas (para verificar el desfase sin recargar marcadores).
+  // renderizadas (para verificar el desfase o ver el transcript recién
+  // generado sin recargar marcadores). Si la tarjeta se creó SIN transcript,
+  // le agrega el bloque desplegable ahora.
   function refreshTranscriptSlices() {
     if (!markersContainer) return;
     var segments = HPStore.getTranscript() || [];
@@ -184,11 +186,25 @@
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
       if (!c._marker) continue;
-      var sliceEl = c.querySelector(".transcript-slice");
-      if (!sliceEl) continue; // la tarjeta se creó sin transcript: recargá marcadores
       var slice = HPTranscript.sliceForMarker(segments, c._marker.start, c._marker.start + c._marker.duration, offset);
       var texts = [];
       for (var k = 0; k < slice.length; k++) texts.push(slice[k].text);
+      var sliceEl = c.querySelector(".transcript-slice");
+      if (!sliceEl && texts.length) {
+        // La tarjeta nació sin transcript (se generó/cargó después): armar el bloque.
+        var tDetails = document.createElement("details");
+        tDetails.className = "transcript-details";
+        var tSum = document.createElement("summary");
+        tSum.textContent = "Ver transcript del marcador";
+        sliceEl = document.createElement("div");
+        sliceEl.className = "transcript-slice";
+        tDetails.appendChild(tSum);
+        tDetails.appendChild(sliceEl);
+        var actionsEl = c.querySelector(".marker-actions");
+        if (actionsEl && actionsEl.parentNode) actionsEl.parentNode.insertBefore(tDetails, actionsEl);
+        else continue;
+      }
+      if (!sliceEl) continue;
       sliceEl.textContent = texts.length ? texts.join(" ") : "(sin transcript en este rango — revisá el desfase)";
       if (c.open && c._updateEstimate) c._updateEstimate();
     }
@@ -243,13 +259,20 @@
   // automático — sirve para clases que mezclan español e inglés) y alinea
   // el resultado al timeline con el desfase del clip. Sin nube, sin tokens.
   var btnTranscribe = document.getElementById("btn-transcribe-seq");
+  var transcribeProgress = document.getElementById("transcribe-progress");
+  var transcribeFill = document.getElementById("transcribe-fill");
+  function showTranscribeBar(show) {
+    if (transcribeProgress) transcribeProgress.setAttribute("data-hidden", show ? "false" : "true");
+    if (transcribeFill && show) transcribeFill.style.width = "0%";
+  }
   if (btnTranscribe) {
     btnTranscribe.addEventListener("click", function () {
       btnTranscribe.disabled = true;
       var prevLabel = btnTranscribe.textContent;
       btnTranscribe.textContent = "🎙 Transcribiendo…";
       function status(msg) { if (transcriptStatus) transcriptStatus.textContent = msg; }
-      function done() { btnTranscribe.disabled = false; btnTranscribe.textContent = prevLabel; }
+      function done() { btnTranscribe.disabled = false; btnTranscribe.textContent = prevLabel; showTranscribeBar(false); }
+      showTranscribeBar(true);
       status("Buscando el clip principal de la secuencia…");
       hpLog("Transcripción local: pidiendo clip principal…");
 
@@ -258,11 +281,16 @@
         if (!info) { status("No pude leer la secuencia: ¿tiene clips?"); done(); return; }
         if (!info.mediaPath) { status("El clip “" + (info.clipName || "?") + "” no tiene ruta de medio (¿es un gráfico/sintético?)."); done(); return; }
         hpLog("Transcripción local: clip “" + info.clipName + "” → " + info.mediaPath + " (desfase " + info.offset + "s)");
+        status("Transcribiendo “" + info.clipName + "”…");
 
         HPEngine.callProg("transcribeMedia", {
           mediaPath: info.mediaPath, projectPath: currentProjectPath, sequenceName: currentSequenceName
         }, function (p) {
-          if (p && p.msg) status(p.msg);
+          if (!p) return;
+          if (p.msg) status(p.msg);
+          if (typeof p.pct === "number" && transcribeFill) {
+            transcribeFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+          }
         }).then(function (r) {
           if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
           HPStore.setTranscript(r.segments);

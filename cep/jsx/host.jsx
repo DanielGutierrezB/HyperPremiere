@@ -121,9 +121,12 @@ function hp_getProjectPath() {
     }
 }
 
-// Info del clip PRINCIPAL de la secuencia (el MÁS LARGO de la primera pista
-// con contenido; video primero, si no audio) — normalmente la grabación de la
-// clase. Devuelve JSON:
+// Info del clip PRINCIPAL de la secuencia: el clip MÁS LARGO de TODA la
+// secuencia, mirando pistas de VIDEO y de AUDIO por igual — en muchos flujos
+// la narración de la clase es un WAV en una pista de audio que atraviesa todo
+// el timeline, mientras el video de cámara está cortado en pedazos (antes se
+// miraba solo la primera pista de video y se elegía un pedazo equivocado).
+// Devuelve JSON:
 //   { ok: true, offset, mediaPath, clipName }  |  { ok: false, error }
 // donde offset = inPoint - start (desfase transcript ↔ timeline: si el editor
 // recortó el inicio del medio o corrió el clip, tiempoMedio = tiempoSecuencia
@@ -132,24 +135,24 @@ function hp_getPrimaryClipInfo() {
     try {
         var seq = app.project.activeSequence;
         if (!seq) return '{"ok":false,"error":"no hay secuencia activa"}';
-        function longestOfFirstTrack(tracks) {
+        function longestOf(tracks, state) {
             try {
                 for (var t = 0; t < tracks.numTracks; t++) {
                     var track = tracks[t];
-                    if (!track.clips || track.clips.numItems === 0) continue;
-                    var best = null, bestLen = -1;
+                    if (!track.clips) continue;
                     for (var i = 0; i < track.clips.numItems; i++) {
                         var c = track.clips[i];
                         var len = c.end.seconds - c.start.seconds;
-                        if (len > bestLen) { bestLen = len; best = c; }
+                        if (len > state.len) { state.len = len; state.clip = c; }
                     }
-                    return best; // solo la primera pista con clips
                 }
             } catch (e) {}
-            return null;
         }
-        var clip = longestOfFirstTrack(seq.videoTracks) || longestOfFirstTrack(seq.audioTracks);
-        if (!clip) return '{"ok":false,"error":"la secuencia no tiene clips"}';
+        var state = { clip: null, len: -1 };
+        longestOf(seq.videoTracks, state);
+        longestOf(seq.audioTracks, state);
+        if (!state.clip) return '{"ok":false,"error":"la secuencia no tiene clips"}';
+        var clip = state.clip;
         var offset = clip.inPoint.seconds - clip.start.seconds;
         var mediaPath = "";
         try { if (clip.projectItem) mediaPath = String(clip.projectItem.getMediaPath() || ""); } catch (e2) {}

@@ -22,7 +22,7 @@
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.2.1</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.2.2</span>
       </button>
     </div>
   </header>
@@ -126,6 +126,7 @@
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
         </div>
+        <div id="transcribe-progress" class="hp-bar" data-hidden="true"><div id="transcribe-fill" class="hp-bar-fill"></div></div>
         <div class="transcript-row" id="offset-row" data-hidden="true">
           <label class="field-label" for="transcript-offset" title="El transcript suele venir del video ORIGINAL: si recortaste el inicio o corriste el clip en el timeline, el texto de cada marcador queda corrido. Positivo = lo que se dice en el marcador está MÁS ADELANTE en el transcript (recortaste el inicio); negativo = está más atrás (agregaste una intro). Ajustá hasta que el fragmento de cada marcador coincida con lo que se dice.">Desfase (s)</label>
           <input type="number" id="transcript-offset" class="offset-input" step="0.5" value="0" title="Segundos de corrimiento entre el transcript y el timeline. Se guarda por secuencia.">
