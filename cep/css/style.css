@@ -255,6 +255,22 @@ textarea:focus {
   flex: none;
 }
 
+/* Corrección del desfase transcript ↔ timeline (fila bajo "Cargar transcript"). */
+#offset-row[data-hidden="true"] { display: none; }
+#offset-row .field-label { margin: 0; flex: none; }
+.offset-input {
+  width: 74px;
+  flex: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: #e8e6df;
+  background: #12161d;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.offset-input:focus { outline: none; border-color: #60a5fa; }
+
 .muted {
   font-size: 11px;
   font-weight: 300;

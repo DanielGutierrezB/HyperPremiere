@@ -22,7 +22,7 @@
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.1.0</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.1.1</span>
       </button>
     </div>
   </header>
@@ -37,6 +37,9 @@
       <div class="help-body">
         <p><strong>1. Cargá marcadores.</strong> Poné marcadores con duración en tu secuencia de Premiere y pulsá <em>Cargar marcadores</em>. Cada marcador se vuelve una tarjeta.</p>
         <p><strong>2. Dale contexto.</strong> Escribí el <em>Objetivo de la clase</em> (o cargá el transcript JSON y lo deriva solo). En <em>Prompt general</em> ponés estilo, marca, tipografía y colores que aplican a TODOS los marcadores (no lo repetís en cada uno). Por marcador escribís una instrucción específica, podés capturar el frame del programa (📸) y arrastrar imágenes/PDFs/referencias.</p>
+
+        <p class="help-diff"><strong>— Desfase del transcript —</strong><br>
+        El transcript suele venir del video ORIGINAL: si recortaste el inicio o corriste el clip en el timeline, el texto de cada marcador queda corrido. Bajo "Cargar transcript" está el campo <strong>Desfase (s)</strong>: positivo si lo que se dice en el marcador está más adelante en el transcript (recortaste el inicio), negativo si está más atrás (agregaste una intro). <strong>Detectar del timeline</strong> lo estima solo desde el clip más largo de la secuencia. Al cambiarlo, los fragmentos de las tarjetas se actualizan al instante para que verifiques; se guarda por secuencia.</p>
         <p><strong>3. Generá.</strong> El modelo diseña una animación HTML (HyperFrames), la renderiza y la coloca en el timeline sobre el marcador. Todo pasa por una <strong>cola</strong> que procesa de a uno (mientras uno renderiza, el siguiente ya se va diseñando).</p>
 
         <p class="help-diff"><strong>— Imágenes: referencia vs. usar —</strong><br>
@@ -121,6 +124,12 @@
           <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar transcript (JSON)</button>
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
+        </div>
+        <div class="transcript-row" id="offset-row" data-hidden="true">
+          <label class="field-label" for="transcript-offset" title="El transcript suele venir del video ORIGINAL: si recortaste el inicio o corriste el clip en el timeline, el texto de cada marcador queda corrido. Positivo = lo que se dice en el marcador está MÁS ADELANTE en el transcript (recortaste el inicio); negativo = está más atrás (agregaste una intro). Ajustá hasta que el fragmento de cada marcador coincida con lo que se dice.">Desfase (s)</label>
+          <input type="number" id="transcript-offset" class="offset-input" step="0.5" value="0" title="Segundos de corrimiento entre el transcript y el timeline. Se guarda por secuencia.">
+          <button id="btn-detect-offset" type="button" title="Lo estima desde el timeline: compara dónde empieza el clip más largo (la grabación de la clase) con qué parte del video original muestra (inPoint). Revisá el resultado en los fragmentos.">Detectar del timeline</button>
+          <span id="offset-status" class="muted"></span>
         </div>
       </div>
     </details>

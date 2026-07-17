@@ -148,12 +148,88 @@
   function updateTranscriptStatus() {
     if (!transcriptStatus) return;
     var segments = HPStore.getTranscript();
-    if (!segments || segments.length === 0) {
+    var hasTranscript = segments && segments.length > 0;
+    // La fila de desfase solo tiene sentido con un transcript cargado.
+    if (offsetRow) offsetRow.setAttribute("data-hidden", hasTranscript ? "false" : "true");
+    if (!hasTranscript) {
       transcriptStatus.textContent = "";
       return;
     }
     transcriptStatus.textContent =
       segments.length + " segmentos · " + formatTime(transcriptDuration(segments)) + " total";
+  }
+
+  // ── Desfase transcript ↔ timeline ────────────────────────────────────
+  // El transcript viene del video ORIGINAL; si el editor recortó el inicio o
+  // corrió el clip en la secuencia, el texto de cada marcador queda corrido.
+  // El desfase se guarda POR SECUENCIA y se aplica en todos los recortes
+  // (fragmento de la tarjeta, estimado y prompt del modelo).
+  var offsetRow = document.getElementById("offset-row");
+  var offsetInput = document.getElementById("transcript-offset");
+  var offsetStatus = document.getElementById("offset-status");
+  var btnDetectOffset = document.getElementById("btn-detect-offset");
+
+  function hydrateOffset() {
+    if (offsetInput) offsetInput.value = String(HPStore.getTranscriptOffset());
+    if (offsetStatus) offsetStatus.textContent = "";
+  }
+
+  // Refresca en vivo los fragmentos de transcript de las tarjetas ya
+  // renderizadas (para verificar el desfase sin recargar marcadores).
+  function refreshTranscriptSlices() {
+    if (!markersContainer) return;
+    var segments = HPStore.getTranscript() || [];
+    var offset = HPStore.getTranscriptOffset();
+    var cards = markersContainer.querySelectorAll("details.marker-card");
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (!c._marker) continue;
+      var sliceEl = c.querySelector(".transcript-slice");
+      if (!sliceEl) continue; // la tarjeta se creó sin transcript: recargá marcadores
+      var slice = HPTranscript.sliceForMarker(segments, c._marker.start, c._marker.start + c._marker.duration, offset);
+      var texts = [];
+      for (var k = 0; k < slice.length; k++) texts.push(slice[k].text);
+      sliceEl.textContent = texts.length ? texts.join(" ") : "(sin transcript en este rango — revisá el desfase)";
+      if (c.open && c._updateEstimate) c._updateEstimate();
+    }
+  }
+
+  function setOffset(value, sourceMsg) {
+    var v = Number(value);
+    if (!isFinite(v)) v = 0;
+    HPStore.setTranscriptOffset(v);
+    if (offsetInput && offsetInput.value !== String(v)) offsetInput.value = String(v);
+    if (offsetStatus) {
+      offsetStatus.textContent = (sourceMsg || "") +
+        (v ? ((sourceMsg ? " · " : "") + "corrido " + (v > 0 ? "+" : "") + v + "s") : (sourceMsg ? "" : "sin desfase"));
+    }
+    refreshTranscriptSlices();
+  }
+
+  if (offsetInput) {
+    offsetInput.addEventListener("input", debounce(function () {
+      setOffset(offsetInput.value, "");
+    }, DEBOUNCE_MS));
+  }
+  if (btnDetectOffset) {
+    btnDetectOffset.addEventListener("click", function () {
+      if (offsetStatus) offsetStatus.textContent = "Detectando…";
+      HPHost.getTranscriptOffsetGuess(function (res) {
+        res = String(res || "");
+        if (res.indexOf("ok|") !== 0) {
+          if (offsetStatus) offsetStatus.textContent = "No pude detectar: " + (res || "sin respuesta");
+          hpLog("Detección de desfase falló: " + res, "WARN");
+          return;
+        }
+        // "ok|<segundos>|<nombre del clip>" (el nombre puede traer '|': tomamos el resto).
+        var rest = res.substring(3);
+        var sep = rest.indexOf("|");
+        var secs = Math.round(Number(sep === -1 ? rest : rest.substring(0, sep)) * 10) / 10;
+        var clipName = sep === -1 ? "" : rest.substring(sep + 1);
+        setOffset(secs, "del clip “" + (clipName || "?") + "”");
+        hpLog("Desfase detectado del timeline: " + secs + "s (clip: " + clipName + ")");
+      });
+    });
   }
 
   // Deriva el objetivo de la clase llamando al motor (deriveObjective).
@@ -238,7 +314,7 @@
     var segments = HPStore.getTranscript();
     if (!segments || !segments.length) return null;
 
-    var slice = HPTranscript.sliceByRange(segments, marker.start, marker.start + marker.duration);
+    var slice = HPTranscript.sliceForMarker(segments, marker.start, marker.start + marker.duration, HPStore.getTranscriptOffset());
     if (!slice.length) return null;
 
     var texts = [];
@@ -258,7 +334,7 @@
     var data = HPStore.getMarkerData(markerKey);
     var gen = HPStore.getMarkerData(GEN_KEY); // prompt general (aplica a todos)
     var segments = HPStore.getTranscript() || [];
-    var markerTranscript = HPTranscript.sliceByRange(segments, marker.start, marker.start + marker.duration);
+    var markerTranscript = HPTranscript.sliceForMarker(segments, marker.start, marker.start + marker.duration, HPStore.getTranscriptOffset());
     var payload = {
       projectPath: currentProjectPath, sequenceName: currentSequenceName,
       objective: HPStore.getObjective(), transcript: segments,
@@ -449,6 +525,7 @@
       return !!(HPStore.getMarkerData(markerKey).instruction || "").trim();
     };
     card._markerKey = markerKey;
+    card._marker = marker; // para refrescar el fragmento al cambiar el desfase
 
     // Refleja el estado de un job de la cola en esta tarjeta: barra en el
     // status y un indicador en el summary (visible aunque esté colapsada).
@@ -514,7 +591,7 @@
     function updateEstimate() {
       var d = HPStore.getMarkerData(markerKey);
       var segs = HPStore.getTranscript() || [];
-      var mt = HPTranscript.sliceByRange(segs, marker.start, marker.start + marker.duration);
+      var mt = HPTranscript.sliceForMarker(segs, marker.start, marker.start + marker.duration, HPStore.getTranscriptOffset());
       var body = {
         objective: HPStore.getObjective(),
         transcript: segs,
@@ -705,6 +782,7 @@
     loadContext(function () {
       hydrateObjective();
       hydrateGeneral();
+      hydrateOffset();
       updateTranscriptStatus();
 
       HPHost.getMarkers(function (result) {
@@ -918,6 +996,7 @@
   loadContext(function () {
     hydrateObjective();
     hydrateGeneral();
+    hydrateOffset();
     updateTranscriptStatus();
   });
 

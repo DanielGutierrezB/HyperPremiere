@@ -38,6 +38,13 @@
     captureProgramFrame: function (tmpPath, cb) {
       call("hp_captureProgramFrame(" + JSON.stringify(tmpPath) + ")", cb);
     },
+    /**
+     * Estima el desfase transcript↔timeline desde el clip más largo del
+     * timeline. Devuelve "ok|<segundos>|<nombre del clip>" o "error: …".
+     */
+    getTranscriptOffsetGuess: function (cb) {
+      call("hp_getTranscriptOffsetGuess()", cb);
+    },
     /** Importa el video y lo coloca en la secuencia con etiqueta de color. */
     placeClip: function (movPath, seqName, startSec, durationSec, colorLabel, cb) {
       call("hp_placeClipInSequence(" + JSON.stringify(movPath) + ", " + JSON.stringify(seqName) + ", " +

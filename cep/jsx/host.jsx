@@ -121,6 +121,42 @@ function hp_getProjectPath() {
     }
 }
 
+// Estima el DESFASE transcript ↔ timeline mirando el clip MÁS LARGO de la
+// primera pista (video; si no hay, audio) con contenido — normalmente la
+// grabación de la clase. Si el editor recortó el inicio del video o corrió
+// el clip, inPoint (tiempo del MEDIO original) y start (posición en el
+// timeline) difieren: desfase = inPoint - start, tal que
+// tiempoTranscript = tiempoSecuencia + desfase.
+// Devuelve "ok|<segundos>|<nombre del clip>" o "error: ...".
+function hp_getTranscriptOffsetGuess() {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return "error: no hay secuencia activa";
+        function longestOfFirstTrack(tracks) {
+            try {
+                for (var t = 0; t < tracks.numTracks; t++) {
+                    var track = tracks[t];
+                    if (!track.clips || track.clips.numItems === 0) continue;
+                    var best = null, bestLen = -1;
+                    for (var i = 0; i < track.clips.numItems; i++) {
+                        var c = track.clips[i];
+                        var len = c.end.seconds - c.start.seconds;
+                        if (len > bestLen) { bestLen = len; best = c; }
+                    }
+                    return best; // solo la primera pista con clips
+                }
+            } catch (e) {}
+            return null;
+        }
+        var clip = longestOfFirstTrack(seq.videoTracks) || longestOfFirstTrack(seq.audioTracks);
+        if (!clip) return "error: la secuencia no tiene clips";
+        var offset = clip.inPoint.seconds - clip.start.seconds;
+        return "ok|" + offset + "|" + clip.name;
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // Exporta el frame actual del monitor de programa (playhead) a un PNG.
 // Adobe cambió esta API entre versiones; probamos varias vías en orden y
 // reportamos con detalle si ninguna funciona. Devuelve "ok|<ruta>" o "error: ...".
