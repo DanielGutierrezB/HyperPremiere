@@ -22,6 +22,8 @@ const { hpFetch } = require('./providers/http');
 const { run } = require('./exec');
 // Transcripción local de la secuencia con Whisper (sin nube, sin tokens).
 const { transcribeMedia, cancelTranscription, whisperStatus } = require('./transcribe');
+// Login de Claude en dos fases (URL + código) o token pegado directo.
+const claudeLogin = require('./claude-login');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition } = require('./render/hyperframes');
@@ -599,20 +601,43 @@ async function deriveObjective(body) {
   return { ok: true, objective: String((gen && gen.text) || '').trim(), usage: (gen && gen.usage) || null };
 }
 
-// Corre `claude setup-token`, abre el navegador, captura el token y lo guarda.
-async function loginClaude() {
-  const r = await run('claude', ['setup-token'], { timeoutMs: 300_000, shell: IS_WIN });
-  const m = (r.out + '\n' + r.err).match(/sk-ant-oat[0-9]+-[A-Za-z0-9_-]+/);
-  if (!m) {
-    if (r.timedOut) throw new Error('login: timeout (5 min)');
-    if (r.code === -1) throw new Error('no se pudo ejecutar claude: ' + r.err);
-    throw new Error('login: no se encontró el token en la salida');
-  }
+// Guarda un token OAuth de suscripción (sk-ant-oat…) en la config y activa
+// claude-cli. Usado por el flujo interactivo Y por el pegado manual del token.
+function persistClaudeToken(token) {
+  const t = String(token || '').trim();
+  const m = t.match(claudeLogin.TOKEN_RE);
+  if (!m) return { ok: false, error: 'Eso no parece un token de Claude (sk-ant-oat…). Pegá el token completo.' };
   const raw = loadRawConfig();
   raw.oauthToken = m[0];
   raw.provider = 'claude-cli';
   saveRawConfig(raw);
   return { ok: true, provider: 'claude-cli' };
+}
+
+// Fase 1 del login: arranca `claude setup-token` y devuelve la URL a abrir en
+// el navegador (o { done:true } si claude ya estaba logueado y dio el token).
+async function loginClaudeStart() {
+  const r = await claudeLogin.start();
+  if (!r.ok) return r;
+  if (r.done && r.token) return persistClaudeToken(r.token);
+  return { ok: true, url: r.url }; // el panel abre la URL y pide el código
+}
+
+// Fase 2: recibe el código que el usuario pegó desde la página de autorización.
+async function loginClaudeCode(body) {
+  const r = await claudeLogin.submitCode((body || {}).code);
+  if (!r.ok) return r;
+  return persistClaudeToken(r.token);
+}
+
+// Pegado manual del token (camino universal: el usuario corrió
+// `claude setup-token` a mano, o lo tiene de otro lado).
+function loginClaudeToken(body) {
+  return persistClaudeToken((body || {}).token);
+}
+
+function loginClaudeCancel() {
+  return claudeLogin.cancel();
 }
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -1167,7 +1192,10 @@ module.exports = {
   setConfig: saveConfig,
   testProvider,
   listOllamaModels,
-  loginClaude,
+  loginClaudeStart,
+  loginClaudeCode,
+  loginClaudeToken,
+  loginClaudeCancel,
   getVersion,
   checkUpdate,
   selfUpdate,

@@ -48,13 +48,19 @@ function cancelTranscription() {
   return { ok: true, cancelled: false };
 }
 
-// Herramientas soportadas, en orden de preferencia. `whisper` primero: es el
-// CLI que ya tiene el modelo descargado si "tenés whisper large-v3".
-// mlx_whisper usa la GPU de Apple Silicon pero baja SU propio modelo la
-// primera vez. (whisper.cpp queda fuera: exige la ruta del .bin del modelo.)
+// Herramientas soportadas, ordenadas por VELOCIDAD (rápidas primero). El CLI
+// clásico `whisper` (openai) corre en CPU y con large-v3 es LENTO (varios
+// minutos por clase); los otros dos son mucho más rápidos con la misma calidad:
+//   - mlx_whisper: GPU de Apple Silicon (Metal/MLX) — el más rápido en Mac M.
+//   - whisper-ctranslate2: faster-whisper (CTranslate2, int8) — ~4× en CPU,
+//     multiplataforma; flags compatibles con openai-whisper.
+//   - whisper: openai, CPU puro — último recurso (lo que la mayoría ya tiene).
+// `fast:true` marca los backends acelerados (para el indicador del panel).
+// Se puede forzar uno con HYPERPREMIERE_WHISPER_BIN=<nombre>.
 const TOOLS = [
-  { bin: 'whisper', style: 'openai' },
-  { bin: 'mlx_whisper', style: 'mlx' },
+  { bin: 'mlx_whisper', style: 'mlx', fast: true },
+  { bin: 'whisper-ctranslate2', style: 'ct2', fast: true },
+  { bin: 'whisper', style: 'openai', fast: false },
 ];
 
 // mlx_whisper no entiende alias tipo "large-v3": mapear a su repo de HF.
@@ -70,10 +76,25 @@ async function which(bin) {
   return r.code === 0 && r.out.trim() ? r.out.trim().split('\n')[0] : null;
 }
 
-// Detecta qué Whisper hay instalado. Devuelve { bin, style } o null.
+// Detecta qué Whisper hay instalado (el más rápido disponible), respetando el
+// override HYPERPREMIERE_WHISPER_BIN. Devuelve { bin, style, fast } o null.
 async function detectWhisper() {
+  const forced = (process.env.HYPERPREMIERE_WHISPER_BIN || '').trim();
+  if (forced) {
+    const known = TOOLS.filter((t) => t.bin === forced)[0];
+    if (await which(forced)) return known || { bin: forced, style: 'openai', fast: false };
+    return null;
+  }
   for (const t of TOOLS) {
     if (await which(t.bin)) return t;
+  }
+  return null;
+}
+
+// ¿Hay un backend RÁPIDO instalado (aunque no sea el elegido)? Para recomendar.
+async function hasFastBackend() {
+  for (const t of TOOLS) {
+    if (t.fast && (await which(t.bin))) return t.bin;
   }
   return null;
 }
@@ -125,6 +146,12 @@ function whisperArgs(tool, inputPath, outDir) {
   if (tool.style === 'mlx') {
     const model = MLX_MODELS[WHISPER_MODEL] || WHISPER_MODEL;
     return [inputPath, '--model', model, '--output-dir', outDir, '--output-format', 'json', '--verbose', 'True'];
+  }
+  if (tool.style === 'ct2') {
+    // whisper-ctranslate2 (faster-whisper): flags estilo openai + int8 en CPU
+    // (rápido y buena calidad). Detecta idioma solo si no se pasa --language.
+    return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
+      '--compute_type', 'int8', '--verbose', 'True'];
   }
   // openai-whisper (flags con guion bajo).
   return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json', '--verbose', 'True'];
@@ -275,12 +302,25 @@ async function transcribeMedia(body, onProgress) {
 }
 
 /**
- * ¿Hay un Whisper local instalado? Para el indicador del panel.
- * Devuelve { ok, available, tool, model }.
+ * Estado del Whisper local para el indicador del panel.
+ * Devuelve { ok, available, tool, model, fast, recommend }:
+ *   fast      → el backend elegido es acelerado (mlx / ctranslate2).
+ *   recommend → sugerencia de instalar uno rápido cuando el elegido es lento
+ *               (openai `whisper` en CPU), acorde a la plataforma.
  */
 async function whisperStatus() {
   const tool = await detectWhisper();
-  return { ok: true, available: !!tool, tool: tool ? tool.bin : '', model: WHISPER_MODEL };
+  const out = { ok: true, available: !!tool, tool: tool ? tool.bin : '', model: WHISPER_MODEL, fast: !!(tool && tool.fast), recommend: '' };
+  if (tool && !tool.fast) {
+    out.recommend = (process.platform === 'darwin')
+      ? 'Tenés el whisper de openai (CPU, lento). En Apple Silicon, `pip install mlx-whisper` es varias veces más rápido con la misma calidad.'
+      : 'Tenés el whisper de openai (CPU, lento). `pip install whisper-ctranslate2` (faster-whisper) es ~4× más rápido con la misma calidad.';
+  } else if (!tool) {
+    out.recommend = (process.platform === 'darwin')
+      ? 'Instalá uno local: `pip install mlx-whisper` (rápido en Apple Silicon) o `pip install openai-whisper`.'
+      : 'Instalá uno local: `pip install whisper-ctranslate2` (rápido) o `pip install openai-whisper`.';
+  }
+  return out;
 }
 
 module.exports = { transcribeMedia, detectWhisper, cancelTranscription, whisperStatus };

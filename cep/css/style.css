@@ -259,6 +259,20 @@ textarea:focus {
 #transcribe-progress { margin: 6px 0 2px; }
 #transcribe-progress[data-hidden="true"] { display: none; }
 
+/* Login de Claude: fase de código + pegado manual del token. */
+.login-code { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.login-code[data-hidden="true"] { display: none; }
+.login-code input, .login-manual input { flex: 1; min-width: 0; }
+.login-code a { color: var(--accent); cursor: pointer; }
+.login-manual { margin-top: 8px; }
+.login-manual > summary { cursor: pointer; font-size: 11px; user-select: none; list-style: none; }
+.login-manual > summary::-webkit-details-marker { display: none; }
+.login-manual > summary::before { content: "▸ "; color: var(--accent); }
+.login-manual[open] > summary::before { content: "▾ "; }
+.login-manual .config-actions { margin-top: 6px; }
+.login-ok { color: #4ade80 !important; }
+.login-err { color: #fbbf24 !important; }
+
 /* Indicador de Whisper local detectado (junto al botón 🎙). */
 .whisper-badge {
   flex: none;
@@ -266,7 +280,7 @@ textarea:focus {
   padding: 3px 7px; border-radius: var(--radius-sm);
   border: 1px solid rgba(74, 222, 128, 0.35); color: #4ade80;
 }
-.whisper-badge.is-missing { border-color: rgba(251, 191, 36, 0.4); color: #fbbf24; }
+.whisper-badge.is-missing, .whisper-badge.is-slow { border-color: rgba(251, 191, 36, 0.4); color: #fbbf24; }
 .whisper-badge[data-hidden="true"] { display: none; }
 
 /* Corrección del desfase transcript ↔ timeline (fila bajo "Cargar transcript"). */
@@ -737,6 +751,9 @@ textarea:focus {
   padding: 8px 12px;
 }
 .help-section > summary, .context-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
   font-size: 10px;
   font-weight: 500;
@@ -745,13 +762,39 @@ textarea:focus {
   color: var(--text-muted);
   list-style: none;
   user-select: none;
+  padding: 3px 2px;
+  border-radius: var(--radius-sm);
+  transition: color var(--ease), background-color var(--ease);
+}
+.help-section > summary:hover, .context-section > summary:hover {
+  color: var(--text-secondary);
+  background-color: var(--bg-surface);
 }
 .help-section > summary::-webkit-details-marker,
 .context-section > summary::-webkit-details-marker { display: none; }
-.help-section > summary::before,
-.context-section > summary::before { content: "▸ "; color: var(--accent); }
-.help-section[open] > summary::before,
-.context-section[open] > summary::before { content: "▾ "; }
+/* Chevron a la DERECHA que rota al abrir (afordancia clara de colapsar). */
+.help-section > summary::after,
+.context-section > summary::after {
+  content: "▸";
+  color: var(--accent);
+  font-size: 11px;
+  flex: none;
+  transition: transform var(--ease);
+}
+.help-section[open] > summary::after,
+.context-section[open] > summary::after { transform: rotate(90deg); }
+/* Estado inline: empuja el chevron a la derecha y resume lo que hay adentro. */
+.section-state {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.section-state.is-ok { color: #4ade80; }
+/* La state del "Prompt general" tiene ambas clases; el id gana a .cfg-summary. */
+#general-summary { margin-left: auto; }
 .help-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .help-body p { font-size: 12px; font-weight: 300; color: var(--text-secondary); line-height: 1.55; }
 .help-body strong { color: var(--text-primary); font-weight: 500; }
