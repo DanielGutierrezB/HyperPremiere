@@ -157,6 +157,15 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
 - Para render, la primera vez se instala **`hyperframes`** (baja un Chromium).
 - Proveedor de IA: sesión de Claude / API key / endpoint OpenAI-compatible, o **Ollama**
   local con un modelo con **visión** (ej. `qwen3-vl:30b`).
+- **Login de Claude (⚙):** abre la página de autorización en el navegador; autorizás,
+  copiás el **código** que te muestra la página y lo pegás en el panel. Requiere el CLI
+  `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)
+  en "…o pegá el token directamente" (corré `claude setup-token` en tu terminal y copialo).
+- **Transcripción local (🎙, opcional):** para máxima velocidad, en Apple Silicon
+  `pip install mlx-whisper`; multiplataforma `pip install whisper-ctranslate2` (faster-whisper).
+  El CLI clásico `pip install openai-whisper` funciona pero es lento en CPU. La herramienta
+  elige el más rápido que encuentre; forzá uno con `HYPERPREMIERE_WHISPER_BIN` y el modelo
+  con `HYPERPREMIERE_WHISPER_MODEL` (default `large-v3`).
 
 ## Instalación
 

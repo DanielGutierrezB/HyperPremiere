@@ -296,35 +296,85 @@
     if (cfgBaseUrl) cfgBaseUrl.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
     if (btnSaveConfig) btnSaveConfig.addEventListener("click", autoSave);
 
-    // Iniciar sesión en Claude: el motor corre `claude setup-token`, abre el
-    // navegador y guarda el token solo. No hay que pegar nada a mano.
+    // ── Login de Claude en dos fases ────────────────────────────────
+    // Fase 1: el motor arranca `claude setup-token` y devuelve la URL a
+    // autorizar → la abrimos en el navegador y mostramos el campo del código.
+    // Fase 2: el usuario pega el código → el motor lo envía y guarda el token.
+    // También hay pegado directo del token (camino universal).
+    var loginCodeRow = document.getElementById("login-code-row");
+    var loginCodeInput = document.getElementById("login-code");
+    var btnLoginCode = document.getElementById("btn-login-code");
+    var loginUrlLink = document.getElementById("login-url-link");
+    var loginTokenInput = document.getElementById("login-token");
+    var btnLoginToken = document.getElementById("btn-login-token");
+    var loginUrl = "";
+
+    function openInBrowser(url) {
+      try { new CSInterface().openURLInDefaultBrowser(url); return; } catch (e) {}
+      try { window.open(url, "_blank"); } catch (e) {}
+    }
+    function onLoginSuccess() {
+      loginStatus.textContent = "✓ Sesión de Claude activa";
+      loginStatus.className = "muted login-ok";
+      if (loginCodeRow) loginCodeRow.setAttribute("data-hidden", "true");
+      cfgProviderSel.value = "claude-cli";
+      currentHasSession = true;
+      populateModels(cfgProviderSel.value, effectiveModel());
+      applyProviderUI();
+      autoSave();
+      verifyProvider();
+    }
+    function loginErr(msg, isCliMissing) {
+      loginStatus.textContent = (isCliMissing
+        ? "No encontré el CLI de Claude. Instalalo (claude.ai/download) o pegá el token directamente abajo. "
+        : "Error: ") + (msg || "login falló");
+      loginStatus.className = "muted login-err";
+    }
+
     if (btnLoginClaude) {
       btnLoginClaude.addEventListener("click", function () {
         btnLoginClaude.disabled = true;
-        loginStatus.textContent = "Abrí el navegador y autorizá… (esperando)";
-        hpCall("loginClaude")
+        loginStatus.textContent = "Abriendo la autorización de Claude…";
+        loginStatus.className = "muted";
+        hpCall("loginClaudeStart")
           .then(function (data) {
-            if (data && data.ok) {
-              loginStatus.textContent = "✓ Sesión de Claude activa";
-              loginStatus.className = "muted login-ok";
-              cfgProviderSel.value = "claude-cli";
-              currentHasSession = true;
-              populateModels(cfgProviderSel.value, effectiveModel());
-              applyProviderUI();
-              autoSave();
-              verifyProvider();
-            } else {
-              loginStatus.textContent = "Error: " + ((data && data.error) || "desconocido");
-              loginStatus.className = "muted login-err";
-            }
+            if (!data || !data.ok) { loginErr(data && data.error, data && data.needCli); return; }
+            if (data.provider) { onLoginSuccess(); return; } // ya estaba logueado
+            // Fase 2: abrir la URL y pedir el código.
+            loginUrl = data.url || "";
+            if (loginUrl) openInBrowser(loginUrl);
+            if (loginCodeRow) loginCodeRow.setAttribute("data-hidden", "false");
+            loginStatus.textContent = "Autorizá en el navegador y pegá acá el código que te muestra la página.";
+            loginStatus.className = "muted";
+            if (loginCodeInput) loginCodeInput.focus();
           })
-          .catch(function (e) {
-            loginStatus.textContent = "Error: " + ((e && e.message) || "login falló");
-            loginStatus.className = "muted login-err";
-          })
+          .catch(function (e) { loginErr((e && e.message)); })
           .then(function () { btnLoginClaude.disabled = false; });
       });
     }
+    if (loginUrlLink) loginUrlLink.addEventListener("click", function (e) {
+      e.preventDefault(); if (loginUrl) openInBrowser(loginUrl);
+    });
+    if (btnLoginCode) btnLoginCode.addEventListener("click", function () {
+      var code = (loginCodeInput && loginCodeInput.value || "").trim();
+      if (!code) { loginErr("pegá el código primero"); return; }
+      btnLoginCode.disabled = true;
+      loginStatus.textContent = "Validando el código…"; loginStatus.className = "muted";
+      hpCall("loginClaudeCode", { code: code })
+        .then(function (r) { if (r && r.ok) onLoginSuccess(); else loginErr(r && r.error); })
+        .catch(function (e) { loginErr(e && e.message); })
+        .then(function () { btnLoginCode.disabled = false; });
+    });
+    if (btnLoginToken) btnLoginToken.addEventListener("click", function () {
+      var token = (loginTokenInput && loginTokenInput.value || "").trim();
+      if (!token) { loginErr("pegá el token primero"); return; }
+      btnLoginToken.disabled = true;
+      loginStatus.textContent = "Guardando el token…"; loginStatus.className = "muted";
+      hpCall("loginClaudeToken", { token: token })
+        .then(function (r) { if (r && r.ok) { if (loginTokenInput) loginTokenInput.value = ""; onLoginSuccess(); } else loginErr(r && r.error); })
+        .catch(function (e) { loginErr(e && e.message); })
+        .then(function () { btnLoginToken.disabled = false; });
+    });
 
     loadConfig();
   }

@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.3.0</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.0</span>
       </button>
     </div>
   </header>
@@ -117,7 +117,7 @@
     </div>
 
     <details id="context-section" class="context-section" open>
-      <summary>Contexto de la clase</summary>
+      <summary><span class="section-title">Contexto de la clase</span><span class="section-state" id="context-summary"></span></summary>
       <div class="context-body">
         <label class="field-label" for="objective">Objetivo de la clase</label>
         <textarea id="objective" rows="3" placeholder="Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."></textarea>
@@ -139,7 +139,7 @@
     </details>
 
     <details id="general-section" class="context-section">
-      <summary>Prompt general <span class="cfg-summary" id="general-summary"></span></summary>
+      <summary><span class="section-title">Prompt general</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
       <div class="context-body">
         <label class="field-label" for="general-instruction">Indicaciones para TODOS los marcadores</label>
         <textarea id="general-instruction" rows="3" placeholder="Estilo, marca, tipografía, colores, tono… lo que aplique a toda la clase. Se combina con la instrucción de cada marcador (no tenés que repetirlo)."></textarea>
@@ -175,9 +175,28 @@
           <input type="text" id="cfg-model-custom" placeholder="ej: gpt-4o, gemini-2.0-flash, qwen3-coder:30b">
         </div>
 
-        <div id="row-login" class="config-actions cfg-row">
-          <button id="btn-login-claude" type="button" title="Abre el navegador para autorizar tu cuenta de Claude; guarda el token solo (no hay que pegar nada)">Iniciar sesión en Claude</button>
-          <span id="login-status" class="muted"></span>
+        <div id="row-login" class="cfg-row">
+          <div class="config-actions">
+            <button id="btn-login-claude" type="button" title="Abre el navegador de Claude para autorizar. Autorizás, copiás el código que te muestra la página y lo pegás acá.">Iniciar sesión en Claude</button>
+            <span id="login-status" class="muted"></span>
+          </div>
+          <!-- Fase 2: se muestra cuando ya se abrió el navegador. -->
+          <div id="login-code-row" class="login-code" data-hidden="true">
+            <label class="field-label" for="login-code">Pegá el código que te dio la página de Claude</label>
+            <div class="config-actions">
+              <input type="text" id="login-code" placeholder="código de autorización">
+              <button id="btn-login-code" type="button" class="btn-primary">Confirmar</button>
+            </div>
+            <span class="muted">¿No se abrió el navegador? <a id="login-url-link" href="#" title="Abrir la página de autorización">abrir la página</a></span>
+          </div>
+          <!-- Camino universal: pegar el token directamente. -->
+          <details id="login-manual" class="login-manual">
+            <summary class="muted">…o pegá el token directamente</summary>
+            <div class="config-actions">
+              <input type="password" id="login-token" placeholder="sk-ant-oat…">
+              <button id="btn-login-token" type="button" title="Guardá un token que ya tengas (corré `claude setup-token` en tu terminal y pegá el resultado)">Guardar token</button>
+            </div>
+          </details>
         </div>
 
         <div id="row-apikey" class="cfg-row" data-hidden="true">

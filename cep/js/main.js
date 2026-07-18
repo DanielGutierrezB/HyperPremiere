@@ -96,6 +96,7 @@
   function hydrateObjective() {
     if (!objectiveInput) return;
     objectiveInput.value = HPStore.getObjective();
+    updateContextSummary();
   }
 
   // ── Prompt general (aplica a todos los marcadores) ──────────────────
@@ -129,6 +130,7 @@
       "input",
       debounce(function () {
         HPStore.setObjective(objectiveInput.value);
+        updateContextSummary();
       }, DEBOUNCE_MS)
     );
   }
@@ -150,12 +152,32 @@
     var segments = HPStore.getTranscript();
     var hasTranscript = segments && segments.length > 0;
     updateOffsetRowVisibility(hasTranscript);
-    if (!hasTranscript) {
+    if (hasTranscript) {
+      transcriptStatus.textContent =
+        segments.length + " segmentos · " + formatTime(transcriptDuration(segments)) + " total";
+    } else {
       transcriptStatus.textContent = "";
-      return;
     }
-    transcriptStatus.textContent =
-      segments.length + " segmentos · " + formatTime(transcriptDuration(segments)) + " total";
+    updateContextSummary();
+  }
+
+  // Resumen del header de "Contexto de la clase" (visible cuando está colapsado):
+  // muestra de un vistazo si hay objetivo y transcript.
+  var contextSummary = document.getElementById("context-summary");
+  function updateContextSummary() {
+    if (!contextSummary) return;
+    var segs = HPStore.getTranscript() || [];
+    var hasObj = (HPStore.getObjective() || "").trim().length > 0;
+    var parts = [];
+    if (hasObj) parts.push("objetivo ✓");
+    if (segs.length) parts.push(segs.length + " segmentos");
+    if (parts.length) {
+      contextSummary.textContent = parts.join(" · ");
+      contextSummary.className = "section-state is-ok";
+    } else {
+      contextSummary.textContent = "sin objetivo ni transcript";
+      contextSummary.className = "section-state";
+    }
   }
 
   // ── Desfase transcript ↔ timeline ────────────────────────────────────
@@ -904,9 +926,14 @@
     setOutput(markers.length + " marcador(es) cargados · estado guardado ✓", false);
     // Estado de secuencia arriba, en verde.
     setHeaderStatus((currentSequenceName || "secuencia") + " ✓", "ok");
-    // Flujo progresivo: al tener marcadores, colapsar contexto para dar aire.
+    // Flujo progresivo: al tener marcadores, si ya hay contexto (objetivo o
+    // transcript), colapsar la sección para que los marcadores tengan el
+    // espacio — sobre todo con el panel chico. El header colapsado muestra el
+    // estado, así que no se pierde nada de vista.
     var ctx = document.getElementById("context-section");
-    if (ctx && objectiveInput && objectiveInput.value.trim()) ctx.open = false;
+    var hasContext = (objectiveInput && objectiveInput.value.trim()) || (HPStore.getTranscript() || []).length > 0;
+    if (ctx && hasContext) ctx.open = false;
+    updateContextSummary();
     // Si hay jobs en curso de esta secuencia, reflejar su progreso en las tarjetas.
     reflectQueueOnCards();
     // Enfoque pedido desde "Ver" (clic en el nombre del clip en la Cola).
@@ -1179,17 +1206,24 @@
     hpCall("whisperStatus").then(function (st) {
       if (!st || !st.ok) return;
       badge.setAttribute("data-hidden", "false");
-      if (st.available) {
+      if (st.available && st.fast) {
         badge.className = "whisper-badge";
         badge.textContent = "✓ " + st.tool + " · " + st.model;
-        badge.title = "Whisper local detectado: “" + st.tool + "” con el modelo " + st.model +
+        badge.title = "Whisper local rápido: “" + st.tool + "” con el modelo " + st.model +
           " (se cambia con HYPERPREMIERE_WHISPER_MODEL). 🎙 transcribe sin nube y sin tokens.";
+      } else if (st.available) {
+        // Backend lento (openai whisper en CPU): avisar y recomendar el rápido.
+        badge.className = "whisper-badge is-slow";
+        badge.textContent = "⚠ " + st.tool + " (lento)";
+        badge.title = "Detectado “" + st.tool + "” (CPU, lento con " + st.model + "). " + (st.recommend || "") +
+          " Igual funciona; se cambia con HYPERPREMIERE_WHISPER_MODEL / HYPERPREMIERE_WHISPER_BIN.";
       } else {
         badge.className = "whisper-badge is-missing";
         badge.textContent = "sin whisper local";
-        badge.title = "No encontré whisper ni mlx_whisper en el PATH. Instalá uno para transcribir localmente: pip install openai-whisper (clásico) o pip install mlx-whisper (Apple Silicon).";
+        badge.title = (st.recommend || "No encontré whisper local.") + " Sin él, usá “Cargar transcript (JSON)”.";
       }
-      hpLog("Whisper local: " + (st.available ? (st.tool + " · " + st.model) : "NO detectado"));
+      hpLog("Whisper local: " + (st.available ? (st.tool + " · " + st.model + (st.fast ? " (rápido)" : " (lento)")) : "NO detectado") +
+        (st.recommend ? " · " + st.recommend : ""));
     }).catch(function () {});
   }
 
