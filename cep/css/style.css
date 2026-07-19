@@ -801,17 +801,12 @@ textarea:focus {
 }
 .section-state.is-ok { color: #4ade80; }
 .section-state.is-warn { color: var(--warn); }
+/* Sugerencia (Prompt general vacío): tenue pero en acento, invita a desplegar. */
+.section-state.is-hint { color: var(--accent); opacity: 0.85; }
 
-/* Wrapper "Preparación de la clase": las sub-secciones (Contexto / Prompt
-   general) van sin caja propia para que se lea como un panel con sub-headers,
-   no como cajas anidadas. */
-.setup-body { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; }
-.setup-body > details.context-section {
-  border: 0; background: transparent; border-radius: 0; padding: 4px 0;
-}
-.setup-body > details.context-section + details.context-section {
-  border-top: 1px solid var(--hairline);
-}
+/* Prompt general: encabezado que aplica a los marcadores de abajo. Va pegado
+   a la lista (poco margen) para leerse como "esto afecta lo de acá abajo". */
+.general-section { margin-bottom: 2px; }
 /* La state del "Prompt general" tiene ambas clases; el id gana a .cfg-summary. */
 #general-summary { margin-left: auto; }
 .help-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
