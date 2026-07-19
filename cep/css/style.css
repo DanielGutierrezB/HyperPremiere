@@ -260,6 +260,7 @@ textarea:focus {
 .transcript-row button { flex: 0 1 auto; min-width: 0; }
 .transcript-row .whisper-badge { flex: 0 1 auto; }
 .transcript-row .muted { flex: 1 1 100%; }  /* el estado ocupa su propia línea */
+.transcript-row .transcript-ok { color: #4ade80; }
 
 /* Barra de progreso de la transcripción local (Whisper). */
 #transcribe-progress { margin: 6px 0 2px; }
@@ -799,6 +800,7 @@ textarea:focus {
   color: var(--text-muted);
 }
 .section-state.is-ok { color: #4ade80; }
+.section-state.is-warn { color: var(--warn); }
 /* La state del "Prompt general" tiene ambas clases; el id gana a .cfg-summary. */
 #general-summary { margin-left: auto; }
 .help-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
