@@ -108,8 +108,14 @@
     var g = HPStore.getMarkerData(GEN_KEY);
     var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
     var hasTxt = (g.instruction || "").trim().length > 0;
-    generalSummary.textContent = (hasTxt || n) ? ("✓" + (n ? " · " + n + " adj." : "")) : "";
-    updateSetupSummary();
+    if (hasTxt || n) {
+      generalSummary.textContent = "✓ activo" + (n ? " · " + n + " adj." : "");
+      generalSummary.className = "cfg-summary section-state is-ok";
+    } else {
+      // Vacío: sugerir desplegarlo (aplica a TODOS los marcadores de abajo).
+      generalSummary.textContent = "opcional · estilo/marca para todos — desplegá";
+      generalSummary.className = "cfg-summary section-state is-hint";
+    }
   }
   function hydrateGeneral() {
     if (generalInput) generalInput.value = HPStore.getMarkerData(GEN_KEY).instruction || "";
@@ -187,50 +193,8 @@
       contextSummary.textContent = "sin objetivo ni transcript";
       contextSummary.className = "section-state";
     }
-    updateSetupSummary();
   }
 
-  // Resumen del wrapper "Preparación de la clase" (visible al colapsar TODO el
-  // setup): dice de un vistazo qué tiene la secuencia — check verde cuando está
-  // lista (transcript + objetivo), ámbar con lo que falta si no.
-  var setupSummary = document.getElementById("setup-summary");
-  function updateSetupSummary() {
-    if (!setupSummary) return;
-    var segs = HPStore.getTranscript() || [];
-    var hasTranscript = segs.length > 0;
-    var hasObj = (HPStore.getObjective() || "").trim().length > 0;
-    var gen = HPStore.getMarkerData(GEN_KEY);
-    var hasGeneral = (gen.instruction || "").trim().length > 0 ||
-      (gen.stills && gen.stills.length) || (gen.resources && gen.resources.length);
-    if (hasTranscript && hasObj) {
-      setupSummary.textContent = "✓ objetivo + transcript (" + segs.length + " seg)" + (hasGeneral ? " · prompt ✓" : "");
-      setupSummary.className = "section-state is-ok";
-    } else if (hasTranscript || hasObj) {
-      setupSummary.textContent = (hasTranscript ? segs.length + " seg · falta objetivo" : "objetivo ✓ · falta transcript") + (hasGeneral ? " · prompt ✓" : "");
-      setupSummary.className = "section-state is-warn";
-    } else {
-      setupSummary.textContent = "sin objetivo ni transcript";
-      setupSummary.className = "section-state";
-    }
-  }
-
-  // Acordeón de las SUB-secciones de setup: solo UNA abierta a la vez
-  // (Contexto de la clase ↔ Prompt general), dentro del wrapper. No incluye al
-  // wrapper mismo. Las tarjetas de marcador tienen su propio acordeón aparte.
-  (function setupSectionsAccordion() {
-    var sections = [];
-    var body = document.querySelector(".setup-body");
-    if (body) {
-      var nodes = body.querySelectorAll(":scope > details.context-section");
-      for (var i = 0; i < nodes.length; i++) sections.push(nodes[i]);
-    }
-    sections.forEach(function (sec) {
-      sec.addEventListener("toggle", function () {
-        if (!sec.open) return;
-        sections.forEach(function (other) { if (other !== sec && other.open) other.open = false; });
-      });
-    });
-  })();
 
   // ── Desfase transcript ↔ timeline ────────────────────────────────────
   // El transcript viene del video ORIGINAL; si el editor recortó el inicio o
@@ -960,8 +924,11 @@
       for (var i = 0; i < all.length; i++) {
         if (all[i] !== card) all[i].open = false;
       }
-      var setup = document.getElementById("setup-section");
-      if (setup) setup.open = false;
+      // Plegar el setup y el prompt general → máximo espacio para el marcador.
+      var ctx = document.getElementById("context-section");
+      if (ctx) ctx.open = false;
+      var gen = document.getElementById("general-section");
+      if (gen) gen.open = false;
     });
 
     syncUI();
@@ -984,12 +951,12 @@
     // Estado de secuencia arriba, en verde.
     setHeaderStatus((currentSequenceName || "secuencia") + " ✓", "ok");
     // Flujo progresivo: al tener marcadores, si ya hay contexto (objetivo o
-    // transcript), colapsar TODO el setup para que los marcadores tengan el
-    // espacio — sobre todo con el panel chico. El header colapsado muestra el
-    // resumen, así que no se pierde nada de vista.
-    var setup = document.getElementById("setup-section");
+    // transcript), colapsar Contexto para que los marcadores tengan el espacio
+    // — sobre todo con el panel chico. El header colapsado muestra el resumen,
+    // así que no se pierde nada de vista. (Prompt general ya viene replegado.)
+    var ctx = document.getElementById("context-section");
     var hasContext = (objectiveInput && objectiveInput.value.trim()) || (HPStore.getTranscript() || []).length > 0;
-    if (setup && hasContext) setup.open = false;
+    if (ctx && hasContext) ctx.open = false;
     updateContextSummary();
     // Si hay jobs en curso de esta secuencia, reflejar su progreso en las tarjetas.
     reflectQueueOnCards();

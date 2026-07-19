@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.4</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.5</span>
       </button>
     </div>
   </header>
@@ -116,9 +116,6 @@
       <span class="placeholder">Pulsá "Cargar marcadores" para leer la secuencia activa.</span>
     </div>
 
-    <details id="setup-section" class="context-section setup-section" open>
-      <summary><span class="section-title">Preparación de la clase</span><span class="section-state" id="setup-summary"></span></summary>
-      <div class="context-body setup-body">
     <details id="context-section" class="context-section" open>
       <summary><span class="section-title">Contexto de la clase</span><span class="section-state" id="context-summary"></span></summary>
       <div class="context-body">
@@ -141,7 +138,11 @@
       </div>
     </details>
 
-    <details id="general-section" class="context-section">
+    <div class="section-label">Marcadores</div>
+
+    <!-- Prompt general: encabezado PERSISTENTE que aplica a TODOS los marcadores
+         de abajo. Viene pre-replegado y sugiere desplegarlo para usarlo. -->
+    <details id="general-section" class="context-section general-section">
       <summary><span class="section-title">Prompt general</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
       <div class="context-body">
         <label class="field-label" for="general-instruction">Indicaciones para TODOS los marcadores</label>
@@ -150,10 +151,7 @@
         <div id="general-stills-mount"></div>
       </div>
     </details>
-      </div>
-    </details>
 
-    <div class="section-label">Marcadores</div>
     <div class="markers-scroll">
       <div id="markers" class="markers"></div>
     </div>
