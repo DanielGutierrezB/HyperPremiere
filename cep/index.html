@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.3</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.4</span>
       </button>
     </div>
   </header>
@@ -116,6 +116,9 @@
       <span class="placeholder">Pulsá "Cargar marcadores" para leer la secuencia activa.</span>
     </div>
 
+    <details id="setup-section" class="context-section setup-section" open>
+      <summary><span class="section-title">Preparación de la clase</span><span class="section-state" id="setup-summary"></span></summary>
+      <div class="context-body setup-body">
     <details id="context-section" class="context-section" open>
       <summary><span class="section-title">Contexto de la clase</span><span class="section-state" id="context-summary"></span></summary>
       <div class="context-body">
@@ -145,6 +148,8 @@
         <textarea id="general-instruction" rows="3" placeholder="Estilo, marca, tipografía, colores, tono… lo que aplique a toda la clase. Se combina con la instrucción de cada marcador (no tenés que repetirlo)."></textarea>
         <label class="field-label">Referencias generales (capturas, logos, PDFs)</label>
         <div id="general-stills-mount"></div>
+      </div>
+    </details>
       </div>
     </details>
 
