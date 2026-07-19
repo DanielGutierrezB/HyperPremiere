@@ -154,9 +154,11 @@
     updateOffsetRowVisibility(hasTranscript);
     if (hasTranscript) {
       transcriptStatus.textContent =
-        segments.length + " segmentos · " + formatTime(transcriptDuration(segments)) + " total";
+        "✓ " + segments.length + " segmentos · " + formatTime(transcriptDuration(segments)) + " total";
+      transcriptStatus.className = "muted transcript-ok";
     } else {
       transcriptStatus.textContent = "";
+      transcriptStatus.className = "muted";
     }
     updateContextSummary();
   }
@@ -167,18 +169,42 @@
   function updateContextSummary() {
     if (!contextSummary) return;
     var segs = HPStore.getTranscript() || [];
+    var hasTranscript = segs.length > 0;
     var hasObj = (HPStore.getObjective() || "").trim().length > 0;
-    var parts = [];
-    if (hasObj) parts.push("objetivo ✓");
-    if (segs.length) parts.push(segs.length + " segmentos");
-    if (parts.length) {
-      contextSummary.textContent = parts.join(" · ");
+    // Check verde SOLO cuando la secuencia está lista de verdad: tiene
+    // transcript Y objetivo claro. Si falta algo, se avisa en ámbar qué falta.
+    if (hasTranscript && hasObj) {
+      contextSummary.textContent = "✓ objetivo + transcript (" + segs.length + " seg)";
       contextSummary.className = "section-state is-ok";
+    } else if (hasTranscript) {
+      contextSummary.textContent = segs.length + " segmentos · falta objetivo";
+      contextSummary.className = "section-state is-warn";
+    } else if (hasObj) {
+      contextSummary.textContent = "objetivo ✓ · falta transcript";
+      contextSummary.className = "section-state is-warn";
     } else {
       contextSummary.textContent = "sin objetivo ni transcript";
       contextSummary.className = "section-state";
     }
   }
+
+  // Acordeón GENERAL de los desplegables de setup: solo UNO abierto a la vez
+  // (Contexto de la clase ↔ Prompt general). Al abrir uno, se cierra el otro.
+  // Las tarjetas de marcador tienen su propio acordeón aparte.
+  (function setupSectionsAccordion() {
+    var sections = [];
+    var mv = document.getElementById("view-markers");
+    if (mv) {
+      var nodes = mv.querySelectorAll("details.context-section");
+      for (var i = 0; i < nodes.length; i++) sections.push(nodes[i]);
+    }
+    sections.forEach(function (sec) {
+      sec.addEventListener("toggle", function () {
+        if (!sec.open) return;
+        sections.forEach(function (other) { if (other !== sec && other.open) other.open = false; });
+      });
+    });
+  })();
 
   // ── Desfase transcript ↔ timeline ────────────────────────────────────
   // El transcript viene del video ORIGINAL; si el editor recortó el inicio o
@@ -435,6 +461,8 @@
         verdict = segments.length + " segmentos · " + formatTime(tDur) + " total (no pude leer la duración de la secuencia para validar)";
       }
       transcriptStatus.textContent = verdict;
+      // Verde solo si coincide limpio; ámbar/neutro si hubo aviso de unidades o desajuste.
+      transcriptStatus.className = "muted" + ((cal.match === false || cal.label) ? "" : " transcript-ok");
       hpLog("Transcript importado: " + segments.length + " segmentos · dur " + tDur + "s · seq " + seqDur + "s · calibración: " +
         (cal.label || (cal.match === false ? "NO COINCIDE" : "ok")) + " · desfase reiniciado a 0");
 
