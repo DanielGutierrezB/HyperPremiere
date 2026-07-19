@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.1</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.2</span>
       </button>
     </div>
   </header>
@@ -124,7 +124,7 @@
         <div class="transcript-row">
           <button id="btn-transcribe-seq" type="button" class="btn-primary" title="Transcribe el video de esta secuencia con tu Whisper local (large-v3, detecta el idioma solo — sirve para clases que mezclan español e inglés) y lo alinea automáticamente al timeline. Sin nube, sin tokens. Requiere `whisper` o `mlx_whisper` instalado.">🎙 Transcribir esta secuencia</button>
           <span id="whisper-badge" class="whisper-badge" data-hidden="true"></span>
-          <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar transcript (JSON)</button>
+          <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar JSON</button>
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
         </div>
