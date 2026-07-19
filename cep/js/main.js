@@ -109,6 +109,7 @@
     var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
     var hasTxt = (g.instruction || "").trim().length > 0;
     generalSummary.textContent = (hasTxt || n) ? ("✓" + (n ? " · " + n + " adj." : "")) : "";
+    updateSetupSummary();
   }
   function hydrateGeneral() {
     if (generalInput) generalInput.value = HPStore.getMarkerData(GEN_KEY).instruction || "";
@@ -186,16 +187,41 @@
       contextSummary.textContent = "sin objetivo ni transcript";
       contextSummary.className = "section-state";
     }
+    updateSetupSummary();
   }
 
-  // Acordeón GENERAL de los desplegables de setup: solo UNO abierto a la vez
-  // (Contexto de la clase ↔ Prompt general). Al abrir uno, se cierra el otro.
-  // Las tarjetas de marcador tienen su propio acordeón aparte.
+  // Resumen del wrapper "Preparación de la clase" (visible al colapsar TODO el
+  // setup): dice de un vistazo qué tiene la secuencia — check verde cuando está
+  // lista (transcript + objetivo), ámbar con lo que falta si no.
+  var setupSummary = document.getElementById("setup-summary");
+  function updateSetupSummary() {
+    if (!setupSummary) return;
+    var segs = HPStore.getTranscript() || [];
+    var hasTranscript = segs.length > 0;
+    var hasObj = (HPStore.getObjective() || "").trim().length > 0;
+    var gen = HPStore.getMarkerData(GEN_KEY);
+    var hasGeneral = (gen.instruction || "").trim().length > 0 ||
+      (gen.stills && gen.stills.length) || (gen.resources && gen.resources.length);
+    if (hasTranscript && hasObj) {
+      setupSummary.textContent = "✓ objetivo + transcript (" + segs.length + " seg)" + (hasGeneral ? " · prompt ✓" : "");
+      setupSummary.className = "section-state is-ok";
+    } else if (hasTranscript || hasObj) {
+      setupSummary.textContent = (hasTranscript ? segs.length + " seg · falta objetivo" : "objetivo ✓ · falta transcript") + (hasGeneral ? " · prompt ✓" : "");
+      setupSummary.className = "section-state is-warn";
+    } else {
+      setupSummary.textContent = "sin objetivo ni transcript";
+      setupSummary.className = "section-state";
+    }
+  }
+
+  // Acordeón de las SUB-secciones de setup: solo UNA abierta a la vez
+  // (Contexto de la clase ↔ Prompt general), dentro del wrapper. No incluye al
+  // wrapper mismo. Las tarjetas de marcador tienen su propio acordeón aparte.
   (function setupSectionsAccordion() {
     var sections = [];
-    var mv = document.getElementById("view-markers");
-    if (mv) {
-      var nodes = mv.querySelectorAll("details.context-section");
+    var body = document.querySelector(".setup-body");
+    if (body) {
+      var nodes = body.querySelectorAll(":scope > details.context-section");
       for (var i = 0; i < nodes.length; i++) sections.push(nodes[i]);
     }
     sections.forEach(function (sec) {
@@ -925,7 +951,8 @@
 
     card.appendChild(body);
 
-    // Acordeón: al abrir esta tarjeta, colapsar las demás (ahorra pantalla).
+    // Acordeón: al abrir esta tarjeta, colapsar las demás (ahorra pantalla) y
+    // también plegar el setup de arriba (Preparación) para dar el máximo espacio.
     card.addEventListener("toggle", function () {
       if (!card.open) return;
       updateEstimate();
@@ -933,6 +960,8 @@
       for (var i = 0; i < all.length; i++) {
         if (all[i] !== card) all[i].open = false;
       }
+      var setup = document.getElementById("setup-section");
+      if (setup) setup.open = false;
     });
 
     syncUI();
@@ -955,12 +984,12 @@
     // Estado de secuencia arriba, en verde.
     setHeaderStatus((currentSequenceName || "secuencia") + " ✓", "ok");
     // Flujo progresivo: al tener marcadores, si ya hay contexto (objetivo o
-    // transcript), colapsar la sección para que los marcadores tengan el
+    // transcript), colapsar TODO el setup para que los marcadores tengan el
     // espacio — sobre todo con el panel chico. El header colapsado muestra el
-    // estado, así que no se pierde nada de vista.
-    var ctx = document.getElementById("context-section");
+    // resumen, así que no se pierde nada de vista.
+    var setup = document.getElementById("setup-section");
     var hasContext = (objectiveInput && objectiveInput.value.trim()) || (HPStore.getTranscript() || []).length > 0;
-    if (ctx && hasContext) ctx.open = false;
+    if (setup && hasContext) setup.open = false;
     updateContextSummary();
     // Si hay jobs en curso de esta secuencia, reflejar su progreso en las tarjetas.
     reflectQueueOnCards();
