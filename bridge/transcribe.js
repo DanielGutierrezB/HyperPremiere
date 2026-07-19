@@ -71,22 +71,46 @@ const MLX_MODELS = {
   'small': 'mlx-community/whisper-small-mlx',
 };
 
+// Resuelve la RUTA ABSOLUTA de un comando, o null. Clave: las apps de GUI (como
+// Premiere/CEP) corren con un PATH mínimo que NO incluye los bin de Python del
+// usuario (pyenv, conda, ~/Library/Python/*/bin), así que un `which` con el PATH
+// del proceso no encuentra mlx_whisper aunque esté instalado. Por eso:
+//   1) probamos el PATH del proceso (rápido, cubre lo instalado en dirs comunes);
+//   2) si falla, preguntamos al SHELL DE LOGIN del usuario (`zsh -lic 'command
+//      -v <bin>'`), que sí carga su PATH real (pyenv/conda/.zshrc).
+// Devolvemos la ruta absoluta y luego ejecutamos ESA ruta (así no importa que el
+// PATH de nuestro proceso no tenga el directorio).
 async function which(bin) {
-  const r = await run(IS_WIN ? 'where' : 'which', [bin], { timeoutMs: 10_000, shell: IS_WIN });
-  return r.code === 0 && r.out.trim() ? r.out.trim().split('\n')[0] : null;
+  if (IS_WIN) {
+    const r = await run('where', [bin], { timeoutMs: 10_000, shell: true });
+    return r.code === 0 && r.out.trim() ? r.out.trim().split(/\r?\n/)[0].trim() : null;
+  }
+  var r = await run('which', [bin], { timeoutMs: 8_000 });
+  if (r.code === 0 && r.out.trim()) return r.out.trim().split('\n')[0].trim();
+  // Shell de login: toma el PATH real del usuario (pyenv, conda, ~/.zshrc…).
+  const shell = process.env.SHELL || '/bin/zsh';
+  r = await run(shell, ['-lic', 'command -v ' + bin + ' 2>/dev/null'], { timeoutMs: 15_000 });
+  if (r.code === 0) {
+    const line = (r.out.trim().split('\n').pop() || '').trim();
+    if (line && line.charAt(0) === '/' ) return line; // ruta absoluta válida
+  }
+  return null;
 }
 
 // Detecta qué Whisper hay instalado (el más rápido disponible), respetando el
-// override HYPERPREMIERE_WHISPER_BIN. Devuelve { bin, style, fast } o null.
+// override HYPERPREMIERE_WHISPER_BIN. Devuelve { bin, style, fast, path } o
+// null. `path` = ruta absoluta a ejecutar (puede diferir de `bin`).
 async function detectWhisper() {
   const forced = (process.env.HYPERPREMIERE_WHISPER_BIN || '').trim();
   if (forced) {
     const known = TOOLS.filter((t) => t.bin === forced)[0];
-    if (await which(forced)) return known || { bin: forced, style: 'openai', fast: false };
+    const p = await which(forced);
+    if (p) return Object.assign({ style: 'openai', fast: false }, known || {}, { bin: forced, path: p });
     return null;
   }
   for (const t of TOOLS) {
-    if (await which(t.bin)) return t;
+    const p = await which(t.bin);
+    if (p) return Object.assign({}, t, { path: p });
   }
   return null;
 }
@@ -142,10 +166,14 @@ function languageFromVerbose(output) {
 }
 
 // Args del CLI según la herramienta. SIN --language: detección automática.
+// Args del CLI por variante. El proceso se corre con cwd = outDir, así que la
+// salida cae ahí aunque no pasemos flag de directorio (más portable entre
+// variantes). mlx_whisper usa flags con guion (--output-dir/--output-format) y
+// NO tiene --verbose; openai/ct2 usan guion bajo y sí soportan --verbose.
 function whisperArgs(tool, inputPath, outDir) {
   if (tool.style === 'mlx') {
     const model = MLX_MODELS[WHISPER_MODEL] || WHISPER_MODEL;
-    return [inputPath, '--model', model, '--output-dir', outDir, '--output-format', 'json', '--verbose', 'True'];
+    return [inputPath, '--model', model, '--output-dir', outDir, '--output-format', 'json'];
   }
   if (tool.style === 'ct2') {
     // whisper-ctranslate2 (faster-whisper): flags estilo openai + int8 en CPU
@@ -220,9 +248,13 @@ async function transcribeMedia(body, onProgress) {
         });
       }
     }, heartbeatMs);
-    const r = await run(tool.bin, whisperArgs(tool, input, tmpBase), {
+    // Ejecutamos por RUTA ABSOLUTA (tool.path) para que no importe que el PATH
+    // de nuestro proceso no tenga el dir de Python del usuario. cwd = outDir:
+    // la salida cae ahí sin depender de flags de directorio.
+    const r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase), {
       timeoutMs: 0,
       idleTimeoutMs: WHISPER_IDLE_MS,
+      cwd: tmpBase,
       shell: IS_WIN,
       onSpawn: (child) => { currentChild = child; },
       onData: (s) => {
@@ -237,7 +269,7 @@ async function transcribeMedia(body, onProgress) {
     });
     currentChild = null;
     clearInterval(heartbeat); heartbeat = null;
-    const cmdLine = tool.bin + ' ' + whisperArgs(tool, input, tmpBase).join(' ');
+    const cmdLine = (tool.path || tool.bin) + ' ' + whisperArgs(tool, input, tmpBase).join(' ');
     if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
     if (r.idle) {
       return {
@@ -310,7 +342,7 @@ async function transcribeMedia(body, onProgress) {
  */
 async function whisperStatus() {
   const tool = await detectWhisper();
-  const out = { ok: true, available: !!tool, tool: tool ? tool.bin : '', model: WHISPER_MODEL, fast: !!(tool && tool.fast), recommend: '' };
+  const out = { ok: true, available: !!tool, tool: tool ? tool.bin : '', path: tool ? (tool.path || '') : '', model: WHISPER_MODEL, fast: !!(tool && tool.fast), recommend: '' };
   if (tool && !tool.fast) {
     out.recommend = (process.platform === 'darwin')
       ? 'Tenés el whisper de openai (CPU, lento). En Apple Silicon, `pip install mlx-whisper` es varias veces más rápido con la misma calidad.'

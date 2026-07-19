@@ -1222,7 +1222,7 @@
         badge.textContent = "sin whisper local";
         badge.title = (st.recommend || "No encontré whisper local.") + " Sin él, usá “Cargar transcript (JSON)”.";
       }
-      hpLog("Whisper local: " + (st.available ? (st.tool + " · " + st.model + (st.fast ? " (rápido)" : " (lento)")) : "NO detectado") +
+      hpLog("Whisper local: " + (st.available ? (st.tool + " @ " + (st.path || "?") + " · " + st.model + (st.fast ? " (rápido)" : " (lento)")) : "NO detectado") +
         (st.recommend ? " · " + st.recommend : ""));
     }).catch(function () {});
   }
