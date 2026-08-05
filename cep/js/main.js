@@ -327,7 +327,14 @@
       var prevLabel = "🎙 Transcribir esta secuencia";
       btnTranscribe.textContent = "✕ Cancelar transcripción";
       btnTranscribe.title = "Cancela la transcripción en curso (mata el proceso de whisper)";
-      function status(msg) { if (transcriptStatus) transcriptStatus.textContent = msg; }
+      // Los errores de transcripción son MULTILÍNEA y explican qué hacer, pero
+      // `.muted` los recortaba a una línea con elipsis: quedaba un mensaje
+      // inservible. Con is-error el texto se muestra completo y seleccionable.
+      function status(msg, isError) {
+        if (!transcriptStatus) return;
+        transcriptStatus.textContent = msg;
+        transcriptStatus.classList.toggle("is-error", Boolean(isError));
+      }
       function done() {
         transcribing = false;
         btnTranscribe.disabled = false;
@@ -340,8 +347,8 @@
 
       HPHost.getPrimaryClipInfo(function (res) {
         var info = parsePrimaryClipInfo(res);
-        if (!info) { status("No pude leer la secuencia: ¿tiene clips?"); done(); return; }
-        if (!info.mediaPath) { status("El clip “" + (info.clipName || "?") + "” no tiene ruta de medio (¿es un gráfico/sintético?)."); done(); return; }
+        if (!info) { status("No pude leer la secuencia: ¿tiene clips?", true); done(); return; }
+        if (!info.mediaPath) { status("El clip “" + (info.clipName || "?") + "” no tiene ruta de medio (¿es un gráfico/sintético?).", true); done(); return; }
         hpLog("Transcripción local: clip “" + info.clipName + "” → " + info.mediaPath + " (desfase " + info.offset + "s)");
         status("Transcribiendo “" + info.clipName + "”…");
 
@@ -349,7 +356,8 @@
         // el log muestra hasta dónde llegó — antes quedaba mudo tras el clip.
         var lastProgLog = 0;
         HPEngine.callProg("transcribeMedia", {
-          mediaPath: info.mediaPath, projectPath: currentProjectPath, sequenceName: currentSequenceName
+          mediaPath: info.mediaPath, projectPath: currentProjectPath, sequenceName: currentSequenceName,
+          clipName: info.clipName || ""
         }, function (p) {
           if (!p) return;
           if (p.msg) {
@@ -381,7 +389,7 @@
           }
           done();
         }).catch(function (e) {
-          status("Error: " + ((e && e.message) || "no se pudo transcribir"));
+          status("Error: " + ((e && e.message) || "no se pudo transcribir"), true);
           hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
           done();
         });

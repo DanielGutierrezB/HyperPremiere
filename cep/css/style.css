@@ -262,6 +262,23 @@ textarea:focus {
 .transcript-row .muted { flex: 1 1 100%; }  /* el estado ocupa su propia línea */
 .transcript-row .transcript-ok { color: #4ade80; }
 
+/* Error de transcripción: explica la causa y qué hacer, en varias líneas. Sin
+   esto hereda el nowrap+elipsis de .muted y se lee media frase inútil. */
+#transcript-status.is-error {
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 9.5em;
+  text-overflow: clip;
+  color: var(--error);
+  line-height: 1.45;
+  user-select: text;
+  -webkit-user-select: text;
+  background: rgba(224, 138, 138, 0.08);
+  border: 1px solid rgba(224, 138, 138, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
 /* Barra de progreso de la transcripción local (Whisper). */
 #transcribe-progress { margin: 6px 0 2px; }
 #transcribe-progress[data-hidden="true"] { display: none; }

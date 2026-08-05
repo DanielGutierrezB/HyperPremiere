@@ -130,6 +130,33 @@ async function mediaDurationSec(mediaPath) {
   return (r.code === 0 && isFinite(d) && d > 0) ? d : 0;
 }
 
+// ¿El medio tiene alguna pista de audio? true/false, o null si no se pudo saber
+// (sin ffprobe). Un clip de video sin audio o un gráfico dan false: whisper
+// correría media hora para devolver cero segmentos.
+async function hasAudioStream(mediaPath) {
+  const r = await run('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', mediaPath], { timeoutMs: 30_000 });
+  if (r.code !== 0) return null;
+  return r.out.trim().length > 0;
+}
+
+// Volumen del audio en dB vía el filtro volumedetect de ffmpeg (escribe las
+// estadísticas en stderr). Devuelve { mean, max } o null si no se pudo medir.
+// El silencio digital puro da -91 dB; una clase hablada anda por -30/-15 dB.
+async function audioLevelDb(wavPath) {
+  const r = await run('ffmpeg', ['-i', wavPath, '-af', 'volumedetect', '-f', 'null', '-'], { timeoutMs: 300_000, idleTimeoutMs: 120_000 });
+  const all = String(r.err || '') + String(r.out || '');
+  const mean = all.match(/mean_volume:\s*(-?\d+(?:\.\d+)?) dB/);
+  const max = all.match(/max_volume:\s*(-?\d+(?:\.\d+)?) dB/);
+  if (!mean && !max) return null;
+  return {
+    mean: mean ? parseFloat(mean[1]) : null,
+    max: max ? parseFloat(max[1]) : null,
+  };
+}
+
+// Por debajo de esto no hay nada que transcribir (silencio o ruido inaudible).
+const SILENT_MAX_DB = -50;
+
 // "[mm:ss.mmm --> …]" o "[hh:mm:ss.mmm --> …]" de la salida en vivo de
 // Whisper → segundos del último timestamp visto (para la barra de progreso).
 function lastTimestampSec(chunk) {
@@ -197,6 +224,10 @@ async function transcribeMedia(body, onProgress) {
   if (!mediaPath || !fs.existsSync(mediaPath)) {
     return { ok: false, error: 'No encuentro el medio del clip: ' + (mediaPath || '(vacío)') };
   }
+  // El panel manda el nombre del clip que eligió: nombrarlo en los errores es la
+  // diferencia entre "no funcionó" y "eligió el clip equivocado".
+  const clipName = String(body.clipName || '');
+  const clipLabel = clipName ? ' “' + clipName + '”' : '';
 
   const tool = await detectWhisper();
   if (!tool) {
@@ -220,10 +251,46 @@ async function transcribeMedia(body, onProgress) {
     });
     currentChild = null;
     if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
+    let extracted = true;
     if (ff.code !== 0) {
       // Sin ffmpeg (o falló): Whisper puede leer el medio directo con su propio ffmpeg.
+      extracted = false;
       input = mediaPath;
       report({ pct: 8, msg: 'ffmpeg no pudo extraer el audio — le paso el medio directo a whisper…' });
+      // Distinguir "no hay ffmpeg" de "este clip no tiene audio": si el medio no
+      // tiene pista de audio, whisper va a correr para nada. Cortamos acá con el
+      // motivo real en vez de fallar 20 minutos después sin segmentos.
+      if (await hasAudioStream(mediaPath) === false) {
+        return {
+          ok: false,
+          error: 'El clip que se va a transcribir' + clipLabel + ' NO TIENE PISTA DE AUDIO' +
+            ' (es video mudo, un gráfico o una imagen), así que no hay nada que transcribir.' +
+            '\nMedio: ' + mediaPath +
+            '\nQué hacer: el panel transcribe el clip MÁS LARGO de la secuencia (video o audio). Si tu narración' +
+            ' está en otro clip, asegurate de que ese sea el más largo, o cargá el transcript con "Cargar JSON".',
+        };
+      }
+    }
+
+    // Nivel del audio extraído: si está en silencio, whisper devolvería cero
+    // segmentos tras correr un buen rato. Es barato medirlo y ahorra la espera.
+    let level = null;
+    if (extracted) {
+      report({ pct: 9, msg: 'Revisando que el audio tenga sonido…' });
+      level = await audioLevelDb(input);
+      if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
+      if (level && level.max !== null && level.max <= SILENT_MAX_DB) {
+        return {
+          ok: false,
+          error: 'El audio del clip' + clipLabel + ' está EN SILENCIO' +
+            ' (pico ' + level.max + ' dB, medio ' + (level.mean === null ? '?' : level.mean) + ' dB):' +
+            ' no hay voz que transcribir.' +
+            '\nMedio: ' + mediaPath +
+            '\nQué hacer: el panel transcribe el clip MÁS LARGO de la secuencia (video o audio). Puede haber' +
+            ' elegido un clip mudo (cámara sin audio, música bajada, un gráfico largo). Revisá que la narración' +
+            ' esté en el clip más largo, o cargá el transcript con "Cargar JSON".',
+        };
+      }
     }
 
     const durationSec = await mediaDurationSec(input);
@@ -302,9 +369,23 @@ async function transcribeMedia(body, onProgress) {
       language = language || languageFromVerbose(r.out + '\n' + r.err);
     }
     if (!segments.length) {
+      // Llegar acá con el JSON escrito significa que whisper corrió bien y
+      // NO ENCONTRÓ VOZ; sin JSON, que la variante del CLI no escribió nada.
+      // Son problemas distintos y antes se reportaban con el mismo texto.
+      const detectedLang = languageFromVerbose(r.out + '\n' + r.err);
+      const levelTxt = level
+        ? ' (audio: pico ' + level.max + ' dB, medio ' + level.mean + ' dB)'
+        : '';
+      const cause = jsonName
+        ? tool.bin + ' corrió bien pero NO ENCONTRÓ VOZ en el audio del clip' + clipLabel + levelTxt +
+          '.\nSi el clip tiene música o ruido pero nadie habla, es esperable.' +
+          (detectedLang ? ' Idioma detectado: ' + detectedLang + '.' : '')
+        : tool.bin + ' terminó sin escribir el JSON ni imprimir segmentos: probablemente la variante' +
+          ' instalada del CLI no soporta estos flags.';
       return {
         ok: false,
-        error: tool.bin + ' terminó pero no escribió el JSON ni imprimió segmentos (¿el clip tiene audio? ¿es la variante correcta del CLI?).' +
+        error: cause +
+          '\nMedio: ' + mediaPath +
           '\nComando: ' + cmdLine +
           '\nArchivos en la salida: ' + fs.readdirSync(tmpBase).join(', ') +
           '\nSalida: ' + (r.out + '\n' + r.err).slice(-500),
