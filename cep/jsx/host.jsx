@@ -44,7 +44,15 @@ function hp_getMarkers() {
         var items = [];
         var marker = markers.getFirstMarker();
         while (marker) {
+            // guid: identidad estable del marcador (Premiere 11.1+). Sobrevive
+            // moverlo, renombrarlo y reabrir el proyecto; un marcador nuevo trae
+            // uno nuevo. Es lo que le permite al panel numerar por marcador y no
+            // por posición. Si la versión no lo expone, va vacío y el panel cae
+            // a la numeración por posición.
+            var guid = "";
+            try { guid = marker.guid; } catch (eg) { guid = ""; }
             items.push({
+                guid: guid,
                 name: marker.name,
                 comment: marker.comments,
                 start: marker.start.seconds,
@@ -62,7 +70,8 @@ function hp_getMarkers() {
             var it = items[i];
             parts.push(
                 '{"index":' + i +
-                ',"name":"' + hp_escapeJsonString(it.name) +
+                ',"guid":"' + hp_escapeJsonString(it.guid) +
+                '","name":"' + hp_escapeJsonString(it.name) +
                 '","comment":"' + hp_escapeJsonString(it.comment) +
                 '","start":' + it.start +
                 ',"duration":' + (it.end - it.start) +

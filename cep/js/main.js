@@ -496,10 +496,17 @@
   // Marcadores
   // ---------------------------------------------------------------------
 
-  // Nombre/ID consecutivo por orden del marcador: "Marcador 1", "Marcador 2"…
+  // Nombre/ID del marcador: lo asigna LA HERRAMIENTA la primera vez que ve ese
+  // marcador (por su guid de Premiere) y no se reusa. NO es su posición en la
+  // secuencia: así podés borrar, rehacer y mover marcadores sin que el nuevo
+  // herede la instrucción, las imágenes ni los videos del que estaba en ese
+  // lugar. Por eso la numeración puede tener huecos (1, 2, 5…), y está bien.
   // Es la nomenclatura que ve el editor Y la que usan los archivos generados.
   function markerKeyFor(marker) {
-    return "Marcador " + (marker.index + 1);
+    var n = HPStore.assignMarkerNumber(marker && marker.guid);
+    // Sin guid (Premiere que no lo expone): volvemos a la posición, como antes.
+    if (!n) n = (marker.index || 0) + 1;
+    return "Marcador " + n;
   }
 
   // ¿El texto de un refinamiento se refiere a las imágenes adjuntas? Si NO las
@@ -942,6 +949,16 @@
       setOutput("La secuencia activa no tiene marcadores.", false);
       setHeaderStatus((currentSequenceName || "secuencia") + " · sin marcadores", "idle");
       return;
+    }
+
+    // Secuencias que vienen de la numeración por posición: adoptar el orden
+    // actual como numeración inicial ANTES de crear las tarjetas, para que las
+    // instrucciones y los videos ya generados sigan calzando con su marcador.
+    // No hace nada si la secuencia ya tiene registro.
+    var guids = [];
+    for (var g = 0; g < markers.length; g++) guids.push(markers[g].guid);
+    if (HPStore.seedMarkerNumbers(guids)) {
+      hpLog("Numeración de marcadores: adoptado el orden actual (1.." + guids.length + ") para esta secuencia");
     }
 
     for (var i = 0; i < markers.length; i++) {

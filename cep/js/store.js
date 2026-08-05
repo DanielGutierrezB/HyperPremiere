@@ -39,8 +39,29 @@
     return {
       objective: '',
       transcript: [],
-      markers: {} // markerKey -> { instruction: "", stills: [] }
+      markers: {},     // markerKey -> { instruction: "", stills: [] }
+      markerIds: {},   // guid del marcador en Premiere -> numero asignado
+      markerIdSeq: 0   // ultimo numero entregado (los numeros no se reusan)
     };
+  }
+
+  /**
+   * Completa el registro de numeracion de marcadores en un estado leido.
+   * `markerIdSeq` se reconstruye desde el maximo ya asignado si falta o vino
+   * corrupto, para no volver a entregar un numero que ya tiene archivos.
+   */
+  function normalizeMarkerIds(state) {
+    if (!state.markerIds || typeof state.markerIds !== 'object') state.markerIds = {};
+    var max = 0;
+    var guids = Object.keys(state.markerIds);
+    for (var i = 0; i < guids.length; i++) {
+      var n = parseInt(state.markerIds[guids[i]], 10);
+      if (isNaN(n) || n < 1) delete state.markerIds[guids[i]];
+      else if (n > max) max = n;
+    }
+    var seq = parseInt(state.markerIdSeq, 10);
+    state.markerIdSeq = (isNaN(seq) || seq < max) ? max : seq;
+    return state;
   }
 
   /**
@@ -65,6 +86,7 @@
       if (typeof parsed.objective !== 'string') parsed.objective = '';
       if (!isArray(parsed.transcript)) parsed.transcript = [];
       if (!parsed.markers || typeof parsed.markers !== 'object') parsed.markers = {};
+      normalizeMarkerIds(parsed);
       return parsed;
     } catch (e) {
       return emptyState();
@@ -181,6 +203,52 @@
       writeState(state);
     },
 
+    // ── Numeracion de marcadores (propiedad de la herramienta) ─────────
+    // El numero de un marcador NO es su posicion en la secuencia: se le asigna
+    // la primera vez que se lo ve (por su `guid` de Premiere) y no se reusa
+    // nunca. Antes se derivaba de la posicion, asi que borrar un marcador y
+    // crear otro hacia que el nuevo heredara la instruccion, las imagenes y los
+    // videos ya renderizados del viejo (los archivos se llaman "Marcador N vX").
+
+    /**
+     * Numero de este marcador, asignandole el siguiente libre si es la primera
+     * vez que se lo ve. Devuelve 0 si no hay guid (el caller decide el fallback).
+     */
+    assignMarkerNumber: function (guid) {
+      var g = String(guid == null ? '' : guid);
+      if (!g) return 0;
+      var state = readState();
+      var have = parseInt(state.markerIds[g], 10);
+      if (!isNaN(have) && have > 0) return have;
+      var n = state.markerIdSeq + 1;
+      state.markerIds[g] = n;
+      state.markerIdSeq = n;
+      writeState(state);
+      return n;
+    },
+
+    /**
+     * Adopta el orden actual (1..n) como numeracion inicial. Solo actua si el
+     * registro esta vacio: es la migracion de las secuencias que se numeraban
+     * por posicion, para que lo ya generado siga calzando con su marcador.
+     * Devuelve true si sembro.
+     */
+    seedMarkerNumbers: function (guids) {
+      if (!isArray(guids) || !guids.length) return false;
+      var state = readState();
+      if (Object.keys(state.markerIds).length > 0) return false;
+      var n = 0;
+      for (var i = 0; i < guids.length; i++) {
+        var g = String(guids[i] == null ? '' : guids[i]);
+        if (!g || state.markerIds[g]) continue;
+        state.markerIds[g] = ++n;
+      }
+      if (!n) return false;
+      state.markerIdSeq = n;
+      writeState(state);
+      return true;
+    },
+
     /**
      * Datos de un marcador. Nunca devuelve null: si no hay nada guardado,
      * devuelve { instruction: "", stills: [] }.
@@ -189,7 +257,8 @@
       var state = readState();
       var entry = state.markers[String(markerKey)];
       if (!entry || typeof entry !== 'object') {
-        return { instruction: '', stills: [], stillUse: [], resources: [] };
+        // Misma forma que la rama con datos: los callers nunca ven undefined.
+        return { instruction: '', stills: [], stillUse: [], resources: [], generated: false, background: false };
       }
       // stillUse[i]: true = "recurso a usar/incrustar", false/ausente = "referencia".
       return {
