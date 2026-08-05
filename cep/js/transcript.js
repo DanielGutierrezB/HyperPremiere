@@ -426,11 +426,68 @@
     return out;
   }
 
+  // ── Bucles de repetición de Whisper ────────────────────────────────
+  // Cuando a Whisper se le termina la voz (silencio, música, el final de la
+  // clase) no se calla: alucina, y como por defecto se alimenta de su propia
+  // salida anterior, entra en bucle repitiendo la última frase decenas de veces
+  // en tramos exactos de 2 s. Eso no es solo ruido visual: se va entero en el
+  // prompt del marcador (miles de tokens de la misma frase) y ensucia lo que
+  // genera el modelo. Vive acá porque lo necesitan los dos lados: el motor al
+  // transcribir y el panel al importar un JSON hecho antes de este arreglo.
+
+  // Mínimo de segmentos consecutivos con el MISMO texto para llamarlo bucle.
+  // Dos seguidos pueden ser habla real ("no, no"); de tres en adelante, con el
+  // texto idéntico, es alucinación.
+  var LOOP_MIN_RUN = 3;
+
+  function normalizeForLoop(text) {
+    return String(text == null ? '' : text)
+      .toLowerCase()
+      .replace(/[\s\u00a0]+/g, ' ')
+      .replace(/[.,;:!¡?¿…"'`´()\-–—]/g, '')
+      .trim();
+  }
+
+  /**
+   * Quita los bucles dejando SOLO la primera aparición de cada racha.
+   * Devuelve { segments, removed, loops: [{ text, count, start, end }] }.
+   * No modifica el array recibido.
+   */
+  function stripRepetitionLoops(segments) {
+    var list = Object.prototype.toString.call(segments) === '[object Array]' ? segments : [];
+    var out = [];
+    var loops = [];
+    var i = 0;
+    while (i < list.length) {
+      var key = normalizeForLoop(list[i].text);
+      var j = i + 1;
+      if (key) {
+        while (j < list.length && normalizeForLoop(list[j].text) === key) j++;
+      }
+      var runLength = j - i;
+      out.push(list[i]);
+      if (runLength >= LOOP_MIN_RUN) {
+        loops.push({
+          text: String(list[i].text || '').trim(),
+          count: runLength,
+          start: Number(list[i].start) || 0,
+          end: Number(list[j - 1].end) || 0
+        });
+      } else {
+        // Racha corta (1 o 2): se conserva tal cual, puede ser habla real.
+        for (var k = i + 1; k < j; k++) out.push(list[k]);
+      }
+      i = j;
+    }
+    return { segments: out, removed: list.length - out.length, loops: loops };
+  }
+
   global.HPTranscript = {
     parse: parse,
     timecodeToSeconds: timecodeToSeconds,
     sliceByRange: sliceByRange,
     sliceForMarker: sliceForMarker,
-    calibrateUnits: calibrateUnits
+    calibrateUnits: calibrateUnits,
+    stripRepetitionLoops: stripRepetitionLoops
   };
 })(typeof window !== 'undefined' ? window : this);

@@ -24,7 +24,10 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    sin nube ni tokens) y lo **borra**. Detecta el idioma solo (sirve mezclando español
    e inglés) y, como transcribe la *mezcla de la secuencia*, los tiempos ya coinciden
    con el timeline: **desfase 0**, sin ajustes a mano. Deja un respaldo
-   (`transcript-whisper.json`) en la carpeta de la secuencia. Requiere `whisper` (pip install openai-whisper) o
+   (`transcript-whisper.json`) en la carpeta de la secuencia.
+   Si la secuencia termina con una cola sin narración (overlays, cierre), se recorta
+   antes de transcribir: ahí Whisper alucina y entra en **bucle** repitiendo la última
+   frase. Por si igual aparece, las repeticiones se colapsan al guardar y al importar. Requiere `whisper` (pip install openai-whisper) o
    `mlx_whisper` en el PATH; el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
    También podés **cargar un transcript JSON**: si viene del video original y editaste
    el timeline, corregí el corrimiento con **Desfase (s)** o **Detectar del timeline**

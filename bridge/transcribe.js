@@ -157,6 +157,44 @@ async function audioLevelDb(wavPath) {
 // Por debajo de esto no hay nada que transcribir (silencio o ruido inaudible).
 const SILENT_MAX_DB = -50;
 
+// La secuencia suele terminar DESPUÉS de la narración (los overlays del plugin,
+// un cierre, un fundido), así que el .wav trae una cola muda. Whisper no se
+// queda callado ahí: alucina, y encima alimentado por su salida anterior entra
+// en bucle repitiendo la última frase durante minutos. Cortar esa cola antes de
+// transcribir evita el problema en el origen y ahorra el tiempo de procesarla.
+// Solo se recorta el FINAL: los tiempos del resto no se mueven.
+const TAIL_MIN_SEC = 20;   // colas más cortas no valen la pena
+const TAIL_MARGIN_SEC = 1; // margen para no comerse la última palabra
+
+/**
+ * Segundo en que arranca el silencio FINAL del wav, o null si no hay cola muda.
+ * Usa el silencedetect de ffmpeg y se queda con el último tramo de silencio que
+ * no vuelve a cerrarse (es decir, el que llega hasta el final del archivo).
+ */
+async function trailingSilenceStart(wavPath, durationSec) {
+  const r = await run('ffmpeg', ['-i', wavPath, '-af',
+    'silencedetect=noise=' + SILENT_MAX_DB + 'dB:d=' + TAIL_MIN_SEC, '-f', 'null', '-'],
+    { timeoutMs: 600_000, idleTimeoutMs: 120_000 });
+  const all = String(r.err || '') + String(r.out || '');
+  // ffmpeg cierra el último silencio con un silence_end en el fin del archivo,
+  // así que "silencio sin cerrar" no sirve para reconocer la cola: hay que ver
+  // si el ÚLTIMO tramo de silencio llega hasta el final del audio.
+  const re = /silence_(start|end):\s*(-?\d+(?:\.\d+)?)/g;
+  let lastStart = null;
+  let lastEnd = null;
+  let m;
+  while ((m = re.exec(all)) !== null) {
+    const v = parseFloat(m[2]);
+    if (m[1] === 'start') { lastStart = v; lastEnd = null; } else { lastEnd = v; }
+  }
+  if (lastStart === null || !isFinite(lastStart) || lastStart <= 0) return null;
+  // Si cerró antes del final, ese silencio es del medio (una pausa larga), no la
+  // cola: recortar ahí se comería narración posterior.
+  if (lastEnd !== null && durationSec > 0 && lastEnd < (durationSec - 1)) return null;
+  if (durationSec > 0 && (durationSec - lastStart) < TAIL_MIN_SEC) return null;
+  return lastStart;
+}
+
 // "[mm:ss.mmm --> …]" o "[hh:mm:ss.mmm --> …]" de la salida en vivo de
 // Whisper → segundos del último timestamp visto (para la barra de progreso).
 function lastTimestampSec(chunk) {
@@ -197,20 +235,67 @@ function languageFromVerbose(output) {
 // salida cae ahí aunque no pasemos flag de directorio (más portable entre
 // variantes). mlx_whisper usa flags con guion (--output-dir/--output-format) y
 // NO tiene --verbose; openai/ct2 usan guion bajo y sí soportan --verbose.
-function whisperArgs(tool, inputPath, outDir) {
+// Cuando Whisper se queda sin voz que transcribir (silencio, música, el final
+// de la clase) puede entrar en BUCLE: repite la última frase decenas de veces en
+// tramos exactos de 2 s. Pasa porque por defecto se alimenta de su propia salida
+// anterior como prompt, y una vez que arranca a repetir se retroalimenta.
+// Apagar ese "condition on previous text" corta el espiral de raíz.
+// Los flags cambian de estilo por variante: mlx usa guion, openai/ct2 guion bajo.
+function antiLoopArgs(tool) {
+  return tool.style === 'mlx'
+    ? ['--condition-on-previous-text', 'False']
+    : ['--condition_on_previous_text', 'False'];
+}
+
+function whisperArgs(tool, inputPath, outDir, opts) {
+  const extra = (opts && opts.noAntiLoop) ? [] : antiLoopArgs(tool);
   if (tool.style === 'mlx') {
     const model = MLX_MODELS[WHISPER_MODEL] || WHISPER_MODEL;
-    return [inputPath, '--model', model, '--output-dir', outDir, '--output-format', 'json'];
+    return [inputPath, '--model', model, '--output-dir', outDir, '--output-format', 'json'].concat(extra);
   }
   if (tool.style === 'ct2') {
     // whisper-ctranslate2 (faster-whisper): flags estilo openai + int8 en CPU
     // (rápido y buena calidad). Detecta idioma solo si no se pasa --language.
     return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
-      '--compute_type', 'int8', '--verbose', 'True'];
+      '--compute_type', 'int8', '--verbose', 'True'].concat(extra);
   }
   // openai-whisper (flags con guion bajo).
-  return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json', '--verbose', 'True'];
+  return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
+    '--verbose', 'True'].concat(extra);
 }
+
+// ¿Falló porque el CLI instalado no conoce los flags anti-bucle? En ese caso
+// conviene reintentar sin ellos antes que perder la transcripción entera.
+function isUnknownFlagError(out) {
+  return /unrecognized arguments|no such option|unknown option|invalid choice/i.test(String(out || ''));
+}
+
+// La limpieza de bucles vive en el módulo de transcripts porque la necesitan los
+// dos lados: acá al transcribir y el panel al importar un JSON. Ese archivo se
+// autodetecta navegador/Node, así que desde Node se puede requerir.
+// OJO con la ruta: en el repo es cep/js/transcript.js, pero en el ZXP instalado
+// el contenido de cep/ queda en la RAÍZ, al lado de bridge/ (o sea ../js/...).
+// Hay que probar las dos o el motor no carga en la extensión empaquetada.
+function loadTranscriptLib() {
+  const candidates = ['../cep/js/transcript.js', '../js/transcript.js'];
+  for (const rel of candidates) {
+    try {
+      return require(rel).HPTranscript;
+    } catch (e) {
+      // Solo seguimos si es "no está ahí"; un error real del módulo debe salir.
+      if (!e || e.code !== 'MODULE_NOT_FOUND') throw e;
+    }
+  }
+  return null;
+}
+
+const transcriptLib = loadTranscriptLib();
+// Si el layout cambiara y no se encontrara, es preferible transcribir sin la red
+// de limpieza que dejar el motor entero sin cargar.
+const stripRepetitionLoops = (transcriptLib && transcriptLib.stripRepetitionLoops)
+  || function (segments) {
+    return { segments: Array.isArray(segments) ? segments : [], removed: 0, loops: [] };
+  };
 
 /**
  * Transcribe el medio con el Whisper local y devuelve
@@ -303,7 +388,30 @@ async function transcribeMedia(body, onProgress) {
       }
     }
 
-    const durationSec = await mediaDurationSec(input);
+    let durationSec = await mediaDurationSec(input);
+
+    // 1b) Cortar la cola muda del final (si hay). Solo el final, así que los
+    //     tiempos del transcript siguen alineados al timeline.
+    if (extracted && durationSec > TAIL_MIN_SEC) {
+      const tailAt = await trailingSilenceStart(input, durationSec);
+      if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
+      if (tailAt !== null) {
+        const cutAt = Math.min(durationSec, tailAt + TAIL_MARGIN_SEC);
+        const trimmed = path.join(tmpBase, 'trimmed.wav');
+        const cut = await run('ffmpeg', ['-y', '-i', input, '-t', String(cutAt), '-c', 'copy', trimmed],
+          { timeoutMs: 600_000, idleTimeoutMs: 120_000, onSpawn: (child) => { currentChild = child; } });
+        currentChild = null;
+        if (cut.code === 0 && fs.existsSync(trimmed) && fs.statSync(trimmed).size > 0) {
+          const saved = Math.round(durationSec - cutAt);
+          report({
+            pct: 9,
+            msg: 'La secuencia termina con ' + saved + 's sin narración: los recorto para que Whisper no alucine ahí.',
+          });
+          input = trimmed;
+          durationSec = cutAt;
+        }
+      }
+    }
 
     // 2) Whisper local, idioma automático. Sin tope TOTAL (una clase larga en
     //    CPU tarda lo que tarda) pero con watchdog de INACTIVIDAD: si queda
@@ -328,7 +436,7 @@ async function transcribeMedia(body, onProgress) {
     // Ejecutamos por RUTA ABSOLUTA (tool.path) para que no importe que el PATH
     // de nuestro proceso no tenga el dir de Python del usuario. cwd = outDir:
     // la salida cae ahí sin depender de flags de directorio.
-    const r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase), {
+    const runOpts = {
       timeoutMs: 0,
       idleTimeoutMs: WHISPER_IDLE_MS,
       cwd: tmpBase,
@@ -343,10 +451,20 @@ async function transcribeMedia(body, onProgress) {
           report({ pct, msg: 'Transcribiendo… ' + Math.round(ts) + 's / ' + Math.round(durationSec) + 's' });
         }
       },
-    });
+    };
+    let argOpts = {};
+    let r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase, argOpts), runOpts);
+    // Si esta variante del CLI no conoce el flag anti-bucle, mejor reintentar sin
+    // él que tirar a la basura la transcripción de una clase entera.
+    if (!cancelled && r.code !== 0 && isUnknownFlagError(r.err + '\n' + r.out)) {
+      report({ pct: 10, msg: 'Tu variante de ' + tool.bin + ' no acepta el flag anti-repetición — reintento sin él…' });
+      argOpts = { noAntiLoop: true };
+      lastOutputAt = Date.now();
+      r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase, argOpts), runOpts);
+    }
     currentChild = null;
     clearInterval(heartbeat); heartbeat = null;
-    const cmdLine = (tool.path || tool.bin) + ' ' + whisperArgs(tool, input, tmpBase).join(' ');
+    const cmdLine = (tool.path || tool.bin) + ' ' + whisperArgs(tool, input, tmpBase, argOpts).join(' ');
     if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
     if (r.idle) {
       return {
@@ -402,7 +520,20 @@ async function transcribeMedia(body, onProgress) {
       };
     }
 
-    // 4) Respaldo en la carpeta de la secuencia (mismo formato que se importa).
+    // 4) Sacar los bucles de repetición ANTES de guardar y de devolver, así el
+    //    respaldo también queda limpio y ningún prompt se come la frase repetida.
+    const cleaned = stripRepetitionLoops(segments);
+    if (cleaned.removed > 0) {
+      const worst = cleaned.loops.slice().sort((a, b) => b.count - a.count)[0];
+      report({
+        pct: 96,
+        msg: 'Limpié ' + cleaned.removed + ' repeticiones alucinadas por Whisper' +
+          (worst ? ' (la peor: ' + worst.count + '× desde ' + Math.round(worst.start) + 's)' : '') + '.',
+      });
+      segments = cleaned.segments;
+    }
+
+    // 5) Respaldo en la carpeta de la secuencia (mismo formato que se importa).
     let savedPath = '';
     try {
       const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
@@ -412,12 +543,17 @@ async function transcribeMedia(body, onProgress) {
         // Apuntar al .wav temporal (ya borrado) no sirve de nada: dejamos la
         // fuente real, que es la secuencia.
         source: isSeqAudio ? ('audio de la secuencia' + clipLabel) : mediaPath,
-        createdAt: new Date().toISOString(), segments,
+        createdAt: new Date().toISOString(),
+        loopsRemoved: cleaned.removed, loops: cleaned.loops,
+        segments,
       }, null, 2), 'utf8');
     } catch (e) {}
 
     report({ pct: 100, msg: '✓ Transcripción lista (' + segments.length + ' segmentos).' });
-    return { ok: true, segments, language, tool: tool.bin, savedPath };
+    return {
+      ok: true, segments, language, tool: tool.bin, savedPath,
+      loopsRemoved: cleaned.removed, loops: cleaned.loops,
+    };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   } finally {
@@ -454,4 +590,7 @@ async function whisperStatus() {
   return out;
 }
 
-module.exports = { transcribeMedia, detectWhisper, cancelTranscription, whisperStatus };
+module.exports = {
+  transcribeMedia, detectWhisper, cancelTranscription, whisperStatus,
+  stripRepetitionLoops, trailingSilenceStart,
+};

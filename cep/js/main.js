@@ -404,9 +404,19 @@
           // El audio ES la secuencia: los tiempos ya coinciden con el timeline.
           setOffset(0, "audio de la secuencia");
           updateTranscriptStatus();
+          // Whisper a veces entra en bucle sobre el silencio y repite la última
+          // frase decenas de veces; se limpia en el motor y se avisa acá, porque
+          // si no el editor ve un transcript "más corto" sin saber por qué.
+          var loopNote = r.loopsRemoved ? " · limpié " + r.loopsRemoved + " repeticiones alucinadas" : "";
           status(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
-            r.tool + " ✓ (respaldo en la carpeta de la secuencia)");
-          hpLog("Transcripción local OK: " + r.segments.length + " segmentos · " + r.language + " · " + r.savedPath);
+            r.tool + loopNote + " ✓ (respaldo en la carpeta de la secuencia)");
+          hpLog("Transcripción local OK: " + r.segments.length + " segmentos · " + r.language + loopNote + " · " + r.savedPath);
+          if (r.loops && r.loops.length) {
+            r.loops.forEach(function (l) {
+              hpLog("Bucle de Whisper: " + l.count + "× “" + String(l.text).slice(0, 60) + "” entre " +
+                Math.round(l.start) + "s y " + Math.round(l.end) + "s", "WARN");
+            });
+          }
           // Derivar el objetivo si está vacío (igual que al importar un JSON).
           if (!HPStore.getObjective() || !HPStore.getObjective().trim()) {
             deriveObjectiveFromTranscript(r.segments);
@@ -454,6 +464,13 @@
   // fondo), reinicia el desfase a 0 (un transcript nuevo no hereda el desfase
   // del anterior) y muestra el veredicto transcript vs secuencia.
   function adoptTranscript(segments) {
+    // Un JSON puede venir con bucles de Whisper (los respaldos hechos antes de
+    // que el motor los limpiara, o transcripts de otras herramientas).
+    var noLoops = HPTranscript.stripRepetitionLoops(segments);
+    if (noLoops.removed > 0) {
+      hpLog("Transcript importado: limpié " + noLoops.removed + " repeticiones alucinadas.", "WARN");
+      segments = noLoops.segments;
+    }
     HPHost.getSequenceDuration(function (res) {
       var seqDur = 0;
       if (String(res || "").indexOf("ok|") === 0) seqDur = parseFloat(String(res).substring(3)) || 0;
@@ -482,6 +499,7 @@
       } else {
         verdict = segments.length + " segmentos · " + formatTime(tDur) + " total (no pude leer la duración de la secuencia para validar)";
       }
+      if (noLoops.removed > 0) verdict += " · limpié " + noLoops.removed + " repeticiones alucinadas";
       transcriptStatus.textContent = verdict;
       // Verde solo si coincide limpio; ámbar/neutro si hubo aviso de unidades o desajuste.
       transcriptStatus.className = "muted" + ((cal.match === false || cal.label) ? "" : " transcript-ok");
