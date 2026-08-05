@@ -47,6 +47,15 @@
       call("hp_getPrimaryClipInfo()", cb);
     },
     /**
+     * Renderiza el AUDIO de la secuencia activa completa a `outPath` (.wav mono
+     * 16 kHz, con el preset de Premiere). Es la fuente para transcribir: sale
+     * la MEZCLA de la secuencia, así que los tiempos ya están alineados al
+     * timeline. Devuelve "ok|<ruta>|<preset>" o "error: …".
+     */
+    exportSequenceAudio: function (outPath, cb) {
+      call("hp_exportSequenceAudio(" + JSON.stringify(outPath) + ")", cb);
+    },
+    /**
      * Duración real de la secuencia (fin del último clip, todas las pistas).
      * Devuelve "ok|<segundos>" o "error: …". Referencia para validar las
      * unidades de tiempo de un transcript importado.

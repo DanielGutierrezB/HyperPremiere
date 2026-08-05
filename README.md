@@ -19,10 +19,12 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
 1. Ponés **marcadores nativos con duración** en tu secuencia donde querés un recurso y
    pulsás **Cargar marcadores** → una **tarjeta** por marcador.
 2. Le das **contexto**: el **Objetivo de la clase** y el transcript. Lo más directo es
-   **🎙 Transcribir esta secuencia**: usa tu **Whisper local** (large-v3, sin nube ni
-   tokens), detecta el idioma solo (sirve mezclando español e inglés), se alinea
-   automáticamente al timeline y deja un respaldo (`transcript-whisper.json`) en la
-   carpeta de la secuencia. Requiere `whisper` (pip install openai-whisper) o
+   **🎙 Transcribir esta secuencia**: Premiere exporta el audio de la secuencia a un
+   **.wav temporal** (mono 16 kHz), lo transcribe con tu **Whisper local** (large-v3,
+   sin nube ni tokens) y lo **borra**. Detecta el idioma solo (sirve mezclando español
+   e inglés) y, como transcribe la *mezcla de la secuencia*, los tiempos ya coinciden
+   con el timeline: **desfase 0**, sin ajustes a mano. Deja un respaldo
+   (`transcript-whisper.json`) en la carpeta de la secuencia. Requiere `whisper` (pip install openai-whisper) o
    `mlx_whisper` en el PATH; el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
    También podés **cargar un transcript JSON**: si viene del video original y editaste
    el timeline, corregí el corrimiento con **Desfase (s)** o **Detectar del timeline**

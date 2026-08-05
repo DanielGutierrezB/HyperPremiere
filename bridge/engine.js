@@ -231,6 +231,14 @@ async function testProvider() {
   }
 }
 
+// Ruta temporal para el audio que exporta Premiere antes de transcribirlo.
+// La da el motor (no el panel) para que sea correcta también en Windows; el
+// archivo se borra solo al terminar la transcripción.
+function newTempAudioPath() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-seqaudio-'));
+  return { ok: true, path: path.join(dir, 'sequence.wav') };
+}
+
 // ── Modelos de Anthropic disponibles de verdad ───────────────────────
 // Antes la lista estaba hardcodeada en el panel: cada modelo nuevo (Opus 5…)
 // había que agregarlo a mano y no aparecía. Ahora se pregunta a Anthropic.
@@ -1272,6 +1280,7 @@ module.exports = {
   testProvider,
   listOllamaModels,
   listClaudeModels,
+  newTempAudioPath,
   loginClaudeStart,
   loginClaudeCode,
   loginClaudeToken,

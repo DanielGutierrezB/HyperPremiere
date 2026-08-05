@@ -224,10 +224,17 @@ async function transcribeMedia(body, onProgress) {
   if (!mediaPath || !fs.existsSync(mediaPath)) {
     return { ok: false, error: 'No encuentro el medio del clip: ' + (mediaPath || '(vacío)') };
   }
-  // El panel manda el nombre del clip que eligió: nombrarlo en los errores es la
-  // diferencia entre "no funcionó" y "eligió el clip equivocado".
+  // Nombrar la fuente en los errores es la diferencia entre "no funcionó" y
+  // "está mudo lo que le diste". `alreadyPrepared` = el .wav que Premiere
+  // exportó de la secuencia entera (la fuente normal); si no, un medio suelto.
   const clipName = String(body.clipName || '');
   const clipLabel = clipName ? ' “' + clipName + '”' : '';
+  const isSeqAudio = Boolean(body.alreadyPrepared);
+  const sourceLabel = isSeqAudio ? ('la secuencia' + clipLabel) : ('el clip' + clipLabel);
+  const whatToDo = isSeqAudio
+    ? '\nQué hacer: revisá que las pistas de audio de la secuencia no estén silenciadas (M) ni en volumen 0,' +
+      ' y que la narración esté dentro de la secuencia. O cargá el transcript con "Cargar JSON".'
+    : '\nQué hacer: asegurate de que ese medio tenga la narración, o cargá el transcript con "Cargar JSON".';
 
   const tool = await detectWhisper();
   if (!tool) {
@@ -242,16 +249,24 @@ async function transcribeMedia(body, onProgress) {
   cancelled = false;
   let heartbeat = null;
   try {
-    // 1) Audio mono 16 kHz (más rápido y estable que darle el video entero).
-    report({ pct: 5, msg: 'Extrayendo el audio de la secuencia (ffmpeg)…' });
+    // 1) Audio mono 16 kHz. Si el medio YA viene así (el .wav que exportó
+    //    Premiere de la secuencia), se usa tal cual: ffmpeg no aporta nada y
+    //    re-codificar una clase larga es puro tiempo perdido.
     let input = path.join(tmpBase, 'audio.wav');
-    const ff = await run('ffmpeg', ['-y', '-i', mediaPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', input], {
-      timeoutMs: 900_000, idleTimeoutMs: 120_000,
-      onSpawn: (child) => { currentChild = child; },
-    });
-    currentChild = null;
-    if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
     let extracted = true;
+    let ff = { code: 0 };
+    if (body.alreadyPrepared) {
+      input = mediaPath;
+      report({ pct: 5, msg: 'Audio de la secuencia listo (mono 16 kHz) — no hace falta convertirlo.' });
+    } else {
+      report({ pct: 5, msg: 'Extrayendo el audio de la secuencia (ffmpeg)…' });
+      ff = await run('ffmpeg', ['-y', '-i', mediaPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', input], {
+        timeoutMs: 900_000, idleTimeoutMs: 120_000,
+        onSpawn: (child) => { currentChild = child; },
+      });
+      currentChild = null;
+    }
+    if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
     if (ff.code !== 0) {
       // Sin ffmpeg (o falló): Whisper puede leer el medio directo con su propio ffmpeg.
       extracted = false;
@@ -263,11 +278,9 @@ async function transcribeMedia(body, onProgress) {
       if (await hasAudioStream(mediaPath) === false) {
         return {
           ok: false,
-          error: 'El clip que se va a transcribir' + clipLabel + ' NO TIENE PISTA DE AUDIO' +
+          error: 'Lo que se va a transcribir (' + sourceLabel + ') NO TIENE PISTA DE AUDIO' +
             ' (es video mudo, un gráfico o una imagen), así que no hay nada que transcribir.' +
-            '\nMedio: ' + mediaPath +
-            '\nQué hacer: el panel transcribe el clip MÁS LARGO de la secuencia (video o audio). Si tu narración' +
-            ' está en otro clip, asegurate de que ese sea el más largo, o cargá el transcript con "Cargar JSON".',
+            '\nMedio: ' + mediaPath + whatToDo,
         };
       }
     }
@@ -282,13 +295,10 @@ async function transcribeMedia(body, onProgress) {
       if (level && level.max !== null && level.max <= SILENT_MAX_DB) {
         return {
           ok: false,
-          error: 'El audio del clip' + clipLabel + ' está EN SILENCIO' +
+          error: 'El audio de ' + sourceLabel + ' está EN SILENCIO' +
             ' (pico ' + level.max + ' dB, medio ' + (level.mean === null ? '?' : level.mean) + ' dB):' +
             ' no hay voz que transcribir.' +
-            '\nMedio: ' + mediaPath +
-            '\nQué hacer: el panel transcribe el clip MÁS LARGO de la secuencia (video o audio). Puede haber' +
-            ' elegido un clip mudo (cámara sin audio, música bajada, un gráfico largo). Revisá que la narración' +
-            ' esté en el clip más largo, o cargá el transcript con "Cargar JSON".',
+            '\nMedio: ' + mediaPath + whatToDo,
         };
       }
     }
@@ -399,7 +409,10 @@ async function transcribeMedia(body, onProgress) {
       savedPath = path.join(baseDir, 'transcript-whisper.json');
       fs.writeFileSync(savedPath, JSON.stringify({
         language, model: WHISPER_MODEL, tool: tool.bin,
-        mediaPath: mediaPath, createdAt: new Date().toISOString(), segments,
+        // Apuntar al .wav temporal (ya borrado) no sirve de nada: dejamos la
+        // fuente real, que es la secuencia.
+        source: isSeqAudio ? ('audio de la secuencia' + clipLabel) : mediaPath,
+        createdAt: new Date().toISOString(), segments,
       }, null, 2), 'utf8');
     } catch (e) {}
 
@@ -411,6 +424,11 @@ async function transcribeMedia(body, onProgress) {
     currentChild = null;
     if (heartbeat) clearInterval(heartbeat);
     try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (e) {}
+    // El .wav de la secuencia se borra SIEMPRE (también si falló o se canceló):
+    // una clase entera en WAV son cientos de MB y no queremos dejarlos ahí.
+    if (body.deleteAfter && mediaPath) {
+      try { fs.rmSync(path.dirname(mediaPath), { recursive: true, force: true }); } catch (e) {}
+    }
   }
 }
 

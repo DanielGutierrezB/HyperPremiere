@@ -303,9 +303,12 @@
   }
 
   // ── Transcribir la secuencia con Whisper LOCAL ───────────────────────
-  // Transcribe el MEDIO original del clip principal (large-v3, idioma
-  // automático — sirve para clases que mezclan español e inglés) y alinea
-  // el resultado al timeline con el desfase del clip. Sin nube, sin tokens.
+  // Premiere exporta el audio de la secuencia a un .wav temporal (mono 16 kHz,
+  // justo lo que Whisper quiere), se transcribe y se BORRA. Antes se transcribía
+  // el "clip más largo" y eso elegía mal: en un timeline con overlays del propio
+  // plugin el más largo podía ser un "Marcador N vX.mov", que es ProRes MUDO.
+  // Bonus: al ser la mezcla de la secuencia, los tiempos ya están alineados al
+  // timeline → desfase 0, sin detección ni ajuste a mano.
   var btnTranscribe = document.getElementById("btn-transcribe-seq");
   var transcribeProgress = document.getElementById("transcribe-progress");
   var transcribeFill = document.getElementById("transcribe-fill");
@@ -342,22 +345,43 @@
         showTranscribeBar(false);
       }
       showTranscribeBar(true);
-      status("Buscando el clip principal de la secuencia…");
-      hpLog("Transcripción local: pidiendo clip principal…");
+      status("Exportando el audio de la secuencia (Premiere puede quedarse un rato)…");
+      hpLog("Transcripción local: exportando el audio de la secuencia…");
 
-      HPHost.getPrimaryClipInfo(function (res) {
-        var info = parsePrimaryClipInfo(res);
-        if (!info) { status("No pude leer la secuencia: ¿tiene clips?", true); done(); return; }
-        if (!info.mediaPath) { status("El clip “" + (info.clipName || "?") + "” no tiene ruta de medio (¿es un gráfico/sintético?).", true); done(); return; }
-        hpLog("Transcripción local: clip “" + info.clipName + "” → " + info.mediaPath + " (desfase " + info.offset + "s)");
-        status("Transcribiendo “" + info.clipName + "”…");
+      hpCall("newTempAudioPath").then(function (t) {
+        if (!t || !t.ok || !t.path) throw new Error("no pude preparar la ruta temporal del audio");
+        return t.path;
+      }).then(function (wavPath) {
+        HPHost.exportSequenceAudio(wavPath, function (res) {
+          var parts = String(res == null ? "" : res).split("|");
+          if (parts[0] !== "ok" || !parts[1]) {
+            status("No pude exportar el audio de la secuencia.\n" + (res || "sin respuesta del host") +
+              "\nQué hacer: revisá que la secuencia tenga audio, o cargá el transcript con \"Cargar JSON\".", true);
+            hpLog("Exportación de audio FALLÓ: " + res, "ERROR");
+            done();
+            return;
+          }
+          var audioPath = parts[1];
+          hpLog("Audio de la secuencia exportado: " + audioPath + " (preset: " + (parts[2] || "?") + ")");
+          status("Audio exportado. Transcribiendo…");
+          runWhisper(audioPath);
+        });
+      }).catch(function (e) {
+        status("Error: " + ((e && e.message) || "no se pudo exportar el audio"), true);
+        hpLog("Transcripción local FALLÓ antes de empezar: " + ((e && e.message) || e), "ERROR");
+        done();
+      });
 
+      function runWhisper(audioPath) {
         // El progreso también va al ⬇ Log (throttleado): si algo se cuelga,
         // el log muestra hasta dónde llegó — antes quedaba mudo tras el clip.
         var lastProgLog = 0;
         HPEngine.callProg("transcribeMedia", {
-          mediaPath: info.mediaPath, projectPath: currentProjectPath, sequenceName: currentSequenceName,
-          clipName: info.clipName || ""
+          mediaPath: audioPath, projectPath: currentProjectPath, sequenceName: currentSequenceName,
+          clipName: currentSequenceName || "",
+          // Ya es mono 16 kHz: nada de ffmpeg. Y es temporal: se borra al terminar,
+          // pase lo que pase (una clase entera en WAV son cientos de MB).
+          alreadyPrepared: true, deleteAfter: true
         }, function (p) {
           if (!p) return;
           if (p.msg) {
@@ -377,8 +401,8 @@
           }
           if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
           HPStore.setTranscript(r.segments);
-          // Alinear automáticamente al timeline con el desfase del clip.
-          setOffset(Math.round(Number(info.offset || 0) * 10) / 10, "del clip “" + (info.clipName || "?") + "”");
+          // El audio ES la secuencia: los tiempos ya coinciden con el timeline.
+          setOffset(0, "audio de la secuencia");
           updateTranscriptStatus();
           status(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
             r.tool + " ✓ (respaldo en la carpeta de la secuencia)");
@@ -393,7 +417,7 @@
           hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
           done();
         });
-      });
+      }
     });
   }
 

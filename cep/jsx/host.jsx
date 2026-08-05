@@ -254,6 +254,108 @@ function hp_trackIsFree(track, start, end) {
     }
 }
 
+// ── Exportar el AUDIO de la secuencia (para transcribir) ─────────────
+// Antes se transcribía el "clip más largo" de la secuencia, y eso elegía mal:
+// en un timeline con overlays del propio plugin, el clip más largo podía ser un
+// "Marcador N vX.mov" (ProRes con alpha, MUDO). Exportar el audio de la
+// secuencia arregla eso de raíz y además deja los tiempos YA alineados al
+// timeline (tiempo del audio = tiempo de la secuencia → desfase 0).
+
+// Presets de audio que trae Premiere, en orden de preferencia. El primero es
+// exactamente lo que Whisper quiere (mono 16 bits 16 kHz) → cero reconversión.
+var HP_AUDIO_PRESETS = [
+    "WAV_Mono_16bit_16kHz.epr",
+    "Wave48mono16.epr",
+    "Wave48mono24.epr",
+    "AudioOnly.epr"
+];
+
+// Carpetas candidatas donde viven los EncoderPresets, según plataforma e
+// instalación. Se prueban en orden y se usa la primera que exista.
+function hp_encoderPresetDirs() {
+    var dirs = [];
+    function push(p) { if (p) dirs.push(p); }
+    // app.path apunta a la instalación de Premiere (varía por plataforma/versión).
+    var base = "";
+    try { base = String(app.path || ""); } catch (e) {}
+    if (base) {
+        push(base + "/Settings/EncoderPresets");                        // Windows
+        push(base + "/Contents/Settings/EncoderPresets");               // macOS (.app)
+        push(base + "/../Settings/EncoderPresets");
+    }
+    // Barrido de las rutas de instalación típicas (cubre cambios de año/versión).
+    var roots = ["/Applications", "C:/Program Files/Adobe", "C:/Program Files (x86)/Adobe"];
+    for (var r = 0; r < roots.length; r++) {
+        try {
+            var folder = new Folder(roots[r]);
+            if (!folder.exists) continue;
+            var kids = folder.getFiles("Adobe Premiere Pro*");
+            for (var k = 0; k < kids.length; k++) {
+                var p = kids[k].fsName;
+                push(p + "/Settings/EncoderPresets");                                    // Windows
+                push(p + "/Contents/Settings/EncoderPresets");                           // .app directo
+                // En macOS la carpeta contiene el .app: "…/Adobe Premiere Pro 2026.app".
+                try {
+                    var inner = new Folder(p).getFiles("*.app");
+                    for (var a = 0; a < inner.length; a++) {
+                        push(inner[a].fsName + "/Contents/Settings/EncoderPresets");
+                    }
+                } catch (e3) {}
+            }
+        } catch (e2) {}
+    }
+    return dirs;
+}
+
+// Ruta absoluta al .epr de audio a usar, o "" si no se encontró ninguno.
+function hp_findAudioPreset() {
+    var dirs = hp_encoderPresetDirs();
+    for (var p = 0; p < HP_AUDIO_PRESETS.length; p++) {
+        for (var d = 0; d < dirs.length; d++) {
+            try {
+                var f = new File(dirs[d] + "/" + HP_AUDIO_PRESETS[p]);
+                if (f.exists) return f.fsName;
+            } catch (e) {}
+        }
+    }
+    return "";
+}
+
+// Renderiza el audio de la secuencia activa COMPLETA a `outPath` (.wav).
+// Devuelve "ok|<ruta>|<preset>" o "error: ...".
+function hp_exportSequenceAudio(outPath) {
+    try {
+        var seq = app.project.activeSequence;
+        if (!seq) return "error: no hay secuencia activa";
+        if (!outPath) return "error: falta la ruta de salida";
+
+        var preset = hp_findAudioPreset();
+        if (!preset) {
+            return "error: no encontré ningún preset de audio (.epr) de Premiere. Buscado: " +
+                HP_AUDIO_PRESETS.join(", ") + " en " + hp_encoderPresetDirs().slice(0, 4).join(" | ");
+        }
+
+        // workAreaType 0 = TODA la secuencia (no in/out ni área de trabajo).
+        var ok = false;
+        try { ok = seq.exportAsMediaDirect(outPath, preset, 0); } catch (e1) {
+            return "error: exportAsMediaDirect falló: " + e1.toString() + " (preset: " + preset + ")";
+        }
+
+        // Premiere a veces ajusta el nombre/extensión: aceptamos la variante que exista.
+        var candidates = [outPath, outPath + ".wav", outPath.replace(/\.wav$/i, "") + ".wav"];
+        for (var i = 0; i < candidates.length; i++) {
+            try {
+                var f = new File(candidates[i]);
+                if (f.exists && f.length > 0) return "ok|" + f.fsName + "|" + preset;
+            } catch (e2) {}
+        }
+        return "error: la exportación " + (ok ? "dijo OK" : "devolvió false") +
+            " pero no encontré el archivo en " + outPath + " (preset: " + preset + ")";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // Busca un bin hijo por nombre dentro de `parent`; si no existe, lo crea.
 // Devuelve el projectItem del bin, o null si no se pudo.
 function hp_ensureBin(parent, name) {
