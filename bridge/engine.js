@@ -65,6 +65,18 @@ function defaultModelFor(provider) {
   return (provider === 'claude-cli' || provider === 'claude-api') ? 'claude-sonnet-5' : '';
 }
 
+// Nivel de pensamiento (esfuerzo) de los modelos Claude. Es el control de
+// calidad: con "adaptive thinking" el modelo decide cuánto razonar y esto es el
+// techo. En el CLI va como `--effort`; en la API como `output_config.effort`.
+// `budget_tokens` (el mecanismo viejo) da 400 en Opus 4.7+.
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const DEFAULT_EFFORT = 'high'; // el default de Anthropic
+
+function normalizeEffort(value) {
+  const v = String(value || '').trim().toLowerCase();
+  return EFFORT_LEVELS.indexOf(v) === -1 ? DEFAULT_EFFORT : v;
+}
+
 // Lee la config CRUDA del disco y la normaliza a la forma v2 (por proveedor):
 //   { provider, oauthToken, perProvider: { <name>: { model, apiKey, baseUrl } } }
 // Migra el formato viejo plano (model/apiKey/baseUrl arriba) sin perder nada.
@@ -75,6 +87,9 @@ function loadRawConfig() {
   const raw = {
     provider: stored.provider && String(stored.provider).trim() ? stored.provider : DEFAULT_PROVIDER,
     oauthToken: stored.oauthToken || '',
+    // Compartido por los dos proveedores Claude (CLI y API): es "cuánto querés
+    // que piense", no una credencial de un slot.
+    effort: normalizeEffort(stored.effort),
     perProvider: (stored.perProvider && typeof stored.perProvider === 'object') ? stored.perProvider : {},
   };
 
@@ -106,6 +121,7 @@ function loadConfig() {
     apiKey: slot.apiKey || '',
     baseUrl: slot.baseUrl || '',
     oauthToken: raw.oauthToken || '',
+    effort: raw.effort,
     perProvider: raw.perProvider,
   };
 }
@@ -129,6 +145,9 @@ function saveConfig(patch) {
   if (patch.baseUrl !== undefined && patch.baseUrl !== null) {
     slot.baseUrl = String(patch.baseUrl);
   }
+  if (patch.effort !== undefined && patch.effort !== null && String(patch.effort).trim()) {
+    raw.effort = normalizeEffort(patch.effort);
+  }
   raw.perProvider[provider] = slot;
   saveRawConfig(raw);
   return maskConfig(loadConfig());
@@ -141,6 +160,7 @@ function maskConfig(cfg) {
     baseUrl: cfg.baseUrl || '',
     apiKey: cfg.apiKey ? '••••' : '',
     hasSession: Boolean(cfg.oauthToken),
+    effort: cfg.effort || DEFAULT_EFFORT,
   };
 }
 
@@ -208,6 +228,65 @@ async function testProvider() {
   } catch (e) {
     const msg = (e && e.name === 'AbortError') ? 'timeout (15s) — ¿hay conexión?' : ((e && e.message) || String(e));
     return { ok: false, error: 'No se pudo probar: ' + msg };
+  }
+}
+
+// ── Modelos de Anthropic disponibles de verdad ───────────────────────
+// Antes la lista estaba hardcodeada en el panel: cada modelo nuevo (Opus 5…)
+// había que agregarlo a mano y no aparecía. Ahora se pregunta a Anthropic.
+const CLAUDE_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=100';
+// Header beta que habilita el token de suscripción (sk-ant-oat…) contra la API.
+const OAUTH_BETA = 'oauth-2025-04-20';
+const MODELS_TTL_MS = 10 * 60 * 1000;
+let claudeModelsCache = { at: 0, models: [] };
+
+// Haiku queda fuera a propósito: es el más rápido pero no da buenos diseños.
+function isUsableClaudeModel(id) {
+  return !/haiku/i.test(String(id || ''));
+}
+
+/**
+ * Modelos Claude disponibles para la cuenta activa (GET /v1/models).
+ * Autentica con la API key si hay, o con el token de suscripción (Bearer +
+ * header beta). Devuelve { ok, models: [{ id, name }], cached? } y no lanza.
+ * Si falla (sin red, sin credenciales), devuelve ok:false y el panel se queda
+ * con su lista de respaldo.
+ */
+async function listClaudeModels(opts) {
+  const force = Boolean(opts && opts.force);
+  const now = Date.now();
+  if (!force && claudeModelsCache.models.length && (now - claudeModelsCache.at) < MODELS_TTL_MS) {
+    return { ok: true, models: claudeModelsCache.models, cached: true };
+  }
+
+  const cfg = loadConfig();
+  const apiKey = String(cfg.apiKey || '').trim();
+  const headers = { 'anthropic-version': '2023-06-01' };
+  // La API key es una credencial de API real; el token OAuth necesita el beta.
+  if (apiKey && !/^sk-ant-oat/i.test(apiKey)) {
+    headers['x-api-key'] = apiKey;
+  } else if (cfg.oauthToken) {
+    headers.authorization = 'Bearer ' + cfg.oauthToken;
+    headers['anthropic-beta'] = OAUTH_BETA;
+  } else {
+    return { ok: false, error: 'No hay sesión de Claude ni API key para consultar los modelos.', models: [] };
+  }
+
+  try {
+    const res = await hpFetch(CLAUDE_MODELS_URL, { headers });
+    if (!res.ok) {
+      const raw = await res.text();
+      return { ok: false, error: 'HTTP ' + res.status + ': ' + raw.slice(0, 200), models: [] };
+    }
+    const data = await res.json();
+    const models = (Array.isArray(data.data) ? data.data : [])
+      .filter((m) => m && m.id && isUsableClaudeModel(m.id))
+      .map((m) => ({ id: String(m.id), name: String(m.display_name || m.id) }));
+    if (!models.length) return { ok: false, error: 'La API no devolvió modelos usables.', models: [] };
+    claudeModelsCache = { at: now, models };
+    return { ok: true, models };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), models: [] };
   }
 }
 
@@ -1192,6 +1271,7 @@ module.exports = {
   setConfig: saveConfig,
   testProvider,
   listOllamaModels,
+  listClaudeModels,
   loginClaudeStart,
   loginClaudeCode,
   loginClaudeToken,

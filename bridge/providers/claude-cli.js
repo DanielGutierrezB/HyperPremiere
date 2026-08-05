@@ -105,6 +105,10 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   // .usage (tokens) + .total_cost_usd. Así podemos contar el gasto real.
   const args = ['-p', prompt, '--output-format', 'json'];
   if (model) args.push('--model', model);
+  // Nivel de pensamiento. Diseñar una animación es trabajo de razonamiento, así
+  // que es la palanca de calidad. Un valor desconocido el CLI solo lo advierte
+  // y sigue con el default, no rompe la generación.
+  if (cfg.effort) args.push('--effort', String(cfg.effort));
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
 
   try {

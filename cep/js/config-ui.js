@@ -22,16 +22,30 @@
 
   var cfgProviderSel = null;
   var cfgModelSel = null;
+  var cfgEffortSel = null;
   var cfgModelCustom, cfgApiKey, cfgBaseUrl, btnSaveConfig, configStatus, cfgSummary;
-  var btnLoginClaude, loginStatus;
+  var btnLoginClaude, loginStatus, modelsHint;
 
-  // Modelos compatibles por proveedor. Claude corre por CLI o API; los demás
-  // por API compatible (OpenAI/Gemini/OpenRouter) o local (Ollama).
+  // Nivel de pensamiento (esfuerzo) de Claude: es la palanca de CALIDAD, no de
+  // velocidad nada más. Diseñar una animación es razonamiento, así que subirlo
+  // mejora el diseño a costa de tiempo y tokens. "high" es el default del modelo.
+  var EFFORT_LEVELS = [
+    { v: "low", t: "Bajo — el más rápido y barato (diseños simples)" },
+    { v: "medium", t: "Medio — equilibrio" },
+    { v: "high", t: "Alto — recomendado (default)" },
+    { v: "xhigh", t: "Muy alto — diseños exigentes, más lento" },
+    { v: "max", t: "Máximo — la mejor calidad posible, el más lento y caro" }
+  ];
+
+  // Respaldo de modelos Claude si no se puede consultar a Anthropic (sin red o
+  // sin credenciales). La lista REAL la trae listClaudeModels() del motor, así
+  // que un modelo nuevo aparece solo, sin tocar código. Haiku queda afuera a
+  // propósito (rápido pero no da buenos diseños).
   var CLAUDE_MODELS = [
-    { v: "claude-sonnet-5", t: "Sonnet 5 — rápido (recomendado)" },
-    { v: "claude-opus-4-8", t: "Opus 4.8 — máxima calidad (lento)" },
-    { v: "claude-haiku-4-5-20251001", t: "Haiku 4.5 — el más rápido" },
-    { v: "claude-fable-5", t: "Fable 5" }
+    { v: "claude-opus-5", t: "Claude Opus 5" },
+    { v: "claude-sonnet-5", t: "Claude Sonnet 5" },
+    { v: "claude-fable-5", t: "Claude Fable 5" },
+    { v: "claude-opus-4-8", t: "Claude Opus 4.8" }
   ];
   var MODELS = {
     "claude-cli": CLAUDE_MODELS,
@@ -102,10 +116,14 @@
   // Muestra/oculta campos según el proveedor y actualiza pistas.
   function applyProviderUI() {
     var p = cfgProviderSel.value;
+    var isClaude = (p === "claude-cli" || p === "claude-api");
     showRow("row-login", p === "claude-cli");
     showRow("row-apikey", p === "claude-api" || p === "openai-compat");
     showRow("row-baseurl", p === "openai-compat" || p === "ollama");
     showRow("row-model-custom", cfgModelSel.value === "__custom__");
+    // El nivel de pensamiento es de Claude: los otros proveedores no lo tienen.
+    showRow("row-effort", isClaude);
+    if (modelsHint) modelsHint.setAttribute("data-hidden", isClaude ? "false" : "true");
     var hintEl = document.getElementById("baseurl-hint");
     if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
     // Aviso de lentitud para modelos locales.
@@ -135,7 +153,12 @@
     if (p === "openai-compat" && !cfgBaseUrl.value.trim()) { ok = false; warn = "falta Base URL"; }
     if (!model) { ok = false; warn = "falta el modelo"; }
     if (ok) {
-      cfgSummary.textContent = "✓ " + (PROVIDER_LABEL[p] || p) + " · " + modelLabel(model);
+      // El nivel de pensamiento pesa tanto como el modelo en el resultado, así
+      // que va en el resumen (solo Claude, que es quien lo tiene).
+      var isClaude = (p === "claude-cli" || p === "claude-api");
+      var effortTxt = (isClaude && cfgEffortSel && cfgEffortSel.value)
+        ? " · pensamiento " + cfgEffortSel.value : "";
+      cfgSummary.textContent = "✓ " + (PROVIDER_LABEL[p] || p) + " · " + modelLabel(model) + effortTxt;
       cfgSummary.className = "cfg-summary is-ok";
     } else {
       cfgSummary.textContent = "⚠ " + warn;
@@ -171,6 +194,7 @@
 
   function autoSave() {
     var body = { provider: cfgProviderSel.value, model: effectiveModel() };
+    if (cfgEffortSel) body.effort = cfgEffortSel.value;
     if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
     if (cfgBaseUrl.value.trim()) body.baseUrl = cfgBaseUrl.value.trim();
     if (!body.model) { updateSummary(); return; }
@@ -183,6 +207,33 @@
       })
       .catch(function (e) {
         configStatus.textContent = "Error al guardar: " + ((e && e.message) || "");
+      });
+  }
+
+  // Autopobla la lista de Claude con los modelos que la cuenta tiene DE VERDAD
+  // (el motor consulta /v1/models de Anthropic). Así un modelo nuevo aparece sin
+  // tocar código. Si falla, se queda la lista de respaldo y se avisa.
+  function refreshClaudeModels(selected) {
+    hpCall("listClaudeModels")
+      .then(function (r) {
+        if (!r || !r.ok || !r.models || !r.models.length) {
+          if (modelsHint) modelsHint.textContent = "lista de respaldo (no pude consultar los modelos de tu cuenta)";
+          return;
+        }
+        var list = r.models.map(function (m) { return { v: m.id, t: m.name || m.id }; });
+        // Los dos proveedores Claude comparten catálogo: hay que reasignar los dos.
+        MODELS["claude-cli"] = list;
+        MODELS["claude-api"] = list;
+        if (modelsHint) modelsHint.textContent = list.length + " modelos de tu cuenta" + (r.cached ? "" : " · al día");
+        var p = cfgProviderSel.value;
+        if (p === "claude-cli" || p === "claude-api") {
+          populateModels(p, selected || effectiveModel());
+          applyProviderUI();
+          updateSummary();
+        }
+      })
+      .catch(function () {
+        if (modelsHint) modelsHint.textContent = "lista de respaldo (motor no disponible)";
       });
   }
 
@@ -217,11 +268,13 @@
     if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
     else { cfgApiKey.removeAttribute("data-has"); cfgApiKey.setAttribute("placeholder", "Pegá tu API key"); }
     if (cfg.hasSession && loginStatus) { loginStatus.textContent = "✓ Sesión de Claude activa"; loginStatus.className = "muted login-ok"; }
+    if (cfgEffortSel) cfgEffortSel.value = cfg.effort || "high";
     // cfg.model viene del motor, que ya aplica el default por proveedor.
     populateModels(cfgProviderSel.value, cfg.model);
     applyProviderUI();
     updateSummary();
     if (cfgProviderSel.value === "ollama") refreshOllamaModels(cfg.model);
+    if (cfgProviderSel.value === "claude-cli" || cfgProviderSel.value === "claude-api") refreshClaudeModels(cfg.model);
   }
 
   function loadConfig() {
@@ -238,6 +291,8 @@
   function init() {
     cfgProviderSel = HPWidgets.select(document.getElementById("cfg-provider"));
     cfgModelSel = HPWidgets.select(document.getElementById("cfg-model"));
+    cfgEffortSel = HPWidgets.select(document.getElementById("cfg-effort"));
+    modelsHint = document.getElementById("models-hint");
     cfgModelCustom = document.getElementById("cfg-model-custom");
     cfgApiKey = document.getElementById("cfg-apikey");
     cfgBaseUrl = document.getElementById("cfg-baseurl");
@@ -291,6 +346,14 @@
       applyProviderUI();
       autoSave();
     };
+
+    // Nivel de pensamiento (solo Claude): se guarda solo al cambiarlo.
+    if (cfgEffortSel) {
+      cfgEffortSel.setOptions(EFFORT_LEVELS.map(function (o) {
+        return { value: o.v, label: o.t };
+      }), "high");
+      cfgEffortSel.onChange = function () { autoSave(); };
+    }
     if (cfgModelCustom) cfgModelCustom.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
     if (cfgApiKey) cfgApiKey.addEventListener("input", function () { updateSummary(); });
     if (cfgBaseUrl) cfgBaseUrl.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));

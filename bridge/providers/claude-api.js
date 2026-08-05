@@ -19,6 +19,16 @@ const DEFAULT_MODEL = 'claude-opus-4-8';
 const DEFAULT_MAX_TOKENS = 16000;
 const DEFAULT_TIMEOUT_MS = 240_000;
 
+// El pensamiento CUENTA contra max_tokens, así que a más esfuerzo hay que dar
+// más techo o la respuesta se corta a mitad del HTML (stop_reason max_tokens).
+const MAX_TOKENS_BY_EFFORT = {
+  low: DEFAULT_MAX_TOKENS,
+  medium: DEFAULT_MAX_TOKENS,
+  high: 32000,
+  xhigh: 64000,
+  max: 64000,
+};
+
 // El portapapeles de Windows suele arrastrar \r, espacios o comillas al pegar.
 // Limpiamos para que el header x-api-key no se rompa por ruido invisible.
 function normalizeApiKey(raw) {
@@ -65,11 +75,17 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   }
   content.push({ type: 'text', text: userPrompt });
 
+  const effort = String(cfg.effort || '').trim().toLowerCase();
   const body = {
     model: model || DEFAULT_MODEL,
-    max_tokens: Number.isFinite(cfg.maxTokens) ? cfg.maxTokens : DEFAULT_MAX_TOKENS,
+    max_tokens: Number.isFinite(cfg.maxTokens)
+      ? cfg.maxTokens
+      : (MAX_TOKENS_BY_EFFORT[effort] || DEFAULT_MAX_TOKENS),
     messages: [{ role: 'user', content }],
   };
+  // Nivel de pensamiento. Reemplaza al viejo `thinking.budget_tokens`, que
+  // devuelve 400 en Opus 4.7+. Omitirlo = el default del modelo (high).
+  if (MAX_TOKENS_BY_EFFORT[effort]) body.output_config = { effort };
   if (systemPrompt) body.system = systemPrompt;
 
   const timeoutMs = Number.isFinite(cfg.timeoutMs) && cfg.timeoutMs > 0
@@ -121,6 +137,14 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   // stop_reason "refusal" llega como HTTP 200 — chequear antes de leer content.
   if (data.stop_reason === 'refusal') {
     throw new Error('claude-api: el modelo rechazo la solicitud (stop_reason: refusal)');
+  }
+  // Se agoto el techo pensando + respondiendo: el HTML vendria cortado. Mejor
+  // decirlo claro que fallar despues en la validacion de la composicion.
+  if (data.stop_reason === 'max_tokens') {
+    throw new Error(
+      `claude-api: la respuesta se corto por max_tokens (${body.max_tokens}) con esfuerzo "${effort || 'default'}". ` +
+      'Baja el nivel de pensamiento en la configuracion, o subi maxTokens.'
+    );
   }
 
   // Concatenar todos los bloques de texto (puede haber thinking u otros antes).

@@ -157,6 +157,14 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
 - Para render, la primera vez se instala **`hyperframes`** (baja un Chromium).
 - Proveedor de IA: sesión de Claude / API key / endpoint OpenAI-compatible, o **Ollama**
   local con un modelo con **visión** (ej. `qwen3-vl:30b`).
+- **Modelos de Claude (⚙):** la lista se pide a Anthropic (`/v1/models`) con tu propia
+  sesión, así que un modelo nuevo aparece solo, sin actualizar el plugin. Haiku queda
+  fuera a propósito (rápido pero no da buenos diseños). Sin red se usa una lista de
+  respaldo y el panel lo avisa.
+- **Nivel de pensamiento (⚙):** cuánto razona el modelo antes de diseñar — `bajo`,
+  `medio`, `alto` (default), `muy alto` o `máximo`. Es la palanca de **calidad**: diseñar
+  una animación es trabajo de razonamiento, así que subirlo mejora el resultado a costa
+  de tiempo y tokens. Aplica a los dos proveedores Claude (CLI y API).
 - **Login de Claude (⚙):** abre la página de autorización en el navegador; autorizás,
   copiás el **código** que te muestra la página y lo pegás en el panel. Requiere el CLI
   `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)

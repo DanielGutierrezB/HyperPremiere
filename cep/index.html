@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.6</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.7</span>
       </button>
     </div>
   </header>
@@ -171,7 +171,14 @@
 
         <label class="field-label">Modelo</label>
         <div id="cfg-model" class="hp-select"></div>
+        <span id="models-hint" class="muted"></span>
         <div id="provider-note" class="provider-note" data-hidden="true"></div>
+
+        <div id="row-effort" class="cfg-row">
+          <label class="field-label">Nivel de pensamiento</label>
+          <div id="cfg-effort" class="hp-select"></div>
+          <span class="muted">cuánto razona antes de diseñar · más = mejor diseño, más lento y más tokens</span>
+        </div>
 
         <div id="row-model-custom" class="cfg-row" data-hidden="true">
           <label class="field-label" for="cfg-model-custom">ID del modelo</label>
