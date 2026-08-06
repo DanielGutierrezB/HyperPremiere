@@ -62,7 +62,16 @@ const DEFAULT_PROVIDER = 'claude-cli';
 
 // Modelo por defecto por proveedor. Vacío = el editor lo define (API compat / Ollama).
 function defaultModelFor(provider) {
-  return (provider === 'claude-cli' || provider === 'claude-api') ? 'claude-sonnet-5' : '';
+  if (provider === 'claude-cli' || provider === 'claude-api') return 'claude-sonnet-5';
+  // En Cursor el nivel de pensamiento va DENTRO del ID del modelo.
+  if (provider === 'cursor-cli') return 'claude-sonnet-5-thinking-high';
+  return '';
+}
+
+// Proveedores donde el esfuerzo es un flag aparte. En Cursor no: viene en el ID
+// del modelo, así que el selector de esfuerzo no aplica y el panel lo esconde.
+function usesEffortFlag(provider) {
+  return provider === 'claude-cli' || provider === 'claude-api';
 }
 
 // Nivel de pensamiento (esfuerzo) de los modelos Claude. Es el control de
@@ -161,6 +170,7 @@ function maskConfig(cfg) {
     apiKey: cfg.apiKey ? '••••' : '',
     hasSession: Boolean(cfg.oauthToken),
     effort: cfg.effort || DEFAULT_EFFORT,
+    usesEffort: usesEffortFlag(cfg.provider),
   };
 }
 
@@ -183,6 +193,28 @@ async function testProvider() {
         return { ok: false, error: 'No hay sesión de Claude. Tocá "Iniciar sesión" para autorizar.' };
       }
       return { ok: true, detail: 'Sesión de Claude activa.' };
+    }
+
+    if (provider === 'cursor-cli') {
+      // La prueba real es listar modelos: eso solo funciona si el binario está
+      // y la máquina tiene sesión de Cursor (o CURSOR_API_KEY).
+      const cursorCli = require('./providers/cursor-cli');
+      const r = await cursorCli.listModels(cfg);
+      if (!r.ok) {
+        return {
+          ok: false,
+          error: 'No pude hablar con Cursor. Revisá que esta máquina tenga el CLI instalado y con sesión:' +
+            '\n  curl https://cursor.com/install -fsS | bash' +
+            '\n  cursor-agent login' +
+            (r.error ? '\nDetalle: ' + r.error : ''),
+        };
+      }
+      const has = r.models.some((m) => m.id === cfg.model);
+      return {
+        ok: true,
+        detail: 'Sesión de Cursor activa · ' + r.models.length + ' modelos disponibles' +
+          (cfg.model && !has ? ' (ojo: "' + cfg.model + '" no está en la lista)' : ''),
+      };
     }
 
     if (provider === 'claude-api') {
@@ -229,6 +261,25 @@ async function testProvider() {
     const msg = (e && e.name === 'AbortError') ? 'timeout (15s) — ¿hay conexión?' : ((e && e.message) || String(e));
     return { ok: false, error: 'No se pudo probar: ' + msg };
   }
+}
+
+/**
+ * Modelos que la suscripción de Cursor tiene disponibles, para el selector del
+ * panel. Se cachea igual que la lista de Claude: llamar al CLI cuesta ~1s.
+ */
+let cursorModelsCache = { at: 0, models: [] };
+
+async function listCursorModels(opts) {
+  const force = Boolean(opts && opts.force);
+  const now = Date.now();
+  if (!force && cursorModelsCache.models.length && (now - cursorModelsCache.at) < MODELS_TTL_MS) {
+    return { ok: true, models: cursorModelsCache.models, cached: true };
+  }
+  const cursorCli = require('./providers/cursor-cli');
+  const r = await cursorCli.listModels(loadConfig());
+  if (!r.ok) return r;
+  cursorModelsCache = { at: now, models: r.models };
+  return { ok: true, models: r.models };
 }
 
 // Ruta temporal para el audio que exporta Premiere antes de transcribirlo.
@@ -1280,6 +1331,7 @@ module.exports = {
   testProvider,
   listOllamaModels,
   listClaudeModels,
+  listCursorModels,
   newTempAudioPath,
   loginClaudeStart,
   loginClaudeCode,

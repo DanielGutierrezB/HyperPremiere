@@ -12,6 +12,7 @@
 const PROVIDERS = {
   'claude-cli': './claude-cli',
   'claude-api': './claude-api',
+  'cursor-cli': './cursor-cli',
   'openai-compat': './openai-compat',
   'ollama': './ollama',
 };

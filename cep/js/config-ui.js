@@ -47,9 +47,21 @@
     { v: "claude-fable-5", t: "Claude Fable 5" },
     { v: "claude-opus-4-8", t: "Claude Opus 4.8" }
   ];
+  // Respaldo para Cursor si no se puede consultar el CLI. La lista real la trae
+  // listCursorModels() del motor (cursor-agent --list-models), ya curada: fuera
+  // las variantes "-fast" (pagan prioridad con más consumo, justo lo que se
+  // quiere evitar), las "-none" (sin razonamiento) y la gama chica.
+  var CURSOR_MODELS = [
+    { v: "claude-sonnet-5-thinking-high", t: "Sonnet 5 Thinking" },
+    { v: "claude-opus-5-thinking-high", t: "Opus 5 Thinking" },
+    { v: "claude-fable-5-thinking-high", t: "Fable 5 Thinking" },
+    { v: "composer-2.5", t: "Composer 2.5" },
+    { v: "auto", t: "Auto (que elija Cursor)" }
+  ];
   var MODELS = {
     "claude-cli": CLAUDE_MODELS,
     "claude-api": CLAUDE_MODELS,
+    "cursor-cli": CURSOR_MODELS,
     "openai-compat": [
       { v: "gpt-4o", t: "OpenAI · GPT-4o" },
       { v: "gpt-4o-mini", t: "OpenAI · GPT-4o mini" },
@@ -66,6 +78,7 @@
   var PROVIDER_LABEL = {
     "claude-cli": "Claude (suscripción)",
     "claude-api": "Claude (API)",
+    "cursor-cli": "Cursor (suscripción)",
     "openai-compat": "API compatible",
     "ollama": "Ollama local"
   };
@@ -117,13 +130,15 @@
   function applyProviderUI() {
     var p = cfgProviderSel.value;
     var isClaude = (p === "claude-cli" || p === "claude-api");
+    var isCursor = (p === "cursor-cli");
     showRow("row-login", p === "claude-cli");
     showRow("row-apikey", p === "claude-api" || p === "openai-compat");
     showRow("row-baseurl", p === "openai-compat" || p === "ollama");
     showRow("row-model-custom", cfgModelSel.value === "__custom__");
-    // El nivel de pensamiento es de Claude: los otros proveedores no lo tienen.
+    // El nivel de pensamiento es un flag aparte solo en Claude. En Cursor viene
+    // dentro del ID del modelo (…-thinking-high, -xhigh), así que sobra la fila.
     showRow("row-effort", isClaude);
-    if (modelsHint) modelsHint.setAttribute("data-hidden", isClaude ? "false" : "true");
+    if (modelsHint) modelsHint.setAttribute("data-hidden", (isClaude || isCursor) ? "false" : "true");
     var hintEl = document.getElementById("baseurl-hint");
     if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
     // Aviso de lentitud para modelos locales.
@@ -135,6 +150,13 @@
         noteEl.textContent = "⏳ Modelo local: cada marcador puede tardar " +
           (dense ? "10–20+ min (modelo denso/pesado)" : "2–4 min") +
           ". No cierres el panel mientras genera.";
+        noteEl.setAttribute("data-hidden", "false");
+      } else if (isCursor) {
+        // Honesto por adelantado: Cursor gasta TU cupo de Cursor, arrastra el
+        // contexto del agente (~30k tokens por generación) y va más lento.
+        noteEl.textContent = "Gasta tu suscripción de Cursor en vez de la de Claude. " +
+          "Cada marcador tarda ~1,5–3 min y arrastra ~30k tokens de contexto del agente. " +
+          "Requiere el CLI de Cursor instalado y con sesión en esta máquina.";
         noteEl.setAttribute("data-hidden", "false");
       } else {
         noteEl.setAttribute("data-hidden", "true");
@@ -237,6 +259,32 @@
       });
   }
 
+  // Autopobla la lista de Cursor con los modelos que la suscripción tiene de
+  // verdad (el motor corre `cursor-agent --list-models` y la cura).
+  function refreshCursorModels(selected) {
+    if (modelsHint) modelsHint.textContent = "consultando modelos de Cursor…";
+    hpCall("listCursorModels")
+      .then(function (r) {
+        if (!r || !r.ok || !r.models || !r.models.length) {
+          if (modelsHint) {
+            modelsHint.textContent = "lista de respaldo — " +
+              ((r && r.error) ? "revisá que tengas el CLI de Cursor con sesión" : "no pude consultar tu cuenta");
+          }
+          return;
+        }
+        MODELS["cursor-cli"] = r.models.map(function (m) { return { v: m.id, t: m.name || m.id }; });
+        if (modelsHint) modelsHint.textContent = r.models.length + " modelos de tu cuenta de Cursor" + (r.cached ? "" : " · al día");
+        if (cfgProviderSel.value === "cursor-cli") {
+          populateModels("cursor-cli", selected || effectiveModel());
+          applyProviderUI();
+          updateSummary();
+        }
+      })
+      .catch(function () {
+        if (modelsHint) modelsHint.textContent = "lista de respaldo (motor no disponible)";
+      });
+  }
+
   // Autopobla la lista de Ollama con los modelos realmente instalados.
   function refreshOllamaModels(selected) {
     var base = (cfgBaseUrl.value || "").trim();
@@ -275,6 +323,7 @@
     updateSummary();
     if (cfgProviderSel.value === "ollama") refreshOllamaModels(cfg.model);
     if (cfgProviderSel.value === "claude-cli" || cfgProviderSel.value === "claude-api") refreshClaudeModels(cfg.model);
+    if (cfgProviderSel.value === "cursor-cli") refreshCursorModels(cfg.model);
   }
 
   function loadConfig() {
@@ -330,6 +379,7 @@
     cfgProviderSel.setOptions([
       { value: "claude-cli", label: "Claude (CLI / suscripción)" },
       { value: "claude-api", label: "Claude (API key)" },
+      { value: "cursor-cli", label: "Cursor (CLI / suscripción)" },
       { value: "openai-compat", label: "API compatible (OpenAI / Gemini / OpenRouter…)" },
       { value: "ollama", label: "Local (Ollama)" }
     ], "claude-cli");

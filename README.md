@@ -7,8 +7,8 @@ Panel **CEP para Adobe Premiere Pro 2026** que genera gráficos animados por IA
 Salida por defecto en **ProRes 4444 con alpha** (`.mov`, overlay transparente), o
 en **MP4 H.264 1080p opaco** por marcador cuando activás "Con fondo".
 
-Modelo configurable: **Claude (CLI de suscripción o API key)**, cualquier **API
-compatible con OpenAI**, o **Ollama local**. Multiplataforma: **macOS (Apple Silicon)
+Modelo configurable: **Claude (CLI de suscripción o API key)**, **Cursor (CLI de
+suscripción)**, cualquier **API compatible con OpenAI**, o **Ollama local**. Multiplataforma: **macOS (Apple Silicon)
 y Windows**. Todo corre **dentro del panel** (motor Node in-process, sin servidor externo).
 
 Versión actual: ver `version.json` (el label también se muestra en el header del panel).
@@ -170,6 +170,17 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   `medio`, `alto` (default), `muy alto` o `máximo`. Es la palanca de **calidad**: diseñar
   una animación es trabajo de razonamiento, así que subirlo mejora el resultado a costa
   de tiempo y tokens. Aplica a los dos proveedores Claude (CLI y API).
+- **Cursor (⚙):** genera con tu **suscripción de Cursor** en vez de la de Claude — útil
+  cuando el cupo de Claude se agota. Requiere el CLI en cada máquina:
+  `curl https://cursor.com/install -fsS | bash` y después `cursor-agent login`
+  (o la variable `CURSOR_API_KEY`). La lista de modelos se pide a tu cuenta
+  (`cursor-agent --list-models`) y se **cura**: quedan fuera las variantes `-fast`
+  (pagan prioridad con más consumo), las `-none` (sin razonamiento) y la gama chica.
+  Acá el nivel de pensamiento **va dentro del ID del modelo** (`…-thinking-high`,
+  `-xhigh`), así que el selector de esfuerzo no aparece.
+  A tener en cuenta: cada generación arrastra ~30k tokens de contexto del propio
+  agente y tarda ~1,5–3 min, más que Claude directo. Corre en modo **solo lectura**
+  y con un directorio temporal como workspace, así que no puede tocar tus proyectos.
 - **Login de Claude (⚙):** abre la página de autorización en el navegador; autorizás,
   copiás el **código** que te muestra la página y lo pegás en el panel. Requiere el CLI
   `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)
