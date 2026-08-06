@@ -66,6 +66,29 @@ function pickRenderProfile() {
 }
 
 /**
+ * Cuántos renders puede correr la cola A LA VEZ en esta máquina.
+ *
+ * Medido en un M3 Max (48 GB, 16 cores) con dos marcadores reales de 54s y 20s:
+ * en serie 69.3s, en paralelo 46.9s (-32%), y NINGUNO de los dos se ralentizó
+ * (51.2s → 46.9s y 18.0s → 18.1s). Los .mov salieron idénticos byte a byte
+ * (mismo SHA-256), así que el carril extra no toca la calidad: un render usa 6
+ * workers de 16 cores, sobra máquina.
+ *
+ * Se queda en 2 a propósito: es lo que está medido. Las máquinas flojas (perfil
+ * low-memory, ej. la mini de 8 GB) siguen en 1 — ahí un segundo Chromium es
+ * justo lo que dispara el "Set maximum size exceeded".
+ *
+ * Override: HYPERPREMIERE_RENDER_LANES=N.
+ */
+function renderLanes() {
+  const forced = parseInt(process.env.HYPERPREMIERE_RENDER_LANES, 10);
+  if (Number.isFinite(forced) && forced > 0) return Math.min(forced, 4);
+  const p = pickRenderProfile();
+  if (p.lowMemory) return 1;
+  return (p.cpus >= 8 && p.ramGb >= 24) ? 2 : 1;
+}
+
+/**
  * Modo de GPU del BROWSER (captura WebGL/GSAP), independiente del encode.
  * hyperframes usa la GPU del host por defecto (rápido). En v1.0.47 la forzamos a
  * 'software' (SwiftShader) porque el backend ANGLE Metal crasheaba el Chromium
@@ -386,23 +409,41 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i];
     const isLast = i === attempts.length - 1;
-    console.error('[hyperpremiere] intento ' + (i + 1) + '/' + attempts.length +
-      ': browser-gpu=' + attempt.gpu + ', workers=' + attempt.workers +
-      ', low-memory=' + attempt.lowMemory);
+    const cfg = 'browser-gpu=' + attempt.gpu + ', workers=' + attempt.workers +
+      ', low-memory=' + attempt.lowMemory;
+    console.error('[hyperpremiere] intento ' + (i + 1) + '/' + attempts.length + ': ' + cfg);
+    const t0 = Date.now();
     try {
       await runOnce(attempt);
       lastErr = null;
+      // Al log del panel: con qué configuración se renderizó de verdad y cuánto
+      // tardó. Sin esto no había forma de saber, desde el panel, si un render
+      // lento fue porque cayó al modo software (3-4× más lento) o si simplemente
+      // el marcador era largo.
+      report({
+        note: 'Render OK en ' + ((Date.now() - t0) / 1000).toFixed(1) + 's · ' + fmt +
+          '/' + q + ' · intento ' + (i + 1) + '/' + attempts.length + ' · ' + cfg,
+      });
       break;
     } catch (e) {
       lastErr = e;
-      if (isLast) break;
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      if (isLast) {
+        report({ note: 'Render FALLÓ tras ' + attempts.length + ' intento(s) · último: ' + cfg + ' · ' + secs + 's' });
+        break;
+      }
       // Limpiar salida parcial antes de reintentar.
       try { if (fs.existsSync(outMovPath)) fs.unlinkSync(outMovPath); } catch (_) {}
       const next = attempts[i + 1];
-      console.error('[hyperpremiere] intento ' + (i + 1) + ' falló (' +
-        String(e.message).split('\n')[0] + ') → bajo a browser-gpu=' + next.gpu +
-        ', workers=' + next.workers);
-      report({ pct: 55, msg: 'Ese modo falló, reintentando en modo más estable…' });
+      const why = String(e.message).split('\n')[0];
+      console.error('[hyperpremiere] intento ' + (i + 1) + ' falló (' + why +
+        ') → bajo a browser-gpu=' + next.gpu + ', workers=' + next.workers);
+      report({
+        pct: 55,
+        msg: 'Ese modo falló, reintentando en modo más estable…',
+        note: 'Intento ' + (i + 1) + ' (' + cfg + ') falló a los ' + secs + 's: ' + why +
+          ' → bajo a browser-gpu=' + next.gpu + ', workers=' + next.workers,
+      });
     }
   }
   if (lastErr) throw lastErr;
@@ -414,4 +455,4 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   return { movPath: outMovPath, htmlPath };
 }
 
-module.exports = { renderComposition };
+module.exports = { renderComposition, renderLanes };

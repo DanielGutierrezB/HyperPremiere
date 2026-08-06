@@ -26,7 +26,10 @@ const { transcribeMedia, cancelTranscription, whisperStatus } = require('./trans
 const claudeLogin = require('./claude-login');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
-const { renderComposition } = require('./render/hyperframes');
+const { renderComposition, renderLanes } = require('./render/hyperframes');
+// Contrato de composición: validar, completar el andamiaje sin gastar otra
+// llamada al modelo, y leer su auditoría.
+const { isValidComposition, repairComposition, auditFailure } = require('./composition');
 const {
   slugify,
   ensureOutputDir,
@@ -687,36 +690,52 @@ async function prepareGeneration(body, mode, onProgress) {
   const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
   const localHint = config.provider === 'ollama' ? ' — modelo local, puede tardar varios minutos' : '';
   report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' + localHint });
-  function isValidComposition(h) {
-    return h && /data-composition-id/.test(h) && /data-duration\s*=\s*["']?\s*[0-9.]*[1-9]/.test(h) && /__timelines/.test(h);
-  }
-  // Auditoría del propio modelo (ver system.md, "PLAN → CÓDIGO → AUDITORÍA"):
-  // si el modelo declaró una falla concreta de diseño, devolvemos qué falló
-  // para pedir UNA corrección dirigida. null = auditoría OK o ausente.
-  function auditFailure(h) {
-    const m = String(h || '').match(/<!--\s*AUDIT:\s*FALLA:?\s*([\s\S]*?)-->/i);
-    return m ? m[1].trim().slice(0, 400) : null;
+
+  // Completa el andamiaje en código y avisa al log del panel. Se aplica a TODA
+  // salida del modelo (primera, reintento y corrección de auditoría): el diseño
+  // no se toca, y lo que se arregla acá no cuesta ni una llamada ni un segundo.
+  function repair(raw) {
+    const r = repairComposition(raw, { durationSec });
+    if (r.fixes.length) {
+      report({ note: 'Andamiaje completado en código (sin gastar otra llamada): ' + r.fixes.join(' · ') });
+    }
+    return r;
   }
 
   let gen = await provider.generate({
     systemPrompt, userPrompt, images: stillsList, model: config.model, config,
   });
   addUsage(gen.usage);
-  let html = stripHtmlFence(gen.text);
+  let html = repair(stripHtmlFence(gen.text)).html;
 
-  // Reintento único si no cumple el contrato de HyperFrames (evita render fallido).
+  // Reintento único si sigue sin cumplir el contrato de HyperFrames. Llegar acá
+  // ya es raro (el reparador cubre id, duración y desalineación); queda para lo
+  // que no se puede inferir sin riesgo, típicamente que no registre la timeline.
+  // Se le manda SU PROPIO HTML para que arregle solo el andamiaje: rediseñar
+  // desde cero costaba otra tanda entera de razonamiento y devolvía un diseño
+  // distinto, sin la auditoría del primero.
   if (!isValidComposition(html)) {
+    const why = repairComposition(html, { durationSec }).blocked || 'el contrato está incompleto';
     report({ pct: 45, msg: 'Corrigiendo la estructura de la composición…' });
+    report({ note: 'LLAMADA EXTRA al modelo por estructura: ' + why + '.' });
     const fixPrompt = userPrompt +
-      '\n\n## IMPORTANTE: la estructura anterior era inválida\n' +
-      'Devolvé el HTML COMPLETO siguiendo EXACTAMENTE la plantilla obligatoria. El <div id="stage"> ' +
-      'DEBE tener data-composition-id, data-width="1920", data-height="1080", data-duration (número > 0 = duración del marcador) y data-fps="30". ' +
-      'El script DEBE terminar con window.__timelines[COMP_ID] = tl; (COMP_ID igual a data-composition-id). Sin esto el render falla.';
+      '\n\n## Arreglo de estructura (NO rediseñes)\n' +
+      'Generaste la composición de abajo, pero ' + why + '.\n' +
+      'Devolvé EL MISMO HTML —mismo diseño, mismo CSS, mismos tweens y tiempos— con SOLO el andamiaje corregido:\n' +
+      '- El `<div id="stage">` con data-composition-id, data-start="0", data-width="1920", data-height="1080", ' +
+      'data-duration="' + durationSec.toFixed(2) + '" y data-fps="30".\n' +
+      '- El script cerrando con `window.__timelines[COMP_ID] = tl;`, con COMP_ID igual a data-composition-id.\n' +
+      'No cambies nada más: sin esto el render falla, pero el diseño ya está aprobado.\n' +
+      '\n### Tu versión a corregir\n```html\n' + html + '\n```';
     gen = await provider.generate({
       systemPrompt, userPrompt: fixPrompt, images: stillsList, model: config.model, config,
     });
     addUsage(gen.usage);
-    html = stripHtmlFence(gen.text);
+    const retried = repair(stripHtmlFence(gen.text));
+    // No empeorar: si el reintento vuelve inválido, se conserva el original (el
+    // render puede salir congelado, pero no se pierde el diseño).
+    if (retried.valid) html = retried.html;
+    else report({ note: 'El reintento de estructura TAMPOCO cumplió: sigo con la versión original.' });
   }
 
   // Corrección dirigida ÚNICA si la auditoría del propio modelo declaró una
@@ -738,9 +757,12 @@ async function prepareGeneration(body, mode, onProgress) {
       systemPrompt, userPrompt: auditPrompt, images: stillsList, model: config.model, config,
     });
     addUsage(gen.usage);
-    const corrected = stripHtmlFence(gen.text);
-    // No empeorar: solo adoptar la corrección si sigue cumpliendo el contrato.
-    if (isValidComposition(corrected)) html = corrected;
+    // No empeorar: solo adoptar la corrección si sigue cumpliendo el contrato
+    // (después de completarle el andamiaje, para no tirar un buen arreglo de
+    // diseño por un atributo suelto).
+    const corrected = repair(stripHtmlFence(gen.text));
+    if (corrected.valid) html = corrected.html;
+    else report({ note: 'La corrección de auditoría no cumplía el contrato: me quedo con la versión anterior.' });
   }
 
   if (!html) throw new Error(`El proveedor "${config.provider}" devolvió respuesta vacía`);
@@ -1166,9 +1188,17 @@ async function renderManualHtml(body, onProgress) {
   if (!marker || typeof marker !== 'object') throw new Error('Falta "marker"');
   const durationSec = Number(marker.duration) || 0;
   if (durationSec <= 0) throw new Error('marker.duration debe ser > 0');
-  const cleanHtml = String(body.html || '').trim();
+  let cleanHtml = String(body.html || '').trim();
   if (!cleanHtml) throw new Error('El HTML está vacío');
   const markerSlug = String(body.markerSlug || '').trim() || slugify(marker.name);
+  // Acá no hay modelo al que volver: si al editar a mano se desalinea el id o se
+  // pierde la duración, el render sale CONGELADO y sin explicación. Se completa
+  // el andamiaje igual que en la generación, y se avisa en el log.
+  const fixedManual = repairComposition(cleanHtml, { durationSec });
+  if (fixedManual.fixes.length) {
+    cleanHtml = fixedManual.html;
+    report({ note: 'HTML manual: andamiaje completado en código · ' + fixedManual.fixes.join(' · ') });
+  }
 
   const baseDir = ensureOutputDir(projectPath, sequenceName);
   const version = nextVersion(baseDir, markerSlug);
@@ -1318,7 +1348,15 @@ function engineDepsReady() {
   } catch (e) { return false; }
 }
 function engineStatus() {
-  return { ok: true, depsReady: engineDepsReady(), bridgeDir: __dirname, platform: process.platform };
+  return {
+    ok: true,
+    depsReady: engineDepsReady(),
+    bridgeDir: __dirname,
+    platform: process.platform,
+    // Cuántos renders aguanta esta máquina en paralelo. La decide el módulo de
+    // render (que ya perfila RAM/cores) y la cola la usa como techo de su carril.
+    renderLanes: renderLanes(),
+  };
 }
 // Corre `npm install` en bridge/ (trae hyperframes + su Chromium). Reporta
 // progreso por onProgress({ pct, msg }). Devuelve { ok } o { ok:false, error }.

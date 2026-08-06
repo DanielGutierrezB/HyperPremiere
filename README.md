@@ -108,12 +108,17 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
 
 ## La cola
 
-- **Pipeline de 2 carriles (modelo ↔ render):** el **render** va de a uno (cada uno es un
-  Chrome capturando frames; varios revientan la RAM), pero el **modelo (LLM)** corre
-  **varios en paralelo** (configurable, "Diseños en paralelo (IA)" en ⚙; default 3) porque
-  el trabajo en la nube no compite por recursos locales → para un lote, los diseños se
-  resuelven solapados y el render nunca espera. Con **Ollama local** el modelo vuelve a 1
-  (comparte la máquina) y no se solapa con el render.
+- **Pipeline de 2 carriles (modelo ↔ render):** el **modelo (LLM)** corre **varios en
+  paralelo** (configurable, "Diseños en paralelo (IA)" en ⚙; default 3, máximo 8) porque el
+  trabajo en la nube no compite por recursos locales → para un lote, los diseños se
+  resuelven solapados y el render nunca espera. El **render** también paraleliza, pero solo
+  hasta donde aguanta **tu** máquina: el motor perfila RAM y cores y decide los carriles
+  (2 en equipos con ≥ 24 GB y ≥ 8 cores; **1** en los flojos, donde un segundo Chrome
+  dispara el "Set maximum size exceeded"). Medido en un M3 Max de 48 GB con dos marcadores
+  reales: en serie 69s, en paralelo 47s (**-32%**) sin que ninguno se ralentice, y los
+  `.mov` salen **idénticos byte a byte** — el carril extra acelera el lote, no toca la
+  calidad. Lo ves en el ⬇ Log al abrir el panel ("Carriles de render en esta máquina: N").
+  Con **Ollama local** todo vuelve a 1 (comparte la máquina) y no se solapa con el render.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
 - Controles: **pausar/reanudar** (retoma desde el llamado a la IA o desde el render, según
   dónde estaba), **cancelar** un ítem, **reintentar** ante fallo (si el modelo ya había
@@ -161,9 +166,22 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
   proceso externo ni servidor):
   - `bridge/engine.js` — orquestación en 2 etapas (`prepareGenerate`/`prepareFeedback` =
     modelo, `renderPrepared` = render), config, self-update, versiones, cola, capturas.
-  - `bridge/providers/` — `claude-cli`, `claude-api`, `openai-compat`, `ollama`.
-  - `bridge/render/hyperframes.js` — render a `.mov` (ProRes 4444 alpha) o `.mp4` (H.264),
-    con `--workers 1 --low-memory-mode` (marcadores largos reventaban RAM sin esto).
+  - `bridge/providers/` — `claude-cli`, `claude-api`, `cursor-cli`, `openai-compat`, `ollama`.
+  - `bridge/composition.js` — dueño del **contrato** de la composición: valida, y sobre todo
+    **completa el andamiaje en código** (id, `data-duration` con la duración real del
+    marcador, atributos del esqueleto) en vez de pedirle otro diseño al modelo. Antes, un
+    atributo suelto costaba una tanda entera de razonamiento —minutos— y devolvía un diseño
+    **distinto**, sin la auditoría del primero. También detecta algo que la validación no
+    veía: que el id del `#stage` y el del registro en `window.__timelines` no coincidan, que
+    pasaba el chequeo y salía un **video congelado**. Solo se vuelve al modelo cuando falta
+    algo que no se puede inferir sin riesgo (que no registre su timeline), y entonces se le
+    manda **su propio HTML** para que arregle el andamiaje sin rediseñar. Todo lo que repara
+    o gasta queda escrito en el ⬇ Log.
+  - `bridge/render/hyperframes.js` — render a `.mov` (ProRes 4444 alpha) o `.mp4` (H.264).
+    Perfila la máquina (workers, `--low-memory-mode` en las flojas, donde los marcadores
+    largos reventaban la RAM) y decide cuántos renders paralelos aguanta (`renderLanes`).
+    Al terminar deja en el ⬇ Log con qué configuración renderizó y cuánto tardó, así un
+    render lento se distingue de uno que cayó al modo software.
   - `bridge/prompt/` — system prompt con el sistema de diseño ("menos es más",
     acompañar sin ilustrar literal, coreografía del motion) y el protocolo
     **PLAN → CÓDIGO → AUDITORÍA**: el modelo diseña regiones que no se pisan,

@@ -1885,6 +1885,12 @@
   function showEnginePrep(show) { if (epBanner) epBanner.setAttribute("data-hidden", show ? "false" : "true"); }
   function checkEngineDeps() {
     hpCall("engineStatus").then(function (st) {
+      // Cuántos renders aguanta ESTA máquina en paralelo: lo perfila el motor
+      // (RAM/cores) y la cola lo usa como techo de su carril de render.
+      if (st && st.renderLanes) {
+        HPQueue.setRenderLanes(st.renderLanes);
+        hpLog("Carriles de render en esta máquina: " + HPQueue.getRenderLanes() + ".");
+      }
       if (st && st.ok && st.depsReady === false) {
         hpLog("Motor SIN dependencias (instalación limpia) — mostrando 'Preparar motor'.", "WARN");
         showEnginePrep(true);

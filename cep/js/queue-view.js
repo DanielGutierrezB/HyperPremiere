@@ -173,8 +173,9 @@
       if (j.kind === "generate" || j.kind === "feedback") genCount++;
       compSec += Number(j.markerDuration) || 0;
     }
-    // Tiempo ≈ (jobs de modelo × promedio modelo) + (segundos de composición × factor render).
-    var timeSec = genCount * HPQueue.timing.avgModelSec() + compSec * HPQueue.timing.renderSecPerCompSec();
+    // La cola sabe cuántos diseños y cuántos renders corren en paralelo, así que
+    // la cuenta la hace ella (ver timing.estimateSec).
+    var timeSec = HPQueue.timing.estimateSec(genCount, compSec);
 
     var foot = document.createElement("div"); foot.className = "queue-estimate";
     var line1 = document.createElement("div"); line1.className = "qe-line";
