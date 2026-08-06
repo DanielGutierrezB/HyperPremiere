@@ -356,6 +356,30 @@
       var gh = document.createElement("div"); gh.className = "queue-seq";
       var gname = document.createElement("span"); gname.className = "qs-name"; gname.textContent = g.seqName;
       gh.appendChild(gname);
+      // Contexto de la secuencia: saber de un vistazo si ya tiene transcript y
+      // objetivo, o si va a haber que transcribirla antes de generar.
+      var ctx = (deps && deps.sequenceContext) ? deps.sequenceContext(g.seqName) : null;
+      if (ctx) {
+        var tag = document.createElement("span"); tag.className = "qs-ctx";
+        if (ctx.hasTranscript && ctx.hasObjective) {
+          tag.classList.add("is-ready");
+          tag.textContent = "✓ transcript + objetivo";
+          tag.title = "Esta secuencia ya tiene transcript y objetivo: se genera directo, sin transcribir.";
+        } else if (ctx.hasTranscript) {
+          tag.classList.add("is-ready");
+          tag.textContent = "✓ transcript · falta objetivo";
+          tag.title = "Ya tiene transcript. El objetivo se saca solo antes de generar.";
+        } else if (g.seqName === prepSeq) {
+          tag.classList.add("is-working");
+          tag.textContent = "◔ transcribiendo…";
+          tag.title = "Se está transcribiendo ahora (mirá el progreso arriba).";
+        } else {
+          tag.classList.add("is-missing");
+          tag.textContent = "falta transcript";
+          tag.title = "No tiene transcript: antes de generar se transcribe y se saca el objetivo.";
+        }
+        gh.appendChild(tag);
+      }
       var ctrls = document.createElement("span"); ctrls.className = "qs-ctrls";
       // Reordenar la secuencia completa (solo si tiene jobs en cola).
       if (queuedInGroup > 0) {

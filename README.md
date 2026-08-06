@@ -46,6 +46,12 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    cola** genera igual, avisando que va sin transcript. Mientras prepara el contexto,
    la pestaña **Cola** muestra la barra de progreso y el estado de Whisper (con
    **✕ cancelar**), y los marcadores en espera dicen que esperan el transcript.
+   Con **varias secuencias en la cola** cada una lleva su marca: **✓ transcript +
+   objetivo** si ya está lista o **falta transcript** si hay que hacerlo. Solo se
+   transcribe la que tenga marcadores en cola sin transcript, nunca todas, y de a
+   una (Premiere exporta el audio de la secuencia abierta, así que el panel la abre
+   y después **te devuelve a la que estabas**). Las secuencias que ya están listas
+   **no esperan**: se van generando mientras otra se transcribe.
    Al final, el
    **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODOS los
    marcadores (no lo repetís en cada uno).

@@ -66,9 +66,11 @@
         HPStore.setContext(currentProjectPath, currentSequenceName);
         // El contexto quedó al día: si había aviso de "otra secuencia activa", sobra.
         showSeqNotice("");
-        // Secuencia nueva = otra oportunidad de preparar bien su contexto.
-        contextPrepFailed = false;
-        contextPrepared = false;
+        // Recargar una secuencia = otra oportunidad de preparar bien SU contexto
+        // (puede que le hayas arreglado el audio). Las decisiones que tomaste en
+        // las otras secuencias de la cola siguen valiendo.
+        delete contextPrepFailed[currentSequenceName];
+        delete contextPrepared[currentSequenceName];
         // Al abrir el panel o cambiar de proyecto, cargar la cola guardada de ESE
         // proyecto (queue.json en su carpeta HyperPremiere).
         if (currentProjectPath !== lastRestoredProject) {
@@ -87,11 +89,14 @@
     setOutput: setOutput,
     // Nombre de la secuencia cuyo contexto se está preparando, para que la cola
     // diga "esperando el transcript" en vez de un "En cola…" sin explicación.
-    preparingSequence: function () { return prepSequence; }
+    preparingSequence: function () { return prepSequence; },
+    // Estado del contexto de una secuencia, o null si todavía no lo sabemos.
+    sequenceContext: function (seqName) { return seqStatus[seqName] || null; }
   });
   // Cada evento de la cola refresca la vista de Cola, las tarjetas de la
   // secuencia actual y el contador de uso de la sesión.
   HPQueue.on(function () {
+    refreshSeqStatusFromJobs(HPQueue.jobs());
     HPQueueView.render(HPQueue.jobs());
     reflectQueueOnCards();
     updateSessionUsageBar();
@@ -422,6 +427,7 @@
   var transcribeFill = document.getElementById("transcribe-fill");
   var transcribing = false; // mientras corre, el botón se vuelve "Cancelar"
   var transcribeInFlight = null; // la promesa en curso, para que la compartan botón y cola
+  var transcribeInFlightSeq = ""; // de QUÉ secuencia es esa promesa
   function showTranscribeBar(show) {
     if (transcribeProgress) transcribeProgress.setAttribute("data-hidden", show ? "false" : "true");
     if (transcribeFill && show) transcribeFill.style.width = "0%";
@@ -457,6 +463,52 @@
   function prepProgress(msg, pct) {
     if (qpMsg && msg) qpMsg.textContent = msg;
     if (qpFill && typeof pct === "number") qpFill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  }
+
+  // ── Estado del contexto de cada secuencia de la cola ─────────────────
+  // La cola puede tener jobs de varias secuencias y cada una tiene su transcript.
+  // Este caché contesta "¿esta ya está lista?" de forma síncrona para la vista;
+  // se llena consultando el disco (el transcript vive en la carpeta de la
+  // secuencia, y la caché del panel solo tiene el de la activa).
+  var seqStatus = {};        // seq → { hasTranscript, hasObjective }
+  var seqStatusAsking = {};  // seq → true mientras se consulta el disco
+
+  function markContextChanged(seqName) {
+    if (seqName) delete seqStatus[seqName];
+    HPQueueView.render(HPQueue.jobs());
+  }
+
+  // Consulta en lote el estado de las secuencias de la cola que no conocemos.
+  function refreshSeqStatusFromJobs(jobs) {
+    var pending = [], byName = {}, i, j;
+    for (i = 0; i < jobs.length; i++) {
+      j = jobs[i];
+      if (!j.seqName || seqStatus[j.seqName] || seqStatusAsking[j.seqName]) continue;
+      if (byName[j.seqName]) continue;
+      byName[j.seqName] = j.projectPath || currentProjectPath;
+      pending.push(j.seqName);
+    }
+    if (!pending.length) return;
+    pending.forEach(function (n) { seqStatusAsking[n] = true; });
+    // Todas las secuencias de la cola son del proyecto abierto, así que una sola
+    // consulta alcanza (el motor recorre las carpetas y devuelve solo el conteo).
+    hpCall("transcriptSummary", { projectPath: byName[pending[0]], sequenceNames: pending })
+      .then(function (r) {
+        var disk = (r && r.ok && r.byName) || {};
+        pending.forEach(function (name) {
+          delete seqStatusAsking[name];
+          var onDisk = disk[name] && disk[name].found;
+          seqStatus[name] = {
+            hasTranscript: !!onDisk || transcriptCountFor(byName[name], name) > 0,
+            hasObjective: !objectiveIsEmpty(byName[name], name)
+          };
+        });
+        HPQueueView.render(HPQueue.jobs());
+      })
+      .catch(function (e) {
+        pending.forEach(function (name) { delete seqStatusAsking[name]; });
+        hpLog("No pude revisar qué secuencias ya tienen transcript: " + ((e && e.message) || e), "WARN");
+      });
   }
 
   if (qpCancel) {
@@ -506,21 +558,24 @@
   }
 
   // Paso 2: Whisper local sobre ese .wav. Resuelve null si lo cancelaste.
-  function runWhisperOn(audioPath) {
+  function runWhisperOn(audioPath, projectPath, seqName) {
     transcribeStatus("Audio exportado. Transcribiendo…");
     // El progreso también va al ⬇ Log (throttleado): si algo se cuelga,
     // el log muestra hasta dónde llegó — antes quedaba mudo tras el clip.
     var lastProgLog = 0;
     return HPEngine.callProg("transcribeMedia", {
-      mediaPath: audioPath, projectPath: currentProjectPath, sequenceName: currentSequenceName,
-      clipName: currentSequenceName || "",
+      mediaPath: audioPath, projectPath: projectPath, sequenceName: seqName,
+      clipName: seqName || "",
       // Ya es mono 16 kHz: nada de ffmpeg. Y es temporal: se borra al terminar,
       // pase lo que pase (una clase entera en WAV son cientos de MB).
       alreadyPrepared: true, deleteAfter: true
     }, function (p) {
       if (!p) return;
       if (p.msg) {
-        transcribeStatus(p.msg);
+        // La fila de estado vive en la sección Contexto, que muestra la secuencia
+        // ACTIVA: si estamos transcribiendo otra (cola con varias), se aclara
+        // cuál, o parecería el transcript de la que tenés en pantalla.
+        transcribeStatus(seqName === currentSequenceName ? p.msg : ("“" + seqName + "”: " + p.msg));
         var now = Date.now();
         if (now - lastProgLog > 15000) { lastProgLog = now; hpLog("Transcripción: " + p.msg); }
       }
@@ -535,69 +590,146 @@
     });
   }
 
-  // Paso 3: adoptar el resultado (store + UI + avisos de bucles).
-  function adoptWhisperResult(r) {
-    HPStore.setTranscript(r.segments);
-    // El audio ES la secuencia: los tiempos ya coinciden con el timeline.
-    setOffset(0, "audio de la secuencia");
-    updateTranscriptStatus();
-    // Whisper a veces entra en bucle sobre el silencio y repite la última
-    // frase decenas de veces; se limpia en el motor y se avisa acá, porque
-    // si no el editor ve un transcript "más corto" sin saber por qué.
+  // Paso 3: adoptar el resultado. Si es de OTRA secuencia (cola con varias), se
+  // escribe en SU namespace sin tocar la UI, que muestra la secuencia activa.
+  function adoptWhisperResult(r, projectPath, seqName) {
     var loopNote = r.loopsRemoved ? " · limpié " + r.loopsRemoved + " repeticiones alucinadas" : "";
-    transcribeStatus(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
-      r.tool + loopNote + " ✓ (guardado en la carpeta de la secuencia)");
-    hpLog("Transcripción local OK: " + r.segments.length + " segmentos · " + r.language + loopNote + " · " + r.savedPath);
+    hpLog("Transcripción local OK (" + seqName + "): " + r.segments.length + " segmentos · " +
+      r.language + loopNote + " · " + r.savedPath);
     if (r.loops && r.loops.length) {
       r.loops.forEach(function (l) {
+        // Whisper a veces entra en bucle sobre el silencio y repite la última
+        // frase decenas de veces; se limpia en el motor y se avisa acá, porque
+        // si no el editor ve un transcript "más corto" sin saber por qué.
         hpLog("Bucle de Whisper: " + l.count + "× “" + String(l.text).slice(0, 60) + "” entre " +
           Math.round(l.start) + "s y " + Math.round(l.end) + "s", "WARN");
       });
     }
+    if (seqName !== currentSequenceName) {
+      HPStore.withContext(projectPath, seqName, function () {
+        HPStore.setTranscript(r.segments);
+        HPStore.setTranscriptOffset(0);
+      });
+      return;
+    }
+    HPStore.setTranscript(r.segments);
+    // El audio ES la secuencia: los tiempos ya coinciden con el timeline.
+    setOffset(0, "audio de la secuencia");
+    updateTranscriptStatus();
+    transcribeStatus(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
+      r.tool + loopNote + " ✓ (guardado en la carpeta de la secuencia)");
+  }
+
+  // Activa una secuencia en Premiere si no es la que está abierta. Devuelve el
+  // nombre de la que estaba (para poder volver) o "" si no hizo falta cambiar.
+  function activateSequence(seqName) {
+    if (!seqName || seqName === currentSequenceName) return Promise.resolve("");
+    return new Promise(function (resolve, reject) {
+      HPHost.getActiveSequenceName(function (before) {
+        var prev = String(before || "");
+        if (prev === seqName) { resolve(""); return; }
+        hpLog("Abro la secuencia “" + seqName + "” en Premiere para poder exportar su audio.");
+        HPHost.openSequenceAndSeek(seqName, 0, function (res) {
+          if (String(res || "").indexOf("ok") !== 0) {
+            reject(new Error("No pude abrir la secuencia “" + seqName + "” en Premiere: " + (res || "sin respuesta") +
+              "\nQué hacer: abrila a mano y volvé a intentar."));
+            return;
+          }
+          resolve(prev);
+        });
+      });
+    });
   }
 
   /**
-   * Transcribe la secuencia activa de punta a punta y deja el transcript en el
-   * store. Resuelve con los segmentos, o con null si lo cancelaste; rechaza con
-   * un Error cuyo mensaje ya es presentable. Lo usan el botón y el paso previo
-   * obligatorio antes de generar.
+   * Transcribe una secuencia de punta a punta y deja el transcript en su
+   * namespace del store. Resuelve con los segmentos, o con null si lo cancelaste;
+   * rechaza con un Error cuyo mensaje ya es presentable. Lo usan el botón 🎙 y el
+   * paso previo obligatorio antes de generar (que puede pedir OTRA secuencia si
+   * la cola tiene jobs de varias).
+   *
+   * Si la secuencia no es la activa, la abre en Premiere (única forma de exportar
+   * su audio) y al terminar vuelve a la que estabas.
    */
-  function transcribeCurrentSequence() {
-    // Si ya está corriendo (tocaste el botón y después Generar), se engancha a la
-    // que hay en vuelo en vez de arrancar una segunda exportación.
-    if (transcribeInFlight) return transcribeInFlight;
+  function transcribeSequence(projectPath, seqName) {
+    if (transcribeInFlight) {
+      // Misma secuencia (tocaste el botón y después Generar): se engancha a la que
+      // hay en vuelo en vez de arrancar una segunda exportación.
+      if (transcribeInFlightSeq === seqName) return transcribeInFlight;
+      // Otra secuencia: Premiere solo puede exportar el audio de UNA a la vez,
+      // así que esta espera su turno. Devolver la promesa en vuelo le daría el
+      // transcript de la secuencia equivocada.
+      hpLog("“" + seqName + "” espera su turno para transcribir (ahora está “" + transcribeInFlightSeq + "”).");
+      return transcribeInFlight.then(next, next);
+    }
     transcribing = true;
+    transcribeInFlightSeq = seqName;
     if (btnTranscribe) {
       btnTranscribe.textContent = "✕ Cancelar transcripción";
       btnTranscribe.title = "Cancela la transcripción en curso (mata el proceso de whisper)";
     }
     showTranscribeBar(true);
-    transcribeStatus("Exportando el audio de la secuencia (Premiere puede quedarse un rato)…");
-    showPrepInQueue(currentSequenceName);
+    status("Exportando el audio de la secuencia (Premiere puede quedarse un rato)…");
+    showPrepInQueue(seqName);
     prepProgress("Exportando el audio de la secuencia…", 0);
-    hpLog("Transcripción local: exportando el audio de la secuencia…");
+    hpLog("Transcripción local de “" + seqName + "”: exportando el audio…");
 
-    transcribeInFlight = exportSequenceAudioToTemp()
-      .then(runWhisperOn)
+    var returnTo = "";
+    transcribeInFlight = activateSequence(seqName)
+      .then(function (prev) {
+        returnTo = prev;
+        return exportSequenceAudioToTemp();
+      })
+      .then(function (audioPath) { return runWhisperOn(audioPath, projectPath, seqName); })
       .then(function (r) {
-        transcribeInFlight = null;
         endTranscribe();
         if (!r) {
-          transcribeStatus("Transcripción cancelada.");
+          status("Transcripción cancelada.");
           hpLog("Transcripción local cancelada por el usuario.");
-          return null;
+          return restoreSequence().then(finish(null));
         }
-        adoptWhisperResult(r);
-        return r.segments;
+        adoptWhisperResult(r, projectPath, seqName);
+        markContextChanged(seqName);
+        return restoreSequence().then(finish(r.segments));
       }, function (e) {
-        transcribeInFlight = null;
         endTranscribe();
-        throw e;
+        return restoreSequence().then(function () { clear(); throw e; });
       });
     return transcribeInFlight;
+
+    // La fila de estado vive en la sección Contexto, que muestra la secuencia
+    // ACTIVA: si transcribimos otra, se aclara cuál.
+    function status(msg) {
+      transcribeStatus(seqName === currentSequenceName ? msg : ("“" + seqName + "”: " + msg));
+    }
+    // Recién acá se libera el "en vuelo": si se liberara antes de volver a la
+    // secuencia del editor, un segundo pedido arrancaría otra exportación
+    // mientras Premiere todavía está cambiando de timeline.
+    function clear() { transcribeInFlight = null; transcribeInFlightSeq = ""; }
+    function finish(value) { return function () { clear(); return value; }; }
+    function next() { return transcribeSequence(projectPath, seqName); }
+
+    // Volver a la secuencia que el editor tenía abierta: le movimos el timeline
+    // para exportar el audio, no se lo dejamos cambiado.
+    function restoreSequence() {
+      if (!returnTo || returnTo === seqName) return Promise.resolve();
+      return new Promise(function (resolve) {
+        hpLog("Vuelvo a la secuencia “" + returnTo + "”, que era la que tenías abierta.");
+        HPHost.openSequenceAndSeek(returnTo, 0, function () { resolve(); });
+      });
+    }
   }
 
-  function objectiveIsEmpty() {
+  function transcribeCurrentSequence() {
+    return transcribeSequence(currentProjectPath, currentSequenceName);
+  }
+
+  function objectiveIsEmpty(projectPath, seqName) {
+    if (seqName && seqName !== currentSequenceName) {
+      return HPStore.withContext(projectPath, seqName, function () {
+        return !HPStore.getObjective() || !HPStore.getObjective().trim();
+      });
+    }
     return !HPStore.getObjective() || !HPStore.getObjective().trim();
   }
 
@@ -621,7 +753,7 @@
         hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
       }).then(function () {
         // Si la cola sigue preparando contexto, ella cierra el cartel.
-        if (!contextPrep) showPrepInQueue(null);
+        if (!anyContextPrepRunning()) showPrepInQueue(null);
       });
     });
   }
@@ -803,40 +935,63 @@
   //
   // Se registra como preflight de la cola, así que cubre todos los caminos:
   // Generar, Generar listos, ▶ Iniciar cola, reintentar y regenerar.
-  var contextPrep = null;
+  // Todo el estado es POR SECUENCIA: la cola puede tener jobs de varias y cada
+  // una tiene su transcript y su objetivo. Solo se transcribe la que tenga jobs
+  // pendientes sin transcript, nunca "todas".
+  var contextPrep = {};       // seq → promesa de preparación en curso
   // Si la preparación falló o la cancelaste, el siguiente ▶ Iniciar cola vale como
   // "generá igual, me la juego": si no, te quedarías trabado sin poder generar
   // nunca en una secuencia sin audio.
-  var contextPrepFailed = false;
-  // Ya preparamos el contexto de esta secuencia. Sin esta marca, si derivar el
+  var contextPrepFailed = {}; // seq → true
+  // Ya preparamos el contexto de esa secuencia. Sin esta marca, si derivar el
   // objetivo falla (motor caído) el objetivo queda vacío, el preflight vuelve a
   // pedir preparación y se entra en un bucle infinito quemando tokens.
-  var contextPrepared = false;
+  var contextPrepared = {};   // seq → true
 
-  function contextIsReady() {
-    if (contextPrepared) return true;
-    return (HPStore.getTranscript() || []).length > 0 && !objectiveIsEmpty();
+  function anyContextPrepRunning() {
+    for (var k in contextPrep) { if (contextPrep.hasOwnProperty(k)) return true; }
+    return false;
+  }
+
+  function transcriptCountFor(projectPath, seqName) {
+    if (!seqName || seqName === currentSequenceName) return (HPStore.getTranscript() || []).length;
+    return HPStore.withContext(projectPath, seqName, function () {
+      return (HPStore.getTranscript() || []).length;
+    });
+  }
+
+  // Chequeo SÍNCRONO (lo que el panel ya sabe). Puede dar "no listo" para una
+  // secuencia cuyo transcript está en disco pero no en la caché: de eso se
+  // encarga prepareContextFor, que lo busca antes de transcribir.
+  function contextIsReadyFor(projectPath, seqName) {
+    if (contextPrepared[seqName]) return true;
+    return transcriptCountFor(projectPath, seqName) > 0 && !objectiveIsEmpty(projectPath, seqName);
   }
 
   // Devuelve una Promise<bool> que NUNCA rechaza: true = listo para generar,
   // false = no se pudo (ya se explicó por pantalla) y la cola queda en pausa.
-  // Compartida: si mandás 10 marcadores juntos, transcribe UNA vez.
-  function prepareContextForGeneration() {
-    if (contextPrep) return contextPrep;
+  // Compartida por secuencia: si mandás 10 marcadores de una, transcribe UNA vez.
+  function prepareContextFor(projectPath, seqName) {
+    if (contextPrep[seqName]) return contextPrep[seqName];
 
-    var segments = HPStore.getTranscript() || [];
+    var isActive = (seqName === currentSequenceName);
+    var label = isActive ? "esta secuencia" : "la secuencia “" + seqName + "”";
     // Cartel en la pestaña Cola desde el minuto cero: si solo falta el objetivo
-    // no pasa por transcribeCurrentSequence, que es quien normalmente lo abre.
-    showPrepInQueue(currentSequenceName);
+    // no pasa por transcribeSequence, que es quien normalmente lo abre.
+    showPrepInQueue(seqName);
+    prepProgress("Buscando el transcript de la secuencia…", 0);
     // Re-render para que los jobs digan "esperando el transcript" y no "En cola…".
     HPQueueView.render(HPQueue.jobs());
 
-    var prep = (segments.length ? Promise.resolve(segments) : (function () {
-      setOutput("Esta secuencia no tiene transcript y sin él las animaciones salen mucho peores.\n" +
-        "Lo genero primero, saco el objetivo de la clase y después arranco con la cola.");
-      hpLog("Generación pedida sin transcript: transcribo y derivo el objetivo antes de procesar.");
-      return transcribeCurrentSequence();
-    })())
+    var prep = loadTranscriptInto(projectPath, seqName)
+      .then(function (segs) {
+        if (segs && segs.length) return segs; // ya estaba hecho (disco o caché)
+        setOutput(label.charAt(0).toUpperCase() + label.slice(1) + " no tiene transcript y sin él las " +
+          "animaciones salen mucho peores.\nLo genero primero, saco el objetivo de la clase y después " +
+          "arranco con la cola.");
+        hpLog("Generación pedida sin transcript en “" + seqName + "”: transcribo y derivo el objetivo antes de procesar.");
+        return transcribeSequence(projectPath, seqName);
+      })
       .then(function (segs) {
         if (!segs || !segs.length) {
           // Cancelaste la transcripción: no generamos a ciegas.
@@ -845,67 +1000,111 @@
             "para generar igual sin él.");
           return false;
         }
-        if (!objectiveIsEmpty()) return true;
+        if (!objectiveIsEmpty(projectPath, seqName)) return true;
         setOutput("Transcript listo. Sacando el objetivo de la clase…");
         prepProgress("Transcript listo. Sacando el objetivo de la clase…", 100);
         // El objetivo es "mejor esfuerzo": si no se puede derivar, generamos con
         // el transcript igual (que es lo que más mueve la calidad) y podés
         // escribirlo a mano. Bloquear acá dejaría la cola trabada.
-        return deriveObjectiveFromTranscript(segs).then(function () {
-          if (objectiveIsEmpty()) {
-            hpLog("No pude derivar el objetivo: genero con el transcript solo.", "WARN");
+        return deriveObjectiveInto(segs, projectPath, seqName).then(function () {
+          if (objectiveIsEmpty(projectPath, seqName)) {
+            hpLog("No pude derivar el objetivo de “" + seqName + "”: genero con el transcript solo.", "WARN");
           }
           return true;
         });
       })
       .catch(function (e) {
         var why = (e && e.message) || "no pude preparar el contexto";
-        setOutput("No pude preparar el contexto de la clase, así que no generé nada:\n" + why +
+        setOutput("No pude preparar el contexto de " + label + ", así que no generé nada:\n" + why +
           "\n\nLos marcadores quedaron en la pestaña Cola. Cargá el transcript con \"Cargar JSON\" y pulsá " +
           "▶ Iniciar cola, o pulsá ▶ Iniciar cola otra vez para generar igual sin transcript (va a salir peor).", true);
-        hpLog("Preparación del contexto FALLÓ: " + why, "ERROR");
+        hpLog("Preparación del contexto de “" + seqName + "” FALLÓ: " + why, "ERROR");
         return false;
       })
       .then(function (ok) {
-        contextPrepFailed = !ok;
-        contextPrepared = ok;
+        contextPrepFailed[seqName] = !ok;
+        contextPrepared[seqName] = ok;
         showPrepInQueue(null);
-        if (ok) setOutput("Contexto listo. Arranco con la cola.");
+        markContextChanged(seqName);
+        if (ok) setOutput("Contexto listo" + (isActive ? "" : " (" + seqName + ")") + ". Arranco con la cola.");
         return ok;
       });
 
     // De un solo uso: si falla o la cancelás, el próximo intento vuelve a probar
     // en vez de quedar pegado a una promesa vieja.
-    contextPrep = prep;
-    function release() { contextPrep = null; }
+    contextPrep[seqName] = prep;
+    function release() { delete contextPrep[seqName]; }
     prep.then(release, release);
     return prep;
   }
 
-  // La cola consulta esto antes de arrancar CUALQUIER job de IA.
-  HPQueue.setModelPreflight(function (job) {
-    if (contextIsReady()) return true;
+  // Trae el transcript de una secuencia desde su carpeta si la caché no lo tiene.
+  // Devuelve los segmentos (o [] si no hay en ningún lado) y nunca rechaza.
+  function loadTranscriptInto(projectPath, seqName) {
+    var cached = transcriptCountFor(projectPath, seqName);
+    if (cached > 0) {
+      return Promise.resolve(seqName === currentSequenceName
+        ? HPStore.getTranscript()
+        : HPStore.withContext(projectPath, seqName, function () { return HPStore.getTranscript(); }));
+    }
+    // La activa tiene su propio camino, que además reescribe los transcripts en
+    // formato viejo y actualiza la fila de estado de la sección Contexto.
+    if (seqName === currentSequenceName) {
+      return new Promise(function (resolve) {
+        hydrateTranscriptFromDisk(function () { resolve(HPStore.getTranscript() || []); });
+      });
+    }
+    return hpCall("loadTranscript", { projectPath: projectPath, sequenceName: seqName })
+      .then(function (r) {
+        if (!r || !r.ok || !r.found || !r.segments || !r.segments.length) return [];
+        hpLog("Transcript de “" + seqName + "” recuperado del disco: " + r.segments.length + " segmentos.");
+        HPStore.withContext(projectPath, seqName, function () {
+          HPStore.setTranscript(r.segments);
+          HPStore.setTranscriptOffset(Number(r.offset) || 0);
+        });
+        return r.segments;
+      })
+      .catch(function () { return []; });
+  }
+
+  // Deriva el objetivo dejándolo en el namespace de SU secuencia. Para la activa
+  // usa la ruta normal (que además llena el textarea).
+  function deriveObjectiveInto(segments, projectPath, seqName) {
+    if (seqName === currentSequenceName) return deriveObjectiveFromTranscript(segments);
+    return hpCall("deriveObjective", { transcript: segments })
+      .then(function (data) {
+        if (data && data.ok && data.objective) {
+          HPStore.withContext(projectPath, seqName, function () { HPStore.setObjective(data.objective); });
+        }
+        if (data && data.usage) { HPStore.addSessionUsage(data.usage); updateSessionUsageBar(); }
+      })
+      .catch(function (e) {
+        hpLog("No pude derivar el objetivo de “" + seqName + "”: " + ((e && e.message) || e), "WARN");
+      });
+  }
+
+  // La cola consulta esto antes de arrancar CUALQUIER job de IA. Con dryRun=true
+  // solo contesta si el contexto está listo, sin ponerse a prepararlo: así la
+  // cola puede saltear los jobs que esperan y arrancar los que ya pueden.
+  HPQueue.setModelPreflight(function (job, dryRun) {
+    var seqName = (job && job.seqName) || currentSequenceName;
+    var projectPath = (job && job.projectPath) || currentProjectPath;
+    if (contextIsReadyFor(projectPath, seqName)) return true;
+    if (dryRun) return false;
     // Ya intentamos preparar el contexto y no se pudo: si volvés a arrancar la
     // cola es porque querés generar así. La decisión vale para TODA la cola de
-    // esta secuencia (marcar solo "ya falló" haría que el 2º job volviera a
+    // esa secuencia (marcar solo "ya falló" haría que el 2º job volviera a
     // intentar transcribir y dejara el resto del lote sin generar).
-    if (contextPrepFailed) {
-      contextPrepFailed = false;
-      contextPrepared = true;
+    if (contextPrepFailed[seqName]) {
+      contextPrepFailed[seqName] = false;
+      contextPrepared[seqName] = true;
       setOutput("Genero SIN transcript, como pediste. Las animaciones van a ser más genéricas: " +
         "el modelo no sabe qué se dice en cada marcador.");
-      hpLog("Generando sin transcript por decisión del editor (la preparación había fallado).", "WARN");
+      hpLog("Generando “" + seqName + "” sin transcript por decisión del editor.", "WARN");
+      markContextChanged(seqName);
       return true;
     }
-    // Job de otra secuencia (cola restaurada del proyecto): Premiere solo puede
-    // exportar el audio de la ACTIVA, así que no lo bloqueamos — pararlo dejaría
-    // la cola trabada sin forma de arreglarla desde acá.
-    if (job && job.seqName && job.seqName !== currentSequenceName) {
-      hpLog("El job “" + (job.label || job.markerKey) + "” es de la secuencia “" + job.seqName +
-        "”, no la activa: lo dejo pasar sin preparar el contexto.", "WARN");
-      return true;
-    }
-    return prepareContextForGeneration();
+    return prepareContextFor(projectPath, seqName);
   });
 
   // Encola la generación IA de un marcador. staged=true → solo encola (no arranca).

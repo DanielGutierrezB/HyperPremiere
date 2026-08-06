@@ -24,14 +24,22 @@ function slugify(name) {
 }
 
 /**
- * Crea (si hace falta) y devuelve la carpeta de salida al lado del .prproj.
+ * Dónde VA la carpeta de salida de una secuencia, sin crearla. Para consultas de
+ * solo lectura (¿ya tiene transcript?), que no deben dejar carpetas vacías.
  * Si projectPath está vacío (proyecto sin guardar), usa ~/HyperPremiere.
  */
-function ensureOutputDir(projectPath, sequenceName) {
+function outputDirPath(projectPath, sequenceName) {
   const root = projectPath
     ? path.join(path.dirname(projectPath), 'HyperPremiere')
     : path.join(os.homedir(), 'HyperPremiere');
-  const dir = path.join(root, slugify(sequenceName));
+  return path.join(root, slugify(sequenceName));
+}
+
+/**
+ * Crea (si hace falta) y devuelve la carpeta de salida al lado del .prproj.
+ */
+function ensureOutputDir(projectPath, sequenceName) {
+  const dir = outputDirPath(projectPath, sequenceName);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -158,6 +166,7 @@ function saveResources(resourcesDir, resources) {
 module.exports = {
   slugify,
   ensureOutputDir,
+  outputDirPath,
   paths,
   saveMeta,
   readMeta,

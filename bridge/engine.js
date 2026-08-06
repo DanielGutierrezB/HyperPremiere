@@ -30,6 +30,7 @@ const { renderComposition } = require('./render/hyperframes');
 const {
   slugify,
   ensureOutputDir,
+  outputDirPath,
   paths,
   saveMeta,
   readMeta,
@@ -342,6 +343,37 @@ function loadTranscript(body) {
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
+}
+
+/**
+ * Cuáles de estas secuencias ya tienen transcript en disco. Liviano a propósito
+ * (no devuelve los segmentos): la vista de la Cola lo usa para marcar con ✓ las
+ * secuencias listas, y puede haber muchas.
+ * `body` = { projectPath, sequenceNames: string[] }.
+ */
+function transcriptSummary(body) {
+  body = body || {};
+  const names = Array.isArray(body.sequenceNames) ? body.sequenceNames : [];
+  const byName = {};
+  for (const name of names) {
+    try {
+      // Sin crear la carpeta: esto es una consulta, y muchas de las secuencias
+      // preguntadas pueden no tener nada generado todavía.
+      const dir = outputDirPath(body.projectPath, name);
+      let found = null;
+      for (const file of [TRANSCRIPT_FILE, TRANSCRIPT_FILE_LEGACY]) {
+        const p = path.join(dir, file);
+        if (fs.existsSync(p)) { found = p; break; }
+      }
+      if (!found) { byName[name] = { found: false, count: 0 }; continue; }
+      const data = JSON.parse(fs.readFileSync(found, 'utf8'));
+      const segs = Array.isArray(data && data.segments) ? data.segments : [];
+      byName[name] = { found: segs.length > 0, count: segs.length };
+    } catch (e) {
+      byName[name] = { found: false, count: 0, error: (e && e.message) || String(e) };
+    }
+  }
+  return { ok: true, byName };
 }
 
 /**
@@ -1415,6 +1447,7 @@ module.exports = {
   listCursorModels,
   saveTranscript,
   loadTranscript,
+  transcriptSummary,
   newTempAudioPath,
   loginClaudeStart,
   loginClaudeCode,

@@ -314,37 +314,42 @@
         if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ" || j.kind === "renderLatest"))) { startRender(j); break; }
       }
     }
-    // Antes de gastar tokens en el primer job de IA: si falta el contexto de la
-    // clase (transcript / objetivo), el panel lo prepara y la cola espera. Sin
-    // esto, generar sin transcript daba animaciones muy inferiores.
-    var pending = modelPreflight ? nextModelJob() : null;
-    if (pending) {
-      if (preflightRunning) return; // ya se está preparando
-      // Se le pasa el job porque el contexto es POR SECUENCIA: si el job es de
-      // otra, el panel no puede transcribirla (Premiere exporta la activa).
-      var verdict = modelPreflight(pending); // true = listo, Promise = preparando
-      if (verdict !== true) {
+    // Carril MODELO: arranca TANTOS jobs de IA como permita el cupo (nube:
+    // MODEL_CONCURRENCY en paralelo; local: 1 y no mientras el render corre).
+    // startModel incrementa modelRunning en su 1ª línea, así que la condición
+    // ve el conteo actualizado en cada vuelta.
+    //
+    // Antes de gastar tokens en un job de IA se comprueba que su secuencia tenga
+    // contexto (transcript + objetivo): sin él las animaciones salen muy
+    // inferiores. El contexto es POR SECUENCIA, así que se pregunta job por job
+    // — con un solo chequeo al principio, un job de otra secuencia sin transcript
+    // se colaba y se generaba a ciegas. Una secuencia sin transcript NO frena a
+    // las que ya lo tienen: mientras se transcribe una, las otras generan.
+    for (var n = 0; n < jobs.length; n++) {
+      var next = jobs[n];
+      if (next.status !== "queued") continue;
+      if (next.kind !== "generate" && next.kind !== "feedback") continue;
+      if (modelPreflight && modelPreflight(next, true) !== true) {
+        // Solo UNA preparación a la vez: transcribir exige abrir la secuencia en
+        // Premiere, y dos a la vez se pisarían.
+        if (preflightRunning) continue;
         preflightRunning = true;
-        Promise.resolve(verdict).then(function (ready) {
+        Promise.resolve(modelPreflight(next)).then(function (ready) {
           preflightRunning = false;
           if (ready) { pump(); return; }
           // No se pudo preparar: la cola queda en pausa en vez de generar a
           // ciegas. El panel ya explicó qué pasó y cómo seguir.
           paused = true; emit();
-        }, function () {
+        }, function (e) {
+          // El preflight no debería rechazar (explica los fallos resolviendo
+          // false). Si rompe, sin este log la cola se pausaba sin decir por qué.
+          hpLog("El chequeo previo del contexto ROMPIÓ: " + ((e && (e.stack || e.message)) || e), "ERROR");
           preflightRunning = false;
           paused = true; emit();
         });
-        return;
+        continue;
       }
-    }
-    // Carril MODELO: arranca TANTOS jobs de IA como permita el cupo (nube:
-    // MODEL_CONCURRENCY en paralelo; local: 1 y no mientras el render corre).
-    // startModel incrementa modelRunning en su 1ª línea, así que la condición
-    // ve el conteo actualizado en cada vuelta.
-    while (modelRunning < modelCap() && (overlap || (!renderBusy && modelRunning === 0))) {
-      var next = nextModelJob();
-      if (!next) break;
+      if (modelRunning >= modelCap() || !(overlap || (!renderBusy && modelRunning === 0))) break;
       startModel(next);
     }
   }
@@ -397,9 +402,12 @@
     isPending: isPending,
     isUpgradable: isUpgradable,
 
-    // Chequeo que corre antes del primer job de IA (el panel lo usa para
-    // asegurar transcript + objetivo). fn(job) → true si ya está listo, o una
-    // Promise<bool>; si resuelve false, la cola se pausa en vez de generar.
+    // Chequeo que corre antes de CADA job de IA (el panel lo usa para asegurar
+    // transcript + objetivo de la secuencia de ese job).
+    //   fn(job, true)  → solo consulta: true si ya está listo, sin efectos.
+    //   fn(job)        → true si está listo, o una Promise<bool> que prepara el
+    //                    contexto; si resuelve false, la cola se pausa en vez
+    //                    de generar a ciegas.
     setModelPreflight: function (fn) { modelPreflight = fn; },
 
     // Cuántas llamadas al LLM corren en paralelo (nube). Persistente.
