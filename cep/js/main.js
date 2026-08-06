@@ -84,7 +84,10 @@
   HPStills.init({ onGeneralChanged: function () { updateGeneralSummary(); } });
   HPQueueView.init({
     goToJobMarker: function (job, openEditor) { goToJobMarker(job, openEditor); },
-    setOutput: setOutput
+    setOutput: setOutput,
+    // Nombre de la secuencia cuyo contexto se está preparando, para que la cola
+    // diga "esperando el transcript" en vez de un "En cola…" sin explicación.
+    preparingSequence: function () { return prepSequence; }
   });
   // Cada evento de la cola refresca la vista de Cola, las tarjetas de la
   // secuencia actual y el contador de uso de la sesión.
@@ -425,6 +428,45 @@
   }
   var TRANSCRIBE_LABEL = "🎙 Transcribir esta secuencia";
 
+  // ── Espejo del progreso en la pestaña Cola ───────────────────────────
+  // Cuando la cola espera el transcript, el progreso vive en la sección Contexto
+  // (otra pestaña): desde la Cola solo se veía "En cola…" sin explicación. Este
+  // bloque lo replica ahí. Se actualiza directo (no re-renderiza la cola) porque
+  // los ticks de Whisper son frecuentes.
+  var qpBox = document.getElementById("queue-prep");
+  var qpSeq = document.getElementById("qp-seq");
+  var qpMsg = document.getElementById("qp-msg");
+  var qpFill = document.getElementById("qp-fill");
+  var qpCancel = document.getElementById("qp-cancel");
+  // Secuencia cuyo contexto se está preparando (null = ninguna). La vista de la
+  // cola la usa para marcar qué jobs están esperando el transcript.
+  var prepSequence = null;
+
+  function showPrepInQueue(sequenceName) {
+    prepSequence = sequenceName || null;
+    if (!qpBox) return;
+    if (!prepSequence) {
+      qpBox.setAttribute("data-hidden", "true");
+      return;
+    }
+    if (qpSeq) qpSeq.textContent = "Preparando el contexto de “" + prepSequence + "”";
+    if (qpFill) qpFill.style.width = "0%";
+    qpBox.setAttribute("data-hidden", "false");
+  }
+
+  function prepProgress(msg, pct) {
+    if (qpMsg && msg) qpMsg.textContent = msg;
+    if (qpFill && typeof pct === "number") qpFill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  }
+
+  if (qpCancel) {
+    qpCancel.addEventListener("click", function () {
+      hpLog("Usuario canceló la preparación del contexto desde la Cola.");
+      qpMsg.textContent = "Cancelando…";
+      hpCall("cancelTranscription").catch(function () {});
+    });
+  }
+
   // Los errores de transcripción son MULTILÍNEA y explican qué hacer, pero
   // `.muted` los recortaba a una línea con elipsis: quedaba un mensaje
   // inservible. Con is-error el texto se muestra completo y seleccionable.
@@ -485,6 +527,7 @@
       if (typeof p.pct === "number" && transcribeFill) {
         transcribeFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
       }
+      prepProgress(p.msg, p.pct); // espejo en la pestaña Cola
     }).then(function (r) {
       if (r && r.cancelled) return null;
       if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
@@ -530,6 +573,8 @@
     }
     showTranscribeBar(true);
     transcribeStatus("Exportando el audio de la secuencia (Premiere puede quedarse un rato)…");
+    showPrepInQueue(currentSequenceName);
+    prepProgress("Exportando el audio de la secuencia…", 0);
     hpLog("Transcripción local: exportando el audio de la secuencia…");
 
     transcribeInFlight = exportSequenceAudioToTemp()
@@ -567,10 +612,16 @@
       }
       transcribeCurrentSequence().then(function (segments) {
         // Derivar el objetivo si está vacío (igual que al importar un JSON).
-        if (segments && objectiveIsEmpty()) deriveObjectiveFromTranscript(segments);
+        if (segments && objectiveIsEmpty()) {
+          prepProgress("Sacando el objetivo de la clase…", 100);
+          return deriveObjectiveFromTranscript(segments);
+        }
       }).catch(function (e) {
         transcribeStatus("Error: " + ((e && e.message) || "no se pudo transcribir"), true);
         hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
+      }).then(function () {
+        // Si la cola sigue preparando contexto, ella cierra el cartel.
+        if (!contextPrep) showPrepInQueue(null);
       });
     });
   }
@@ -774,6 +825,12 @@
     if (contextPrep) return contextPrep;
 
     var segments = HPStore.getTranscript() || [];
+    // Cartel en la pestaña Cola desde el minuto cero: si solo falta el objetivo
+    // no pasa por transcribeCurrentSequence, que es quien normalmente lo abre.
+    showPrepInQueue(currentSequenceName);
+    // Re-render para que los jobs digan "esperando el transcript" y no "En cola…".
+    HPQueueView.render(HPQueue.jobs());
+
     var prep = (segments.length ? Promise.resolve(segments) : (function () {
       setOutput("Esta secuencia no tiene transcript y sin él las animaciones salen mucho peores.\n" +
         "Lo genero primero, saco el objetivo de la clase y después arranco con la cola.");
@@ -790,6 +847,7 @@
         }
         if (!objectiveIsEmpty()) return true;
         setOutput("Transcript listo. Sacando el objetivo de la clase…");
+        prepProgress("Transcript listo. Sacando el objetivo de la clase…", 100);
         // El objetivo es "mejor esfuerzo": si no se puede derivar, generamos con
         // el transcript igual (que es lo que más mueve la calidad) y podés
         // escribirlo a mano. Bloquear acá dejaría la cola trabada.
@@ -811,6 +869,7 @@
       .then(function (ok) {
         contextPrepFailed = !ok;
         contextPrepared = ok;
+        showPrepInQueue(null);
         if (ok) setOutput("Contexto listo. Arranco con la cola.");
         return ok;
       });

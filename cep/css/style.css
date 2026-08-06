@@ -197,6 +197,45 @@ button:disabled {
   border-color: rgba(224, 138, 138, 0.35);
 }
 
+/* Cartel de preparación del contexto en la pestaña Cola (ver #queue-prep). */
+.queue-prep {
+  border: 1px solid rgba(96, 165, 250, 0.40);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: rgba(96, 165, 250, 0.08);
+  padding: 7px 9px;
+  margin-bottom: 8px;
+}
+
+.queue-prep[data-hidden="true"] { display: none; }
+
+.queue-prep .qp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.queue-prep .qp-seq {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+
+.queue-prep .qp-msg {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Motivo de espera de un job de la cola (esperando el transcript). */
+.qj-msg-waiting { color: var(--accent); }
+
 /* Aviso de "cambiaste de secuencia en Premiere" (ver #seq-notice en index.html). */
 .seq-notice {
   border: 1px solid rgba(251, 191, 36, 0.45);
@@ -777,7 +816,7 @@ textarea:focus {
 .qj-title-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
 .qj-title-link:hover { color: #34ffaa; }
 /* Resalte breve de la tarjeta del marcador al llegar desde "Ver" */
-.marker-card.is-focused { box-shadow: 0 0 0 2px var(--accent, #60a5fa); border-radius: 8px; transition: box-shadow 0.2s; }
+.marker-card.is-focused { box-shadow: 0 0 0 2px var(--accent); border-radius: 8px; transition: box-shadow 0.2s; }
 .queue-job.is-error .qj-title { color: #f87171; }
 .queue-job.is-running .qj-title { color: var(--accent); }
 .queue-job.is-queued .qj-title { color: var(--text-secondary); }

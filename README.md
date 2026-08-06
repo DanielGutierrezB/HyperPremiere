@@ -43,7 +43,9 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    el modelo no sabe qué se dice en cada marcador y las animaciones salen genéricas.
    Si no se puede transcribir (secuencia muda, Whisper sin instalar) **no genera a
    ciegas**: te lo dice y deja los marcadores en la cola; si insistís con **▶ Iniciar
-   cola** genera igual, avisando que va sin transcript.
+   cola** genera igual, avisando que va sin transcript. Mientras prepara el contexto,
+   la pestaña **Cola** muestra la barra de progreso y el estado de Whisper (con
+   **✕ cancelar**), y los marcadores en espera dicen que esperan el transcript.
    Al final, el
    **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODOS los
    marcadores (no lo repetís en cada uno).

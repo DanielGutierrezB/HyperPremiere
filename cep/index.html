@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.13</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.14</span>
       </button>
     </div>
   </header>
@@ -241,6 +241,14 @@
 
   <!-- Vista de Cola (pestaña): ocupa todo el panel para ver colas largas. -->
   <div id="view-queue" class="queue-view" data-hidden="true">
+    <!-- Preparación del contexto (transcript + objetivo) de una secuencia antes de
+         generar. Vive FUERA de #queue-panel porque ese se reescribe entero en cada
+         refresco de la cola y la barra perdería el progreso. -->
+    <div id="queue-prep" class="queue-prep" data-hidden="true">
+      <div class="qp-head"><span id="qp-seq" class="qp-seq"></span><button id="qp-cancel" type="button" class="qbtn">✕ cancelar</button></div>
+      <div id="qp-msg" class="qp-msg"></div>
+      <div class="hp-bar"><div id="qp-fill" class="hp-bar-fill"></div></div>
+    </div>
     <div id="queue-panel" class="queue-panel"></div>
   </div>
 

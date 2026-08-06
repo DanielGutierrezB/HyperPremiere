@@ -254,6 +254,7 @@
   function render(jobs) {
     var panel = document.getElementById("queue-panel");
     if (!panel) return;
+    var prepSeq = (deps && deps.preparingSequence) ? deps.preparingSequence() : null;
     var scroller = document.getElementById("view-queue");
     var savedScroll = scroller ? scroller.scrollTop : 0;
     var pending = 0, waiting = 0, i;
@@ -446,7 +447,16 @@
           line.appendChild(dc);
         }
         row.appendChild(line);
-        var msg = document.createElement("div"); msg.className = "qj-msg"; msg.textContent = j.msg || j.status;
+        var msg = document.createElement("div"); msg.className = "qj-msg";
+        // Un job en cola mientras se prepara el contexto de SU secuencia no está
+        // simplemente "en cola": espera el transcript. Decirlo evita que parezca
+        // que la cola se colgó (el progreso está en el cartel de arriba).
+        if (j.status === "queued" && prepSeq && j.seqName === prepSeq) {
+          msg.textContent = "Esperando el transcript de la secuencia…";
+          msg.classList.add("qj-msg-waiting");
+        } else {
+          msg.textContent = j.msg || j.status;
+        }
         row.appendChild(msg);
         // Caja de feedback inline (solo en jobs terminados y si el usuario la abrió).
         if (j.status === "done" && feedbackOpen[j.id]) {
