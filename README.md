@@ -37,6 +37,13 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    que transcribir ni importar de nuevo. Generar otra vez o importar otro JSON lo
    **reemplaza** por el más actual. Si cambiás de secuencia en Premiere, el panel te
    avisa para que pulses **Cargar marcadores** y te pases a ella con su transcript.
+   **No hace falta acordarse de este paso**: si mandás a generar en una secuencia sin
+   transcript, el panel lo transcribe y deriva el objetivo **antes** de gastar tokens, y
+   ahí arranca la cola (una sola vez, aunque mandes 20 marcadores juntos). Sin transcript
+   el modelo no sabe qué se dice en cada marcador y las animaciones salen genéricas.
+   Si no se puede transcribir (secuencia muda, Whisper sin instalar) **no genera a
+   ciegas**: te lo dice y deja los marcadores en la cola; si insistís con **▶ Iniciar
+   cola** genera igual, avisando que va sin transcript.
    Al final, el
    **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODOS los
    marcadores (no lo repetís en cada uno).

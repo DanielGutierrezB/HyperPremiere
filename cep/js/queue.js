@@ -297,6 +297,12 @@
     });
   }
 
+  // Chequeo previo a los jobs de IA, lo instala el panel (ver setModelPreflight).
+  // Devuelve true si el contexto de la clase ya está, o una Promise<bool> que se
+  // resuelve cuando termina de prepararlo.
+  var modelPreflight = null;
+  var preflightRunning = false;
+
   function pump() {
     if (paused) return; // staging: no arrancar nuevos jobs
     // En local (Ollama) NO se solapa: modelo y render usan la misma máquina.
@@ -308,19 +314,47 @@
         if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ" || j.kind === "renderLatest"))) { startRender(j); break; }
       }
     }
+    // Antes de gastar tokens en el primer job de IA: si falta el contexto de la
+    // clase (transcript / objetivo), el panel lo prepara y la cola espera. Sin
+    // esto, generar sin transcript daba animaciones muy inferiores.
+    var pending = modelPreflight ? nextModelJob() : null;
+    if (pending) {
+      if (preflightRunning) return; // ya se está preparando
+      // Se le pasa el job porque el contexto es POR SECUENCIA: si el job es de
+      // otra, el panel no puede transcribirla (Premiere exporta la activa).
+      var verdict = modelPreflight(pending); // true = listo, Promise = preparando
+      if (verdict !== true) {
+        preflightRunning = true;
+        Promise.resolve(verdict).then(function (ready) {
+          preflightRunning = false;
+          if (ready) { pump(); return; }
+          // No se pudo preparar: la cola queda en pausa en vez de generar a
+          // ciegas. El panel ya explicó qué pasó y cómo seguir.
+          paused = true; emit();
+        }, function () {
+          preflightRunning = false;
+          paused = true; emit();
+        });
+        return;
+      }
+    }
     // Carril MODELO: arranca TANTOS jobs de IA como permita el cupo (nube:
     // MODEL_CONCURRENCY en paralelo; local: 1 y no mientras el render corre).
     // startModel incrementa modelRunning en su 1ª línea, así que la condición
     // ve el conteo actualizado en cada vuelta.
     while (modelRunning < modelCap() && (overlap || (!renderBusy && modelRunning === 0))) {
-      var next = null;
-      for (var k = 0; k < jobs.length; k++) {
-        var m = jobs[k];
-        if (m.status === "queued" && (m.kind === "generate" || m.kind === "feedback")) { next = m; break; }
-      }
+      var next = nextModelJob();
       if (!next) break;
       startModel(next);
     }
+  }
+
+  function nextModelJob() {
+    for (var k = 0; k < jobs.length; k++) {
+      var m = jobs[k];
+      if (m.status === "queued" && (m.kind === "generate" || m.kind === "feedback")) return m;
+    }
+    return null;
   }
 
   // Reordenamiento: solo afecta a los jobs EN COLA (el que corre no se mueve).
@@ -362,6 +396,11 @@
     isActive: isActive,
     isPending: isPending,
     isUpgradable: isUpgradable,
+
+    // Chequeo que corre antes del primer job de IA (el panel lo usa para
+    // asegurar transcript + objetivo). fn(job) → true si ya está listo, o una
+    // Promise<bool>; si resuelve false, la cola se pausa en vez de generar.
+    setModelPreflight: function (fn) { modelPreflight = fn; },
 
     // Cuántas llamadas al LLM corren en paralelo (nube). Persistente.
     getModelConcurrency: function () { return modelConcurrency; },

@@ -66,6 +66,9 @@
         HPStore.setContext(currentProjectPath, currentSequenceName);
         // El contexto quedó al día: si había aviso de "otra secuencia activa", sobra.
         showSeqNotice("");
+        // Secuencia nueva = otra oportunidad de preparar bien su contexto.
+        contextPrepFailed = false;
+        contextPrepared = false;
         // Al abrir el panel o cambiar de proyecto, cargar la cola guardada de ESE
         // proyecto (queue.json en su carpeta HyperPremiere).
         if (currentProjectPath !== lastRestoredProject) {
@@ -415,10 +418,144 @@
   var transcribeProgress = document.getElementById("transcribe-progress");
   var transcribeFill = document.getElementById("transcribe-fill");
   var transcribing = false; // mientras corre, el botón se vuelve "Cancelar"
+  var transcribeInFlight = null; // la promesa en curso, para que la compartan botón y cola
   function showTranscribeBar(show) {
     if (transcribeProgress) transcribeProgress.setAttribute("data-hidden", show ? "false" : "true");
     if (transcribeFill && show) transcribeFill.style.width = "0%";
   }
+  var TRANSCRIBE_LABEL = "🎙 Transcribir esta secuencia";
+
+  // Los errores de transcripción son MULTILÍNEA y explican qué hacer, pero
+  // `.muted` los recortaba a una línea con elipsis: quedaba un mensaje
+  // inservible. Con is-error el texto se muestra completo y seleccionable.
+  function transcribeStatus(msg, isError) {
+    if (!transcriptStatus) return;
+    transcriptStatus.textContent = msg;
+    transcriptStatus.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function endTranscribe() {
+    transcribing = false;
+    if (btnTranscribe) {
+      btnTranscribe.disabled = false;
+      btnTranscribe.textContent = TRANSCRIBE_LABEL;
+    }
+    showTranscribeBar(false);
+  }
+
+  // Paso 1: Premiere exporta la mezcla de audio de la secuencia a un .wav temporal.
+  function exportSequenceAudioToTemp() {
+    return hpCall("newTempAudioPath").then(function (t) {
+      if (!t || !t.ok || !t.path) throw new Error("no pude preparar la ruta temporal del audio");
+      return new Promise(function (resolve, reject) {
+        HPHost.exportSequenceAudio(t.path, function (res) {
+          var parts = String(res == null ? "" : res).split("|");
+          if (parts[0] !== "ok" || !parts[1]) {
+            hpLog("Exportación de audio FALLÓ: " + res, "ERROR");
+            reject(new Error("No pude exportar el audio de la secuencia.\n" + (res || "sin respuesta del host") +
+              "\nQué hacer: revisá que la secuencia tenga audio, o cargá el transcript con \"Cargar JSON\"."));
+            return;
+          }
+          hpLog("Audio de la secuencia exportado: " + parts[1] + " (preset: " + (parts[2] || "?") + ")");
+          resolve(parts[1]);
+        });
+      });
+    });
+  }
+
+  // Paso 2: Whisper local sobre ese .wav. Resuelve null si lo cancelaste.
+  function runWhisperOn(audioPath) {
+    transcribeStatus("Audio exportado. Transcribiendo…");
+    // El progreso también va al ⬇ Log (throttleado): si algo se cuelga,
+    // el log muestra hasta dónde llegó — antes quedaba mudo tras el clip.
+    var lastProgLog = 0;
+    return HPEngine.callProg("transcribeMedia", {
+      mediaPath: audioPath, projectPath: currentProjectPath, sequenceName: currentSequenceName,
+      clipName: currentSequenceName || "",
+      // Ya es mono 16 kHz: nada de ffmpeg. Y es temporal: se borra al terminar,
+      // pase lo que pase (una clase entera en WAV son cientos de MB).
+      alreadyPrepared: true, deleteAfter: true
+    }, function (p) {
+      if (!p) return;
+      if (p.msg) {
+        transcribeStatus(p.msg);
+        var now = Date.now();
+        if (now - lastProgLog > 15000) { lastProgLog = now; hpLog("Transcripción: " + p.msg); }
+      }
+      if (typeof p.pct === "number" && transcribeFill) {
+        transcribeFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+      }
+    }).then(function (r) {
+      if (r && r.cancelled) return null;
+      if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
+      return r;
+    });
+  }
+
+  // Paso 3: adoptar el resultado (store + UI + avisos de bucles).
+  function adoptWhisperResult(r) {
+    HPStore.setTranscript(r.segments);
+    // El audio ES la secuencia: los tiempos ya coinciden con el timeline.
+    setOffset(0, "audio de la secuencia");
+    updateTranscriptStatus();
+    // Whisper a veces entra en bucle sobre el silencio y repite la última
+    // frase decenas de veces; se limpia en el motor y se avisa acá, porque
+    // si no el editor ve un transcript "más corto" sin saber por qué.
+    var loopNote = r.loopsRemoved ? " · limpié " + r.loopsRemoved + " repeticiones alucinadas" : "";
+    transcribeStatus(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
+      r.tool + loopNote + " ✓ (guardado en la carpeta de la secuencia)");
+    hpLog("Transcripción local OK: " + r.segments.length + " segmentos · " + r.language + loopNote + " · " + r.savedPath);
+    if (r.loops && r.loops.length) {
+      r.loops.forEach(function (l) {
+        hpLog("Bucle de Whisper: " + l.count + "× “" + String(l.text).slice(0, 60) + "” entre " +
+          Math.round(l.start) + "s y " + Math.round(l.end) + "s", "WARN");
+      });
+    }
+  }
+
+  /**
+   * Transcribe la secuencia activa de punta a punta y deja el transcript en el
+   * store. Resuelve con los segmentos, o con null si lo cancelaste; rechaza con
+   * un Error cuyo mensaje ya es presentable. Lo usan el botón y el paso previo
+   * obligatorio antes de generar.
+   */
+  function transcribeCurrentSequence() {
+    // Si ya está corriendo (tocaste el botón y después Generar), se engancha a la
+    // que hay en vuelo en vez de arrancar una segunda exportación.
+    if (transcribeInFlight) return transcribeInFlight;
+    transcribing = true;
+    if (btnTranscribe) {
+      btnTranscribe.textContent = "✕ Cancelar transcripción";
+      btnTranscribe.title = "Cancela la transcripción en curso (mata el proceso de whisper)";
+    }
+    showTranscribeBar(true);
+    transcribeStatus("Exportando el audio de la secuencia (Premiere puede quedarse un rato)…");
+    hpLog("Transcripción local: exportando el audio de la secuencia…");
+
+    transcribeInFlight = exportSequenceAudioToTemp()
+      .then(runWhisperOn)
+      .then(function (r) {
+        transcribeInFlight = null;
+        endTranscribe();
+        if (!r) {
+          transcribeStatus("Transcripción cancelada.");
+          hpLog("Transcripción local cancelada por el usuario.");
+          return null;
+        }
+        adoptWhisperResult(r);
+        return r.segments;
+      }, function (e) {
+        transcribeInFlight = null;
+        endTranscribe();
+        throw e;
+      });
+    return transcribeInFlight;
+  }
+
+  function objectiveIsEmpty() {
+    return !HPStore.getObjective() || !HPStore.getObjective().trim();
+  }
+
   if (btnTranscribe) {
     btnTranscribe.addEventListener("click", function () {
       // Segundo clic durante la corrida = CANCELAR (mata ffmpeg/whisper).
@@ -428,118 +565,29 @@
         hpCall("cancelTranscription").catch(function () {});
         return;
       }
-      transcribing = true;
-      var prevLabel = "🎙 Transcribir esta secuencia";
-      btnTranscribe.textContent = "✕ Cancelar transcripción";
-      btnTranscribe.title = "Cancela la transcripción en curso (mata el proceso de whisper)";
-      // Los errores de transcripción son MULTILÍNEA y explican qué hacer, pero
-      // `.muted` los recortaba a una línea con elipsis: quedaba un mensaje
-      // inservible. Con is-error el texto se muestra completo y seleccionable.
-      function status(msg, isError) {
-        if (!transcriptStatus) return;
-        transcriptStatus.textContent = msg;
-        transcriptStatus.classList.toggle("is-error", Boolean(isError));
-      }
-      function done() {
-        transcribing = false;
-        btnTranscribe.disabled = false;
-        btnTranscribe.textContent = prevLabel;
-        showTranscribeBar(false);
-      }
-      showTranscribeBar(true);
-      status("Exportando el audio de la secuencia (Premiere puede quedarse un rato)…");
-      hpLog("Transcripción local: exportando el audio de la secuencia…");
-
-      hpCall("newTempAudioPath").then(function (t) {
-        if (!t || !t.ok || !t.path) throw new Error("no pude preparar la ruta temporal del audio");
-        return t.path;
-      }).then(function (wavPath) {
-        HPHost.exportSequenceAudio(wavPath, function (res) {
-          var parts = String(res == null ? "" : res).split("|");
-          if (parts[0] !== "ok" || !parts[1]) {
-            status("No pude exportar el audio de la secuencia.\n" + (res || "sin respuesta del host") +
-              "\nQué hacer: revisá que la secuencia tenga audio, o cargá el transcript con \"Cargar JSON\".", true);
-            hpLog("Exportación de audio FALLÓ: " + res, "ERROR");
-            done();
-            return;
-          }
-          var audioPath = parts[1];
-          hpLog("Audio de la secuencia exportado: " + audioPath + " (preset: " + (parts[2] || "?") + ")");
-          status("Audio exportado. Transcribiendo…");
-          runWhisper(audioPath);
-        });
+      transcribeCurrentSequence().then(function (segments) {
+        // Derivar el objetivo si está vacío (igual que al importar un JSON).
+        if (segments && objectiveIsEmpty()) deriveObjectiveFromTranscript(segments);
       }).catch(function (e) {
-        status("Error: " + ((e && e.message) || "no se pudo exportar el audio"), true);
-        hpLog("Transcripción local FALLÓ antes de empezar: " + ((e && e.message) || e), "ERROR");
-        done();
+        transcribeStatus("Error: " + ((e && e.message) || "no se pudo transcribir"), true);
+        hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
       });
-
-      function runWhisper(audioPath) {
-        // El progreso también va al ⬇ Log (throttleado): si algo se cuelga,
-        // el log muestra hasta dónde llegó — antes quedaba mudo tras el clip.
-        var lastProgLog = 0;
-        HPEngine.callProg("transcribeMedia", {
-          mediaPath: audioPath, projectPath: currentProjectPath, sequenceName: currentSequenceName,
-          clipName: currentSequenceName || "",
-          // Ya es mono 16 kHz: nada de ffmpeg. Y es temporal: se borra al terminar,
-          // pase lo que pase (una clase entera en WAV son cientos de MB).
-          alreadyPrepared: true, deleteAfter: true
-        }, function (p) {
-          if (!p) return;
-          if (p.msg) {
-            status(p.msg);
-            var now = Date.now();
-            if (now - lastProgLog > 15000) { lastProgLog = now; hpLog("Transcripción: " + p.msg); }
-          }
-          if (typeof p.pct === "number" && transcribeFill) {
-            transcribeFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
-          }
-        }).then(function (r) {
-          if (r && r.cancelled) {
-            status("Transcripción cancelada.");
-            hpLog("Transcripción local cancelada por el usuario.");
-            done();
-            return;
-          }
-          if (!r || !r.ok) throw new Error((r && r.error) || "la transcripción falló");
-          HPStore.setTranscript(r.segments);
-          // El audio ES la secuencia: los tiempos ya coinciden con el timeline.
-          setOffset(0, "audio de la secuencia");
-          updateTranscriptStatus();
-          // Whisper a veces entra en bucle sobre el silencio y repite la última
-          // frase decenas de veces; se limpia en el motor y se avisa acá, porque
-          // si no el editor ve un transcript "más corto" sin saber por qué.
-          var loopNote = r.loopsRemoved ? " · limpié " + r.loopsRemoved + " repeticiones alucinadas" : "";
-          status(r.segments.length + " segmentos · " + (r.language ? "idioma: " + r.language + " · " : "") +
-            r.tool + loopNote + " ✓ (respaldo en la carpeta de la secuencia)");
-          hpLog("Transcripción local OK: " + r.segments.length + " segmentos · " + r.language + loopNote + " · " + r.savedPath);
-          if (r.loops && r.loops.length) {
-            r.loops.forEach(function (l) {
-              hpLog("Bucle de Whisper: " + l.count + "× “" + String(l.text).slice(0, 60) + "” entre " +
-                Math.round(l.start) + "s y " + Math.round(l.end) + "s", "WARN");
-            });
-          }
-          // Derivar el objetivo si está vacío (igual que al importar un JSON).
-          if (!HPStore.getObjective() || !HPStore.getObjective().trim()) {
-            deriveObjectiveFromTranscript(r.segments);
-          }
-          done();
-        }).catch(function (e) {
-          status("Error: " + ((e && e.message) || "no se pudo transcribir"), true);
-          hpLog("Transcripción local FALLÓ: " + ((e && e.message) || e), "ERROR");
-          done();
-        });
-      }
     });
   }
 
   // Deriva el objetivo de la clase llamando al motor (deriveObjective).
   // El resultado llena #objective pero queda editable por el editor.
+  // Devuelve una Promise (el paso previo a generar la espera) que nunca rechaza.
+  var objectiveInFlight = null;
   function deriveObjectiveFromTranscript(segments) {
+    // Una sola derivación a la vez: el botón de transcribir y el paso previo a
+    // generar pueden pedirla sobre la MISMA transcripción compartida, y serían
+    // dos llamadas al modelo en paralelo para el mismo resultado.
+    if (objectiveInFlight) return objectiveInFlight;
     if (objectiveInput) {
       objectiveInput.setAttribute("placeholder", "Derivando objetivo del transcript…");
     }
-    hpCall("deriveObjective", { transcript: segments })
+    objectiveInFlight = hpCall("deriveObjective", { transcript: segments })
       .then(function (data) {
         if (data && data.ok && data.objective) {
           objectiveInput.value = data.objective;
@@ -547,17 +595,21 @@
         }
         if (data && data.usage) { HPStore.addSessionUsage(data.usage); updateSessionUsageBar(); }
       })
-      .catch(function () {
+      .catch(function (e) {
         // Silencioso: el editor puede escribir el objetivo a mano si el motor no está.
+        hpLog("No pude derivar el objetivo: " + ((e && e.message) || e), "WARN");
       })
       .then(function () {
+        objectiveInFlight = null;
         if (objectiveInput) {
           objectiveInput.setAttribute(
             "placeholder",
             "Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."
           );
         }
+        updateContextSummary();
       });
+    return objectiveInFlight;
   }
 
   // Importa el transcript parseado: CALIBRA sus unidades contra la duración
@@ -691,6 +743,112 @@
     return el;
   }
 
+  // ── Contexto obligatorio antes de generar ────────────────────────────
+  // Generar sin transcript da animaciones MUCHO peores: el modelo no sabe qué se
+  // dice en ese tramo de la clase y adivina. Así que antes de gastar tokens, si
+  // la secuencia no tiene transcript (u objetivo), se transcribe y se deriva el
+  // objetivo, y recién entonces la cola procesa. Los jobs se encolan igual y los
+  // ves en la pestaña Cola, esperando.
+  //
+  // Se registra como preflight de la cola, así que cubre todos los caminos:
+  // Generar, Generar listos, ▶ Iniciar cola, reintentar y regenerar.
+  var contextPrep = null;
+  // Si la preparación falló o la cancelaste, el siguiente ▶ Iniciar cola vale como
+  // "generá igual, me la juego": si no, te quedarías trabado sin poder generar
+  // nunca en una secuencia sin audio.
+  var contextPrepFailed = false;
+  // Ya preparamos el contexto de esta secuencia. Sin esta marca, si derivar el
+  // objetivo falla (motor caído) el objetivo queda vacío, el preflight vuelve a
+  // pedir preparación y se entra en un bucle infinito quemando tokens.
+  var contextPrepared = false;
+
+  function contextIsReady() {
+    if (contextPrepared) return true;
+    return (HPStore.getTranscript() || []).length > 0 && !objectiveIsEmpty();
+  }
+
+  // Devuelve una Promise<bool> que NUNCA rechaza: true = listo para generar,
+  // false = no se pudo (ya se explicó por pantalla) y la cola queda en pausa.
+  // Compartida: si mandás 10 marcadores juntos, transcribe UNA vez.
+  function prepareContextForGeneration() {
+    if (contextPrep) return contextPrep;
+
+    var segments = HPStore.getTranscript() || [];
+    var prep = (segments.length ? Promise.resolve(segments) : (function () {
+      setOutput("Esta secuencia no tiene transcript y sin él las animaciones salen mucho peores.\n" +
+        "Lo genero primero, saco el objetivo de la clase y después arranco con la cola.");
+      hpLog("Generación pedida sin transcript: transcribo y derivo el objetivo antes de procesar.");
+      return transcribeCurrentSequence();
+    })())
+      .then(function (segs) {
+        if (!segs || !segs.length) {
+          // Cancelaste la transcripción: no generamos a ciegas.
+          setOutput("Cancelaste la transcripción, así que no generé nada.\nLos marcadores quedaron en la " +
+            "pestaña Cola. Podés cargar un transcript con \"Cargar JSON\", o pulsar ▶ Iniciar cola otra vez " +
+            "para generar igual sin él.");
+          return false;
+        }
+        if (!objectiveIsEmpty()) return true;
+        setOutput("Transcript listo. Sacando el objetivo de la clase…");
+        // El objetivo es "mejor esfuerzo": si no se puede derivar, generamos con
+        // el transcript igual (que es lo que más mueve la calidad) y podés
+        // escribirlo a mano. Bloquear acá dejaría la cola trabada.
+        return deriveObjectiveFromTranscript(segs).then(function () {
+          if (objectiveIsEmpty()) {
+            hpLog("No pude derivar el objetivo: genero con el transcript solo.", "WARN");
+          }
+          return true;
+        });
+      })
+      .catch(function (e) {
+        var why = (e && e.message) || "no pude preparar el contexto";
+        setOutput("No pude preparar el contexto de la clase, así que no generé nada:\n" + why +
+          "\n\nLos marcadores quedaron en la pestaña Cola. Cargá el transcript con \"Cargar JSON\" y pulsá " +
+          "▶ Iniciar cola, o pulsá ▶ Iniciar cola otra vez para generar igual sin transcript (va a salir peor).", true);
+        hpLog("Preparación del contexto FALLÓ: " + why, "ERROR");
+        return false;
+      })
+      .then(function (ok) {
+        contextPrepFailed = !ok;
+        contextPrepared = ok;
+        if (ok) setOutput("Contexto listo. Arranco con la cola.");
+        return ok;
+      });
+
+    // De un solo uso: si falla o la cancelás, el próximo intento vuelve a probar
+    // en vez de quedar pegado a una promesa vieja.
+    contextPrep = prep;
+    function release() { contextPrep = null; }
+    prep.then(release, release);
+    return prep;
+  }
+
+  // La cola consulta esto antes de arrancar CUALQUIER job de IA.
+  HPQueue.setModelPreflight(function (job) {
+    if (contextIsReady()) return true;
+    // Ya intentamos preparar el contexto y no se pudo: si volvés a arrancar la
+    // cola es porque querés generar así. La decisión vale para TODA la cola de
+    // esta secuencia (marcar solo "ya falló" haría que el 2º job volviera a
+    // intentar transcribir y dejara el resto del lote sin generar).
+    if (contextPrepFailed) {
+      contextPrepFailed = false;
+      contextPrepared = true;
+      setOutput("Genero SIN transcript, como pediste. Las animaciones van a ser más genéricas: " +
+        "el modelo no sabe qué se dice en cada marcador.");
+      hpLog("Generando sin transcript por decisión del editor (la preparación había fallado).", "WARN");
+      return true;
+    }
+    // Job de otra secuencia (cola restaurada del proyecto): Premiere solo puede
+    // exportar el audio de la ACTIVA, así que no lo bloqueamos — pararlo dejaría
+    // la cola trabada sin forma de arreglarla desde acá.
+    if (job && job.seqName && job.seqName !== currentSequenceName) {
+      hpLog("El job “" + (job.label || job.markerKey) + "” es de la secuencia “" + job.seqName +
+        "”, no la activa: lo dejo pasar sin preparar el contexto.", "WARN");
+      return true;
+    }
+    return prepareContextForGeneration();
+  });
+
   // Encola la generación IA de un marcador. staged=true → solo encola (no arranca).
   function enqueueMarkerGeneration(marker, mode, staged) {
     var markerKey = markerKeyFor(marker);
@@ -726,6 +884,8 @@
       markerKey: markerKey, label: markerKey + (marker.name ? " · " + marker.name : ""),
       markerStart: marker.start, markerDuration: marker.duration
     };
+    // La cola no arranca jobs de IA hasta que el contexto esté listo (ver el
+    // preflight más abajo), así que acá no hay nada especial que hacer.
     if (staged) HPQueue.addStaged(job); else HPQueue.add(job);
   }
 
