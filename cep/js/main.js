@@ -266,7 +266,16 @@
     }
     seqNotice.textContent = "En Premiere está activa la secuencia “" + otherSequence +
       "” pero el panel está trabajando sobre “" + (currentSequenceName || "(ninguna)") +
-      "”. Pulsá “Cargar marcadores” para pasarte a ella (con su transcript y su objetivo).";
+      "”. Todo lo que hagas (transcribir, generar) va a la del PANEL, no a la que ves.";
+    // Botón para pasarse de una: tener que ir a buscar "Cargar marcadores" es la
+    // fricción que hace que uno siga trabajando desincronizado sin darse cuenta.
+    var go = document.createElement("button");
+    go.type = "button";
+    go.className = "seq-notice-go";
+    go.textContent = "Pasarme a “" + otherSequence + "”";
+    go.title = "Carga esa secuencia en el panel, con sus marcadores, su transcript y su objetivo";
+    go.addEventListener("click", function () { onLoadMarkers(); });
+    seqNotice.appendChild(go);
     seqNotice.setAttribute("data-hidden", "false");
   }
 
@@ -538,7 +547,10 @@
   }
 
   // Paso 1: Premiere exporta la mezcla de audio de la secuencia a un .wav temporal.
-  function exportSequenceAudioToTemp() {
+  // Premiere SIEMPRE exporta la secuencia activa, así que se confirma que sea
+  // `expectedSeq`: si no, el audio es de otra clase y guardarlo como transcript de
+  // ésta pisaría el bueno con el equivocado (y sin avisar).
+  function exportSequenceAudioToTemp(expectedSeq) {
     return hpCall("newTempAudioPath").then(function (t) {
       if (!t || !t.ok || !t.path) throw new Error("no pude preparar la ruta temporal del audio");
       return new Promise(function (resolve, reject) {
@@ -550,7 +562,16 @@
               "\nQué hacer: revisá que la secuencia tenga audio, o cargá el transcript con \"Cargar JSON\"."));
             return;
           }
-          hpLog("Audio de la secuencia exportado: " + parts[1] + " (preset: " + (parts[2] || "?") + ")");
+          var exported = parts[3] || "";
+          if (expectedSeq && exported && exported !== expectedSeq) {
+            hpLog("Exportación ABORTADA: pedí el audio de “" + expectedSeq + "” y Premiere exportó “" +
+              exported + "”.", "ERROR");
+            reject(new Error("Premiere exportó el audio de “" + exported + "”, no de “" + expectedSeq + "”.\n" +
+              "No guardo eso como transcript de esta clase: sería el de otra.\n" +
+              "Qué hacer: abrí “" + expectedSeq + "” en el timeline y probá de nuevo."));
+            return;
+          }
+          hpLog("Audio de “" + (exported || "?") + "” exportado: " + parts[1] + " (preset: " + (parts[2] || "?") + ")");
           resolve(parts[1]);
         });
       });
@@ -620,19 +641,24 @@
       r.tool + loopNote + " ✓ (guardado en la carpeta de la secuencia)");
   }
 
-  // Activa una secuencia en Premiere si no es la que está abierta. Devuelve el
-  // nombre de la que estaba (para poder volver) o "" si no hizo falta cambiar.
+  // Deja `seqName` abierta en Premiere. Devuelve el nombre de la que estaba (para
+  // poder volver) o "" si ya era la activa.
+  //
+  // SIEMPRE le pregunta a Premiere cuál está activa, incluso cuando `seqName` es la
+  // del panel: si el editor cambió de timeline y no pulsó "Cargar marcadores", el
+  // panel cree estar en una y Premiere está en otra, y exportar sin comprobarlo
+  // transcribía la clase equivocada.
   function activateSequence(seqName) {
-    if (!seqName || seqName === currentSequenceName) return Promise.resolve("");
+    if (!seqName) return Promise.resolve("");
     return new Promise(function (resolve, reject) {
       HPHost.getActiveSequenceName(function (before) {
         var prev = String(before || "");
         if (prev === seqName) { resolve(""); return; }
-        hpLog("Abro la secuencia “" + seqName + "” en Premiere para poder exportar su audio.");
+        hpLog("En Premiere está activa “" + prev + "”: abro “" + seqName + "” para exportar SU audio.");
         HPHost.openSequenceAndSeek(seqName, 0, function (res) {
           if (String(res || "").indexOf("ok") !== 0) {
             reject(new Error("No pude abrir la secuencia “" + seqName + "” en Premiere: " + (res || "sin respuesta") +
-              "\nQué hacer: abrila a mano y volvé a intentar."));
+              "\nQué hacer: abrila a mano en el timeline y volvé a intentar."));
             return;
           }
           resolve(prev);
@@ -678,7 +704,7 @@
     transcribeInFlight = activateSequence(seqName)
       .then(function (prev) {
         returnTo = prev;
-        return exportSequenceAudioToTemp();
+        return exportSequenceAudioToTemp(seqName);
       })
       .then(function (audioPath) { return runWhisperOn(audioPath, projectPath, seqName); })
       .then(function (r) {

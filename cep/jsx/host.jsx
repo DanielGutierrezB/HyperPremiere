@@ -342,11 +342,14 @@ function hp_exportSequenceAudio(outPath) {
         }
 
         // Premiere a veces ajusta el nombre/extensión: aceptamos la variante que exista.
+        // Se devuelve el NOMBRE de la secuencia exportada (siempre la activa) para
+        // que el panel confirme que es la que cree: si el editor cambió de timeline,
+        // guardar este audio como transcript de otra clase sería un desastre.
         var candidates = [outPath, outPath + ".wav", outPath.replace(/\.wav$/i, "") + ".wav"];
         for (var i = 0; i < candidates.length; i++) {
             try {
                 var f = new File(candidates[i]);
-                if (f.exists && f.length > 0) return "ok|" + f.fsName + "|" + preset;
+                if (f.exists && f.length > 0) return "ok|" + f.fsName + "|" + preset + "|" + seq.name;
             } catch (e2) {}
         }
         return "error: la exportación " + (ok ? "dijo OK" : "devolvió false") +

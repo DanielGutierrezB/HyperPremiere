@@ -252,6 +252,23 @@ button:disabled {
 .qs-ctx.is-working { color: var(--accent); background: var(--accent-dim); }
 .qs-ctx.is-missing { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
 
+/* Botón del aviso de secuencia distinta: pasarse a la activa sin ir a buscar
+   "Cargar marcadores" (la fricción que hace trabajar desincronizado). */
+.seq-notice-go {
+  display: block;
+  margin-top: 7px;
+  padding: 4px 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.seq-notice-go:hover { background: rgba(251, 191, 36, 0.12); }
+
 /* Aviso de "cambiaste de secuencia en Premiere" (ver #seq-notice en index.html). */
 .seq-notice {
   border: 1px solid rgba(251, 191, 36, 0.45);

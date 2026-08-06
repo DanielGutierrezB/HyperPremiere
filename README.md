@@ -36,7 +36,12 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    lee de ahí, así que si cerrás Premiere y volvés, la secuencia **ya lo tiene**: no hay
    que transcribir ni importar de nuevo. Generar otra vez o importar otro JSON lo
    **reemplaza** por el más actual. Si cambiás de secuencia en Premiere, el panel te
-   avisa para que pulses **Cargar marcadores** y te pases a ella con su transcript.
+   avisa (con un botón para **pasarte** a ella con su transcript y su objetivo):
+   mientras no te pases, lo que hagas va a la secuencia del PANEL, no a la que ves.
+   Transcribir siempre abre en el timeline la secuencia que dice el panel y confirma
+   con Premiere que el audio exportado sea de ésa antes de guardarlo — así no se
+   pisa el transcript de una clase con el audio de otra — y después te devuelve a la
+   que tenías abierta.
    **No hace falta acordarse de este paso**: si mandás a generar en una secuencia sin
    transcript, el panel lo transcribe y deriva el objetivo **antes** de gastar tokens, y
    ahí arranca la cola (una sola vez, aunque mandes 20 marcadores juntos). Sin transcript
