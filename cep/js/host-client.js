@@ -25,6 +25,25 @@
     csInterface.evalScript(expr, cb || function () {});
   }
 
+  // Cola de UNA sola vía para lo que MODIFICA el proyecto (importar, colocar,
+  // agregar pistas, purgar). Leer el proyecto en paralelo no molesta, pero
+  // escribirlo sí: dos colocaciones a la vez comparten el bin de la secuencia y
+  // las pistas, así que la segunda puede mirar un proyecto a medio cambiar por la
+  // primera y colocar el clip equivocado. Desde que el render corre en varios
+  // carriles esto dejó de ser teórico. Serializar cuesta ~1s por clip y no toca
+  // la ganancia (el render, que es lo caro, sigue en paralelo).
+  var mutating = null; // promesa de la escritura en curso, o null
+  function callMutating(expr, cb) {
+    var prev = mutating || Promise.resolve();
+    mutating = prev.then(function () {
+      return new Promise(function (resolve) {
+        call(expr, function (res) {
+          try { if (cb) cb(res); } finally { resolve(); }
+        });
+      });
+    });
+  }
+
   global.HPHost = {
     getProjectPath: function (cb) { call("hp_getProjectPath()", cb); },
     getActiveSequenceName: function (cb) { call("hp_getActiveSequenceName()", cb); },
@@ -63,14 +82,17 @@
     getSequenceDuration: function (cb) {
       call("hp_getSequenceDuration()", cb);
     },
-    /** Importa el video y lo coloca en la secuencia con etiqueta de color. */
+    /**
+     * Importa el video y lo coloca en la secuencia con etiqueta de color.
+     * Serializada (ver callMutating): toca el bin y las pistas.
+     */
     placeClip: function (movPath, seqName, startSec, durationSec, colorLabel, cb) {
-      call("hp_placeClipInSequence(" + JSON.stringify(movPath) + ", " + JSON.stringify(seqName) + ", " +
+      callMutating("hp_placeClipInSequence(" + JSON.stringify(movPath) + ", " + JSON.stringify(seqName) + ", " +
         Number(startSec) + ", " + Number(durationSec) + ", " + Number(colorLabel) + ")", cb);
     },
     /** Recolorea el clip que arranca en startSec (marca "procesado en HQ"). */
     recolorClip: function (seqName, startSec, colorLabel, cb) {
-      call("hp_recolorClipAt(" + JSON.stringify(seqName) + ", " + Number(startSec) + ", " + Number(colorLabel) + ")", cb);
+      callMutating("hp_recolorClipAt(" + JSON.stringify(seqName) + ", " + Number(startSec) + ", " + Number(colorLabel) + ")", cb);
     },
     /**
      * Saca clips/ítems del proyecto por nombre de archivo ANTES de borrarlos
@@ -78,7 +100,7 @@
      * (ExtendScript no trae JSON.parse y los nombres nunca tienen saltos).
      */
     purgeClipsByName: function (names, cb) {
-      call("hp_purgeClipsByName(" + JSON.stringify((names || []).join("\n")) + ")", cb);
+      callMutating("hp_purgeClipsByName(" + JSON.stringify((names || []).join("\n")) + ")", cb);
     }
   };
 })(typeof window !== "undefined" ? window : this);

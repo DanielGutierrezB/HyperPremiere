@@ -19,38 +19,70 @@ const path = require('path');
 const IDLE_TIMEOUT_MS = 300 * 1000; // 5 min sin salida => colgado
 
 /**
- * Elige el perfil de render según el hardware de ESTA máquina, para que la
- * herramienta escale sola en cualquier computador (Mac mini 8GB, MacBook 16GB+, etc).
+ * Presupuesto TOTAL de la máquina: cuántos workers de captura aguanta entre
+ * todos los renders juntos, y si hay que ir en modo seguro.
  *
- * El cuello de botella real del paralelismo es la RAM (cada worker es un Chrome
- * capturando frames + buffers de encode), no la cantidad de cores. Por eso el
- * número de workers se acota principalmente por GB de memoria.
+ * El cuello del paralelismo es la RAM (cada worker es un Chrome capturando
+ * frames + buffers de encode), no los cores. Por eso el techo sale de los GB.
  *
  *  - ≤ 10 GB (ej. Mac mini M1 8GB): modo seguro. `--low-memory-mode` encodea
  *    incremental (evita el "Set maximum size exceeded" en marcadores largos) y
  *    fija 1 worker. Es el comportamiento estable de siempre.
- *  - > 10 GB: paraleliza. ~1 worker por cada 4 GB, con techo por cores y máximo 6.
- *    Sin low-memory-mode se acota el chunk de frames para que los marcadores
- *    largos (33s ≈ 1008 frames) no revienten el Buffer de Node.
+ *  - > 10 GB: ~1 worker por cada 4 GB, con techo por cores y máximo 6.
  *
- * Respeta overrides manuales por env var:
- *   HYPERPREMIERE_WORKERS=N   → fija el número de workers.
+ * Es el ÚNICO lugar donde se mira el hardware: los carriles (renderLanes) y los
+ * workers por render (pickRenderProfile) se reparten ESTE presupuesto, en vez de
+ * ser dos diales independientes gastando los mismos cores.
+ */
+function hardwareBudget() {
+  const gb = os.totalmem() / 1024 / 1024 / 1024;
+  const cpus = os.cpus().length || 4;
+  if (gb <= 10) return { workers: 1, lowMemory: true, ramGb: gb, cpus: cpus };
+  const byRam = Math.floor(gb / 4);
+  return { workers: Math.max(2, Math.min(byRam, cpus, 6)), lowMemory: false, ramGb: gb, cpus: cpus };
+}
+
+/**
+ * Cuántos renders puede correr la cola A LA VEZ en esta máquina.
+ *
+ * Medido en un M3 Max (48 GB, 16 cores) con dos marcadores reales de 54s y 20s:
+ * en serie 69.3s, en paralelo 46.9s (-32%), y NINGUNO de los dos se ralentizó.
+ * Los .mov salieron idénticos byte a byte (mismo SHA-256): el carril extra
+ * acelera el lote y no toca la calidad.
+ *
+ * Se queda en 2 a propósito: es lo que está medido. Las máquinas flojas (perfil
+ * low-memory, ej. la mini de 8 GB) siguen en 1 — ahí un segundo Chromium es
+ * justo lo que dispara el "Set maximum size exceeded".
+ *
+ * Override: HYPERPREMIERE_RENDER_LANES=N.
+ */
+function renderLanes() {
+  const forced = parseInt(process.env.HYPERPREMIERE_RENDER_LANES, 10);
+  if (Number.isFinite(forced) && forced > 0) return Math.min(forced, 4);
+  const hw = hardwareBudget();
+  if (hw.lowMemory) return 1;
+  return (hw.cpus >= 8 && hw.ramGb >= 24) ? 2 : 1;
+}
+
+/**
+ * Perfil de UN render: el presupuesto de la máquina repartido entre los carriles
+ * que pueden estar corriendo. Así el total de workers no cambia por abrir un
+ * segundo carril — antes eran dos diales independientes y en una máquina justa
+ * (24 GB / 8 cores) dos renders pedían 12 workers sobre 8 cores.
+ *
+ * Repartir además salió GRATIS y encima más rápido: medido en el M3 Max (mismo
+ * HTML, salida idéntica byte a byte), bajar de 6 a 3 workers por render dio
+ * 51.1s → 37.8s en el marcador de 54s (-26%) y 19.0s → 18.5s en el de 20s. La
+ * captura no era el cuello: cada worker extra es otro Chrome que arrancar.
+ *
+ * Overrides manuales por env var:
+ *   HYPERPREMIERE_WORKERS=N    → fija los workers de cada render (sin repartir).
  *   HYPERPREMIERE_LOW_MEMORY=1 → fuerza low-memory-mode (1 worker).
  */
 function pickRenderProfile() {
-  const gb = os.totalmem() / 1024 / 1024 / 1024;
-  const cpus = os.cpus().length || 4;
-
-  let workers;
-  let lowMemory;
-  if (gb <= 10) {
-    workers = 1;
-    lowMemory = true;
-  } else {
-    const byRam = Math.floor(gb / 4);
-    workers = Math.max(2, Math.min(byRam, cpus, 6));
-    lowMemory = false;
-  }
+  const hw = hardwareBudget();
+  let workers = hw.lowMemory ? 1 : Math.max(1, Math.floor(hw.workers / renderLanes()));
+  let lowMemory = hw.lowMemory;
 
   const forcedWorkers = parseInt(process.env.HYPERPREMIERE_WORKERS, 10);
   if (Number.isFinite(forcedWorkers) && forcedWorkers > 0) {
@@ -62,30 +94,7 @@ function pickRenderProfile() {
     lowMemory = true;
   }
 
-  return { workers: workers, lowMemory: lowMemory, ramGb: gb, cpus: cpus };
-}
-
-/**
- * Cuántos renders puede correr la cola A LA VEZ en esta máquina.
- *
- * Medido en un M3 Max (48 GB, 16 cores) con dos marcadores reales de 54s y 20s:
- * en serie 69.3s, en paralelo 46.9s (-32%), y NINGUNO de los dos se ralentizó
- * (51.2s → 46.9s y 18.0s → 18.1s). Los .mov salieron idénticos byte a byte
- * (mismo SHA-256), así que el carril extra no toca la calidad: un render usa 6
- * workers de 16 cores, sobra máquina.
- *
- * Se queda en 2 a propósito: es lo que está medido. Las máquinas flojas (perfil
- * low-memory, ej. la mini de 8 GB) siguen en 1 — ahí un segundo Chromium es
- * justo lo que dispara el "Set maximum size exceeded".
- *
- * Override: HYPERPREMIERE_RENDER_LANES=N.
- */
-function renderLanes() {
-  const forced = parseInt(process.env.HYPERPREMIERE_RENDER_LANES, 10);
-  if (Number.isFinite(forced) && forced > 0) return Math.min(forced, 4);
-  const p = pickRenderProfile();
-  if (p.lowMemory) return 1;
-  return (p.cpus >= 8 && p.ramGb >= 24) ? 2 : 1;
+  return { workers: workers, lowMemory: lowMemory, ramGb: hw.ramGb, cpus: hw.cpus };
 }
 
 /**
@@ -247,8 +256,8 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   const gpuMode = browserGpuMode();
   console.error(
     '[hyperpremiere] hardware: RAM ' + profile.ramGb.toFixed(1) + 'GB, ' +
-    profile.cpus + ' cores → perfil base ' + profile.workers + ' worker(s), ' +
-    'low-memory=' + profile.lowMemory + ', browser-gpu=' + gpuMode
+    profile.cpus + ' cores → ' + profile.workers + ' worker(s) por render × ' +
+    renderLanes() + ' carril(es), low-memory=' + profile.lowMemory + ', browser-gpu=' + gpuMode
   );
   void durationSec; // informativo; la duración vive en el HTML.
 
@@ -406,44 +415,43 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
 
   const attempts = buildAttempts();
   let lastErr = null;
+  // Lo que pasó de verdad va a los DOS lados: a la consola (para depurar con el
+  // proceso a la vista) y al ⬇ Log del panel (que es lo único que tiene el editor).
+  // Sin esto no había forma de saber, desde el panel, si un render lento fue
+  // porque cayó al modo software —3-4× más lento— o si el marcador era largo.
+  function trace(text, level) {
+    console.error('[hyperpremiere] ' + text);
+    report({ note: text, level: level });
+  }
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i];
     const isLast = i === attempts.length - 1;
+    const intento = 'intento ' + (i + 1) + '/' + attempts.length;
     const cfg = 'browser-gpu=' + attempt.gpu + ', workers=' + attempt.workers +
       ', low-memory=' + attempt.lowMemory;
-    console.error('[hyperpremiere] intento ' + (i + 1) + '/' + attempts.length + ': ' + cfg);
+    console.error('[hyperpremiere] ' + intento + ': ' + cfg);
     const t0 = Date.now();
     try {
       await runOnce(attempt);
       lastErr = null;
-      // Al log del panel: con qué configuración se renderizó de verdad y cuánto
-      // tardó. Sin esto no había forma de saber, desde el panel, si un render
-      // lento fue porque cayó al modo software (3-4× más lento) o si simplemente
-      // el marcador era largo.
-      report({
-        note: 'Render OK en ' + ((Date.now() - t0) / 1000).toFixed(1) + 's · ' + fmt +
-          '/' + q + ' · intento ' + (i + 1) + '/' + attempts.length + ' · ' + cfg,
-      });
+      trace('Render OK en ' + ((Date.now() - t0) / 1000).toFixed(1) + 's · ' + fmt + '/' + q +
+        ' · ' + intento + ' · ' + cfg);
       break;
     } catch (e) {
       lastErr = e;
       const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      const why = String(e.message).split('\n')[0];
       if (isLast) {
-        report({ note: 'Render FALLÓ tras ' + attempts.length + ' intento(s) · último: ' + cfg + ' · ' + secs + 's' });
+        trace('Render FALLÓ tras ' + attempts.length + ' intento(s) · último: ' + cfg +
+          ' · ' + secs + 's · ' + why, 'ERROR');
         break;
       }
       // Limpiar salida parcial antes de reintentar.
       try { if (fs.existsSync(outMovPath)) fs.unlinkSync(outMovPath); } catch (_) {}
       const next = attempts[i + 1];
-      const why = String(e.message).split('\n')[0];
-      console.error('[hyperpremiere] intento ' + (i + 1) + ' falló (' + why +
-        ') → bajo a browser-gpu=' + next.gpu + ', workers=' + next.workers);
-      report({
-        pct: 55,
-        msg: 'Ese modo falló, reintentando en modo más estable…',
-        note: 'Intento ' + (i + 1) + ' (' + cfg + ') falló a los ' + secs + 's: ' + why +
-          ' → bajo a browser-gpu=' + next.gpu + ', workers=' + next.workers,
-      });
+      report({ pct: 55, msg: 'Ese modo falló, reintentando en modo más estable…' });
+      trace(intento + ' (' + cfg + ') falló a los ' + secs + 's: ' + why +
+        ' → bajo a browser-gpu=' + next.gpu + ', workers=' + next.workers, 'WARN');
     }
   }
   if (lastErr) throw lastErr;

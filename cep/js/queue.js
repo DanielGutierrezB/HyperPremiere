@@ -31,14 +31,20 @@
   var COLOR_MAGENTA = 11;
 
   // ── Timing auto-calibrado (estimación de la cola) ────────────────────
-  // Promedio de segundos por job de modelo, y segundos de render por segundo
-  // de composición. Se afina con el uso real y persiste en localStorage.
+  // Promedio de CARRIL-segundos por job de modelo, y carril-segundos de render por
+  // segundo de composición. Se afina con el uso real y persiste en localStorage.
+  //
+  // La clave dice "v2" porque cambió la unidad: antes se guardaba tiempo de pared
+  // de a un job por vez, y ahora corren varios a la vez, así que cada muestra se
+  // guarda multiplicada por los carriles que estaban ocupados. Mezclar las dos
+  // cosas en el mismo promedio daba estimaciones cada vez peores; con la clave
+  // nueva la calibración vieja se descarta y se re-aprende sola.
   var TIMING = { modelJobs: 0, modelSec: 0, renderCompSec: 0, renderSec: 0 };
   try {
-    var _t = JSON.parse(global.localStorage.getItem("hyperpremiere::timing") || "null");
+    var _t = JSON.parse(global.localStorage.getItem("hyperpremiere::timing-v2") || "null");
     if (_t && typeof _t === "object") TIMING = _t;
   } catch (e) {}
-  function saveTiming() { try { global.localStorage.setItem("hyperpremiere::timing", JSON.stringify(TIMING)); } catch (e) {} }
+  function saveTiming() { try { global.localStorage.setItem("hyperpremiere::timing-v2", JSON.stringify(TIMING)); } catch (e) {} }
   function avgModelSec() { return TIMING.modelJobs > 0 ? (TIMING.modelSec / TIMING.modelJobs) : 150; }      // default ~2.5 min
   function renderSecPerCompSec() { return TIMING.renderCompSec > 0 ? (TIMING.renderSec / TIMING.renderCompSec) : 4; } // default 4×
 
@@ -130,7 +136,18 @@
   //    los diseños se resuelven solapados en vez de uno por uno. Con proveedor
   //    LOCAL (Ollama) el modelo usa la máquina: se fuerza a 1 y no se solapa
   //    con el render.
-  var modelRunning = 0, renderRunning = 0;
+  var modelRunning = 0;
+  // Carriles de render OCUPADOS: se guardan los jobs, no un número. Con un
+  // contador, cualquier camino que se olvide de restar (o que reste dos veces)
+  // deja la cola trabada para siempre sin que nada lo note; con la lista, tomar y
+  // soltar son operaciones sobre el job y soltar dos veces no hace nada.
+  var renderInFlight = [];
+  function renderRunning() { return renderInFlight.length; }
+  function takeRenderLane(job) { renderInFlight.push(job); }
+  function releaseRenderLane(job) {
+    var i = renderInFlight.indexOf(job);
+    if (i >= 0) renderInFlight.splice(i, 1);
+  }
   // Techo del carril de RENDER. Arranca en 1 (lo de siempre) y el panel lo sube a
   // lo que aguante la máquina en cuanto engineStatus le contesta: en un M3 Max
   // dos renders a la vez bajaron el tiempo de un lote 32% sin ralentizar ninguno
@@ -162,8 +179,9 @@
       if (p.usage) job.usage = p.usage;
       // "note": lo que el motor quiere dejar por escrito y no cabe en la barra
       // (qué reparó del contrato, por qué gastó una llamada extra, con qué
-      // configuración renderizó). Va al ⬇ Log, que es donde se diagnostica.
-      if (p.note) hpLog("[" + job.label + "] " + p.note);
+      // configuración renderizó). Va al ⬇ Log, que es donde se diagnostica, con
+      // el nivel que mande el motor: varias notas son avisos, no información.
+      if (p.note) hpLog("[" + job.label + "] " + p.note, p.level);
       emit();
     };
   }
@@ -191,40 +209,60 @@
     emit();
   }
 
+  // Las llamadas al host son callback-style (CEP): acá se vuelven promesas para
+  // que colocar-y-cerrar sea una sola cadena y el carril se libere en un solo
+  // lugar (ver startRender). Nunca rechazan: el host contesta "ok" o "error: …".
+  function hostRecolorHQ(job) {
+    return new Promise(function (resolve) {
+      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, resolve);
+    });
+  }
+  function hostPlace(job, movPath, color) {
+    return new Promise(function (resolve) {
+      HPHost.placeClip(movPath, job.seqName, job.markerStart, job.markerDuration, color, resolve);
+    });
+  }
+
+  function markDone(job, msgTxt) {
+    var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
+    var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
+    job.status = "done"; job.pct = 100;
+    job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur;
+    hpLog("Job DONE [" + job.label + "] v" + job.version + " · " + msgTxt + " · " + dur);
+    // Calibración en CARRIL-segundos: lo medido es tiempo de pared, y si el render
+    // compartió la máquina con otro, tardó más por eso. Guardar el tiempo × los
+    // carriles que había deja la muestra comparable con las de un carril solo, y
+    // así la estimación puede dividir por el cupo sin mezclar unidades.
+    var _rs = job._renderStart ? (Date.now() - job._renderStart) / 1000 : 0;
+    var _cs = Number(job.markerDuration) || 0;
+    if (_rs > 1 && _cs > 0 && _rs < 7200) {
+      TIMING.renderSec += _rs * (job._renderLanes || 1);
+      TIMING.renderCompSec += _cs;
+      saveTiming();
+    }
+    markGenerated(job);
+  }
+
+  // Coloca el resultado en Premiere y cierra el job. Devuelve una promesa que
+  // siempre se cumple; el carril lo libera quien la encadena.
   function finishPlace(job, res) {
-    // Job cancelado mientras renderizaba: no colocamos nada, liberamos el carril.
-    if (job._cancelled) { renderRunning--; hpLog("Job CANCELADO [" + job.label + "] tras render — descartado."); emit(); pump(); return; }
     job.version = res.version;
     countUsage(job, res.usage);
-    function done(msgTxt) {
-      var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
-      var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
-      job.status = "done"; job.pct = 100;
-      job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur;
-      hpLog("Job DONE [" + job.label + "] v" + job.version + " · " + msgTxt + " · " + dur);
-      // Calibración: segundos de render por segundo de composición.
-      var _rs = job._renderStart ? (Date.now() - job._renderStart) / 1000 : 0;
-      var _cs = Number(job.markerDuration) || 0;
-      if (_rs > 1 && _cs > 0 && _rs < 7200) { TIMING.renderSec += _rs; TIMING.renderCompSec += _cs; saveTiming(); }
-      markGenerated(job);
-      renderRunning--; emit(); pump();
-    }
     // Render HQ = reemplazo en su lugar: el archivo ya se sobrescribió en disco;
     // NO colocamos clip nuevo, solo recoloreamos el clip existente a MAGENTA.
     if (res.replaced || job.kind === "renderVersionHQ") {
       job.pct = 98; job.msg = "Marcando como HQ (magenta)…"; emit();
-      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, function (r) {
-        done(r === "ok" ? "✓ HQ reemplazado (magenta)" : "HQ hecho; recoloreá a mano: " + r);
+      return hostRecolorHQ(job).then(function (r) {
+        markDone(job, r === "ok" ? "✓ HQ reemplazado (magenta)" : "HQ hecho; recoloreá a mano: " + r);
       });
-      return;
     }
     // Color: café = "borrador mejorable con Render HQ" — SOLO aplica a clips
     // opacos (mp4) en borrador. Los clips con alpha ya salen en máxima calidad
     // (PNG→ProRes 4444) aunque estés en borrador → magenta.
     var color = isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA;
     job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
-    HPHost.placeClip(res.movPath, job.seqName, job.markerStart, job.markerDuration, color, function (place) {
-      done(place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place);
+    return hostPlace(job, res.movPath, color).then(function (place) {
+      markDone(job, place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place);
     });
   }
 
@@ -264,6 +302,7 @@
 
   function startModel(job) {
     modelRunning++; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
+    job._modelLanes = modelRunning; // para calibrar en carril-segundos
     rehydratePayload(job); emit();
     var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
     hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?") + " · en paralelo=" + modelRunning);
@@ -275,8 +314,14 @@
       countUsage(job, prep.usage);
       job.status = "ready"; job.msg = "En espera de render…";
       // Calibración: segundos que tardó el modelo (para estimar la cola).
+      // En carril-segundos, igual que el render (ver markDone): con 3 diseños a la
+      // vez cada uno tarda más de pared, y la estimación divide por el cupo.
       var _ms = (Date.now() - (job.startedAt || Date.now())) / 1000;
-      if (_ms > 1 && _ms < 3600) { TIMING.modelJobs++; TIMING.modelSec += _ms; saveTiming(); }
+      if (_ms > 1 && _ms < 3600) {
+        TIMING.modelJobs++;
+        TIMING.modelSec += _ms * (job._modelLanes || 1);
+        saveTiming();
+      }
       hpLog("Job MODELO ok [" + job.label + "] → listo para render");
       emit(); pump();
     }).catch(function (err) {
@@ -288,10 +333,12 @@
   }
 
   function startRender(job) {
-    renderRunning++; job.status = "running"; if (!job.startedAt) job.startedAt = Date.now();
+    takeRenderLane(job);
+    job.status = "running"; if (!job.startedAt) job.startedAt = Date.now();
     job._renderStart = Date.now();
+    job._renderLanes = renderRunning(); // para calibrar en carril-segundos
     job.msg = "Renderizando…"; emit();
-    hpLog("Job RENDER [" + job.label + "] · kind=" + job.kind + " · en paralelo=" + renderRunning);
+    hpLog("Job RENDER [" + job.label + "] · kind=" + job.kind + " · en paralelo=" + renderRunning());
     var p = (job.kind === "renderManualHtml")
       ? HPEngine.callProg("renderManualHtml", job.payload, onP(job))
       : (job.kind === "renderVersionHQ")
@@ -299,13 +346,18 @@
         : (job.kind === "renderLatest")
           ? HPEngine.callProg("renderLatest", job.payload, onP(job))
           : HPEngine.callProg("renderPrepared", job.prepared, onP(job));
+    // Render → colocación → cierre, en una sola cadena, y el carril se libera en
+    // el último eslabón: pase lo que pase (error, cancelación, o que Premiere no
+    // conteste) hay UN solo lugar que lo suelta.
     p.then(function (res) {
       if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
-      finishPlace(job, res);
+      if (job._cancelled) { hpLog("Job CANCELADO [" + job.label + "] tras render — descartado."); return; }
+      return finishPlace(job, res);
     }).catch(function (err) {
-      if (job._cancelled) { renderRunning--; emit(); pump(); return; }
-      failJob(job, err, "render"); // el modelo ya estaba OK; reintentar re-renderiza sin IA
-      renderRunning--; emit(); pump();
+      // el modelo ya estaba OK; reintentar re-renderiza sin IA
+      if (!job._cancelled) failJob(job, err, "render");
+    }).then(function () {
+      releaseRenderLane(job); emit(); pump();
     });
   }
 
@@ -315,6 +367,14 @@
   var modelPreflight = null;
   var preflightRunning = false;
 
+  // Un job listo para el carril de RENDER: o ya pasó por el modelo ("ready"), o es
+  // un render puro que no necesita IA.
+  function isRenderable(job) {
+    return job.status === "ready" ||
+      (job.status === "queued" &&
+        (job.kind === "renderManualHtml" || job.kind === "renderVersionHQ" || job.kind === "renderLatest"));
+  }
+
   function pump() {
     if (paused) return; // staging: no arrancar nuevos jobs
     // En local (Ollama) NO se solapa: modelo y render usan la misma máquina.
@@ -322,13 +382,14 @@
     // Carril RENDER: hasta renderCap() a la vez (en local, además, no mientras el
     // modelo corre). Con varios diseños de IA resolviéndose en paralelo, los
     // renders llegaban todos juntos y se hacían fila de a uno; ese embudo es lo
-    // que abre este cupo. startRender incrementa renderRunning en su 1ª línea,
-    // así que la condición ve el conteo al día en cada vuelta.
+    // que abre este cupo.
+    //
+    // Se juntan los elegibles ANTES de arrancar ninguno: startRender emite, emitir
+    // corre a los suscriptores, y un suscriptor que borre o cancele un job cambia
+    // `jobs` mientras lo estaríamos recorriendo.
     if (overlap || modelRunning === 0) {
-      for (var i = 0; i < jobs.length && renderRunning < renderCap(); i++) {
-        var j = jobs[i];
-        if (j.status === "ready" || (j.status === "queued" && (j.kind === "renderManualHtml" || j.kind === "renderVersionHQ" || j.kind === "renderLatest"))) startRender(j);
-      }
+      var eligible = jobs.filter(isRenderable);
+      for (var i = 0; i < eligible.length && renderRunning() < renderCap(); i++) startRender(eligible[i]);
     }
     // Carril MODELO: arranca TANTOS jobs de IA como permita el cupo (nube:
     // MODEL_CONCURRENCY en paralelo; local: 1 y no mientras el render corre).
@@ -365,7 +426,7 @@
         });
         continue;
       }
-      if (modelRunning >= modelCap() || !(overlap || (renderRunning === 0 && modelRunning === 0))) break;
+      if (modelRunning >= modelCap() || !(overlap || (renderRunning() === 0 && modelRunning === 0))) break;
       startModel(next);
     }
   }
@@ -426,17 +487,15 @@
     //                    de generar a ciegas.
     setModelPreflight: function (fn) { modelPreflight = fn; },
 
-    // Techo del carril de render, que lo decide el motor según el hardware (no es
-    // una preferencia: en una máquina floja un segundo render revienta el buffer).
+    // Techo del carril de render. NO es una preferencia: lo decide el motor
+    // perfilando la máquina (en una floja un segundo render revienta el buffer), y
+    // acá solo se valida que sea un número usable. Devuelve el cupo que quedó.
     setRenderLanes: function (n) {
       n = parseInt(n, 10);
-      if (isNaN(n) || n < 1) n = 1;
-      if (n > 4) n = 4;
-      renderConcurrency = n;
+      renderConcurrency = (isNaN(n) || n < 1) ? 1 : n;
       pump(); // por si el nuevo cupo permite arrancar otro render ya mismo
-      return n;
+      return renderCap();
     },
-    getRenderLanes: function () { return renderConcurrency; },
 
     // Cuántas llamadas al LLM corren en paralelo (nube). Persistente.
     getModelConcurrency: function () { return modelConcurrency; },
@@ -452,13 +511,11 @@
 
     // Estimación de la cola (auto-calibrada con el uso real).
     timing: {
-      avgModelSec: avgModelSec,
-      renderSecPerCompSec: renderSecPerCompSec,
       calibrated: function () { return TIMING.modelJobs > 0 || TIMING.renderCompSec > 0; },
       // Segundos que falta esperar para `genCount` diseños y `compSec` segundos de
-      // composición por renderizar. Cada etapa se divide por SU cupo: los tiempos
-      // calibrados son por job (uno solo), y acá corren varios a la vez. Vive en la
-      // cola, no en la vista, porque los cupos los manda la cola.
+      // composición por renderizar. Las muestras están en carril-segundos, así que
+      // cada etapa se divide por SU cupo. Vive en la cola, no en la vista, porque
+      // los cupos los manda la cola.
       estimateSec: function (genCount, compSec) {
         var modelSec = (Number(genCount) || 0) * avgModelSec() / Math.max(1, modelCap());
         var rndSec = (Number(compSec) || 0) * renderSecPerCompSec() / Math.max(1, renderCap());

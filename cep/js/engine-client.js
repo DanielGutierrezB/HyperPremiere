@@ -132,7 +132,19 @@
     }
   }
 
-  /** Igual que call pero pasa un callback de progreso (prepareEngine, cola, etc.). */
+  /**
+   * Igual que call pero pasa un callback de progreso (prepareEngine, cola, etc.).
+   *
+   * El motor llama `prog(p)` con un sobre de campos OPCIONALES, y cada uno tiene
+   * un destino distinto (quien lo consume es onP en queue.js):
+   *   - `pct`   (0-100) y `msg`  → la barra del job: el estado de AHORA, se pisa.
+   *   - `usage` → contador de tokens del job.
+   *   - `note`  → una línea al ⬇ Log, que queda: lo que hay que poder leer
+   *               después (qué se reparó, por qué se gastó una llamada extra, con
+   *               qué configuración se renderizó). NO va a la barra.
+   *   - `level` → nivel de esa nota ("WARN"/"ERROR"); sin él, informativa.
+   * Si hace falta un campo nuevo, se agrega ACÁ y en onP, no en cada productor.
+   */
   function callProg(method, arg, prog) {
     if (!engine || typeof engine[method] !== "function") {
       return Promise.reject(new Error(errMsg()));

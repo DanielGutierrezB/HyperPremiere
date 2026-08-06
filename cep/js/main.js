@@ -1883,22 +1883,26 @@
   var epFill = document.getElementById("ep-fill");
   var btnPrepare = document.getElementById("btn-prepare-engine");
   function showEnginePrep(show) { if (epBanner) epBanner.setAttribute("data-hidden", show ? "false" : "true"); }
+  // Lo que el panel hace con la respuesta de engineStatus: mostrar u ocultar
+  // "Preparar motor" y configurar los carriles de render de la cola.
+  function applyEngineStatus(st) {
+    if (!st) return;
+    if (st.ok && st.depsReady === false) {
+      hpLog("Motor SIN dependencias (instalación limpia) — mostrando 'Preparar motor'.", "WARN");
+      showEnginePrep(true);
+      setHeaderStatus("preparar motor", "warn");
+    } else {
+      showEnginePrep(false);
+    }
+    // Cuántos renders aguanta ESTA máquina en paralelo: lo perfila el motor
+    // (RAM/cores) y la cola lo usa como techo de su carril de render.
+    if (st.renderLanes) {
+      hpLog("Carriles de render en esta máquina: " + HPQueue.setRenderLanes(st.renderLanes) +
+        " (con Ollama local, siempre 1).");
+    }
+  }
   function checkEngineDeps() {
-    hpCall("engineStatus").then(function (st) {
-      // Cuántos renders aguanta ESTA máquina en paralelo: lo perfila el motor
-      // (RAM/cores) y la cola lo usa como techo de su carril de render.
-      if (st && st.renderLanes) {
-        HPQueue.setRenderLanes(st.renderLanes);
-        hpLog("Carriles de render en esta máquina: " + HPQueue.getRenderLanes() + ".");
-      }
-      if (st && st.ok && st.depsReady === false) {
-        hpLog("Motor SIN dependencias (instalación limpia) — mostrando 'Preparar motor'.", "WARN");
-        showEnginePrep(true);
-        setHeaderStatus("preparar motor", "warn");
-      } else {
-        showEnginePrep(false);
-      }
-    }).catch(function () {});
+    hpCall("engineStatus").then(applyEngineStatus).catch(function () {});
   }
   if (btnPrepare) {
     btnPrepare.addEventListener("click", function () {

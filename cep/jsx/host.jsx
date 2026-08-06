@@ -408,16 +408,28 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
         var targetBin = seqBin || hpBin || app.project.rootItem;
         app.project.importFiles([movPath], true, targetBin, false);
 
+        // Localizar el ítem importado por su RUTA DE MEDIA, que es su identidad
+        // real. Antes se buscaba por nombre y, si no aparecía, se agarraba el
+        // último hijo del bin: eso podía colocar el video de OTRO marcador en
+        // este (Premiere no siempre materializa el import de inmediato, y con dos
+        // renders terminando juntos el "último" es una lotería). El nombre queda
+        // como respaldo por si getMediaPath no está disponible.
         var root = targetBin;
         var count = root.children.numItems;
+        var wantPath = String(f.fsName);
         var baseName = f.name.replace(/\.[^\.]+$/, "");
         var item = null;
+        var byName = null;
         for (var i = count - 1; i >= 0; i--) {
             var ch = root.children[i];
-            if (ch && ch.name && ch.name.indexOf(baseName) === 0) { item = ch; break; }
+            if (!ch) continue;
+            var mp = "";
+            try { if (ch.getMediaPath) mp = String(ch.getMediaPath() || ""); } catch (eMp) {}
+            if (mp && mp === wantPath) { item = ch; break; }
+            if (!byName && ch.name && ch.name.indexOf(baseName) === 0) byName = ch;
         }
-        if (!item && count > 0) item = root.children[count - 1];
-        if (!item) return "error: no se pudo localizar el clip importado";
+        if (!item) item = byName;
+        if (!item) return "error: Premiere importó el video pero no lo encuentro en el bin (" + f.name + "); reintentá el render.";
 
         var vTracks = seq.videoTracks;
         if (!vTracks || vTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";

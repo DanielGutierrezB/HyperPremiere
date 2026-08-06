@@ -119,6 +119,17 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
   `.mov` salen **idénticos byte a byte** — el carril extra acelera el lote, no toca la
   calidad. Lo ves en el ⬇ Log al abrir el panel ("Carriles de render en esta máquina: N").
   Con **Ollama local** todo vuelve a 1 (comparte la máquina) y no se solapa con el render.
+  El carril extra **no pide más máquina**: los workers de captura son un presupuesto que
+  se **reparte** entre los carriles (con 2 carriles, 3 workers cada uno en vez de 6). Y
+  repartir salió gratis, incluso mejor — medido con el mismo HTML y salida idéntica byte a
+  byte, bajar de 6 a 3 workers dio **51s → 38s (-26%)** en un marcador de 54s: la captura
+  no era el cuello, cada worker extra era otro Chrome que arrancar.
+- **Lo que toca Premiere va de a uno.** Importar el video, colocarlo y agregar pistas
+  comparten el bin de la secuencia y las pistas, así que esas escrituras se serializan
+  aunque los renders vayan en paralelo (cuesta ~1s por clip y la ganancia queda intacta).
+  Sin eso, dos colocaciones simultáneas podían dejar el video de un marcador en otro,
+  sin ningún error: Premiere no siempre materializa el import de inmediato. Por lo mismo
+  el clip importado se busca por su **ruta de media** y no por nombre ni por posición.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
 - Controles: **pausar/reanudar** (retoma desde el llamado a la IA o desde el render, según
   dónde estaba), **cancelar** un ítem, **reintentar** ante fallo (si el modelo ya había
@@ -167,21 +178,30 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
   - `bridge/engine.js` — orquestación en 2 etapas (`prepareGenerate`/`prepareFeedback` =
     modelo, `renderPrepared` = render), config, self-update, versiones, cola, capturas.
   - `bridge/providers/` — `claude-cli`, `claude-api`, `cursor-cli`, `openai-compat`, `ollama`.
-  - `bridge/composition.js` — dueño del **contrato** de la composición: valida, y sobre todo
+  - `bridge/composition.js` — dueño del **contrato** de la composición: lo lee y sobre todo
     **completa el andamiaje en código** (id, `data-duration` con la duración real del
     marcador, atributos del esqueleto) en vez de pedirle otro diseño al modelo. Antes, un
     atributo suelto costaba una tanda entera de razonamiento —minutos— y devolvía un diseño
-    **distinto**, sin la auditoría del primero. También detecta algo que la validación no
+    **distinto**, sin la auditoría del primero. También arregla algo que la validación no
     veía: que el id del `#stage` y el del registro en `window.__timelines` no coincidan, que
-    pasaba el chequeo y salía un **video congelado**. Solo se vuelve al modelo cuando falta
-    algo que no se puede inferir sin riesgo (que no registre su timeline), y entonces se le
-    manda **su propio HTML** para que arregle el andamiaje sin rediseñar. Todo lo que repara
-    o gasta queda escrito en el ⬇ Log.
+    pasaba el chequeo y salía un **video congelado**. No usa un parser de HTML (el archivo
+    tiene que volver **idéntico** si no hay nada que arreglar, porque se guarda en disco y
+    se edita a mano): escanea el tag respetando comillas, lee los atributos con sus
+    posiciones y escribe por índice. Devuelve **códigos** de lo que no pudo completar, no
+    frases: la redacción vive en quien arma el prompt. Ignora los comentarios, porque el
+    modelo cierra cada composición describiendo en prosa lo que hizo y eso parecía código.
+  - `bridge/compose.js` — la **política** de cuándo vale gastar otra llamada al modelo:
+    hasta tres (diseño → arreglo de estructura → falla que el modelo mismo declaró en su
+    `AUDIT`), cada arreglo sobre **su propio HTML** para no rediseñar, y la regla de nunca
+    adoptar algo que quede peor que lo que ya había. Está aparte de `engine.js` para poder
+    leerla completa y probarla sin tocar Premiere ni el disco.
   - `bridge/render/hyperframes.js` — render a `.mov` (ProRes 4444 alpha) o `.mp4` (H.264).
-    Perfila la máquina (workers, `--low-memory-mode` en las flojas, donde los marcadores
-    largos reventaban la RAM) y decide cuántos renders paralelos aguanta (`renderLanes`).
-    Al terminar deja en el ⬇ Log con qué configuración renderizó y cuánto tardó, así un
-    render lento se distingue de uno que cayó al modo software.
+    Es el único lugar que mira el hardware: de ahí salen el `--low-memory-mode` de las
+    máquinas flojas (donde los marcadores largos reventaban la RAM), los carriles paralelos
+    (`renderLanes`) y los workers de cada render, que **se reparten el mismo presupuesto**
+    en vez de ser dos diales sueltos sobre los mismos cores. Al terminar deja en el ⬇ Log
+    con qué configuración renderizó y cuánto tardó, así un render lento se distingue de uno
+    que cayó al modo software.
   - `bridge/prompt/` — system prompt con el sistema de diseño ("menos es más",
     acompañar sin ilustrar literal, coreografía del motion) y el protocolo
     **PLAN → CÓDIGO → AUDITORÍA**: el modelo diseña regiones que no se pisan,
