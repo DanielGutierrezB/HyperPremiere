@@ -23,15 +23,21 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    **.wav temporal** (mono 16 kHz), lo transcribe con tu **Whisper local** (large-v3,
    sin nube ni tokens) y lo **borra**. Detecta el idioma solo (sirve mezclando español
    e inglés) y, como transcribe la *mezcla de la secuencia*, los tiempos ya coinciden
-   con el timeline: **desfase 0**, sin ajustes a mano. Deja un respaldo
-   (`transcript-whisper.json`) en la carpeta de la secuencia.
+   con el timeline: **desfase 0**, sin ajustes a mano.
    Si la secuencia termina con una cola sin narración (overlays, cierre), se recorta
    antes de transcribir: ahí Whisper alucina y entra en **bucle** repitiendo la última
    frase. Por si igual aparece, las repeticiones se colapsan al guardar y al importar. Requiere `whisper` (pip install openai-whisper) o
    `mlx_whisper` en el PATH; el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
    También podés **cargar un transcript JSON**: si viene del video original y editaste
    el timeline, corregí el corrimiento con **Desfase (s)** o **Detectar del timeline**
-   (los fragmentos se actualizan en vivo; se guarda por secuencia). Al final, el
+   (los fragmentos se actualizan en vivo; se guarda por secuencia).
+   **El transcript queda guardado en la carpeta de la secuencia** (`transcript.json`),
+   tanto el que genera Whisper como el que importás de un JSON. Al abrir el panel se
+   lee de ahí, así que si cerrás Premiere y volvés, la secuencia **ya lo tiene**: no hay
+   que transcribir ni importar de nuevo. Generar otra vez o importar otro JSON lo
+   **reemplaza** por el más actual. Si cambiás de secuencia en Premiere, el panel te
+   avisa para que pulses **Cargar marcadores** y te pases a ella con su transcript.
+   Al final, el
    **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODOS los
    marcadores (no lo repetís en cada uno).
 3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa**
@@ -101,7 +107,8 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
 - **Estimado** al pie: tiempo, tokens y **costo** aproximados de lo pendiente (el tiempo se
   auto-calibra con el uso real).
 - **Persistencia por proyecto**: la cola se guarda en
-  `<carpeta-del-.prproj>/HyperPremiere/queue.json` y se recarga al reabrir.
+  `<carpeta-del-.prproj>/HyperPremiere/queue.json` y se recarga al reabrir. El transcript
+  va aparte, por secuencia, en `HyperPremiere/<secuencia>/transcript.json`.
 
 ## Acciones por recurso
 

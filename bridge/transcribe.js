@@ -533,17 +533,23 @@ async function transcribeMedia(body, onProgress) {
       segments = cleaned.segments;
     }
 
-    // 5) Respaldo en la carpeta de la secuencia (mismo formato que se importa).
+    // 5) Guardado en la carpeta de la secuencia. No es un "respaldo": es LA copia
+    //    persistente que el panel vuelve a cargar al reabrir Premiere, con el
+    //    nombre canónico (transcript.json) que también usa el import de JSON.
+    //    Los tiempos son de la secuencia, así que el desfase queda en 0.
     let savedPath = '';
     try {
       const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
-      savedPath = path.join(baseDir, 'transcript-whisper.json');
+      savedPath = path.join(baseDir, 'transcript.json');
       fs.writeFileSync(savedPath, JSON.stringify({
+        sequenceName: String(body.sequenceName || ''),
         language, model: WHISPER_MODEL, tool: tool.bin,
         // Apuntar al .wav temporal (ya borrado) no sirve de nada: dejamos la
         // fuente real, que es la secuencia.
         source: isSeqAudio ? ('audio de la secuencia' + clipLabel) : mediaPath,
-        createdAt: new Date().toISOString(),
+        // Viene del audio de la secuencia, así que ya está alineado al timeline.
+        offset: 0,
+        savedAt: new Date().toISOString(),
         loopsRemoved: cleaned.removed, loops: cleaned.loops,
         segments,
       }, null, 2), 'utf8');

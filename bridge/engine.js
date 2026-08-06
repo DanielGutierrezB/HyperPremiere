@@ -263,6 +263,87 @@ async function testProvider() {
   }
 }
 
+// ── Transcript persistido por secuencia ──────────────────────────────
+// El disco es la FUENTE DE VERDAD, no el localStorage del panel: así el
+// transcript sobrevive a cerrar Premiere, a que se limpie la caché de CEP y a
+// mover el proyecto de máquina. Un archivo por secuencia, siempre el mismo
+// nombre: generar de nuevo o importar otro JSON lo reemplaza.
+const TRANSCRIPT_FILE = 'transcript.json';
+// Nombre que se usaba antes (solo lo escribía Whisper). Se sigue leyendo para no
+// perder los transcripts de las secuencias que ya existen.
+const TRANSCRIPT_FILE_LEGACY = 'transcript-whisper.json';
+
+function transcriptPath(projectPath, sequenceName) {
+  return path.join(ensureOutputDir(projectPath, sequenceName), TRANSCRIPT_FILE);
+}
+
+/**
+ * Guarda el transcript de una secuencia. `body` = { projectPath, sequenceName,
+ * segments, offset?, language?, tool?, source? }.
+ * Devuelve { ok, path, count } y no lanza.
+ */
+function saveTranscript(body) {
+  body = body || {};
+  const segments = Array.isArray(body.segments) ? body.segments : [];
+  if (!segments.length) return { ok: false, error: 'no hay segmentos que guardar' };
+  try {
+    const file = transcriptPath(body.projectPath, body.sequenceName);
+    fs.writeFileSync(file, JSON.stringify({
+      sequenceName: String(body.sequenceName || ''),
+      source: String(body.source || ''),
+      language: String(body.language || ''),
+      tool: String(body.tool || ''),
+      // El desfase es parte del estado: sin él, al recargar habría que volver a
+      // calibrarlo a mano.
+      offset: Number(body.offset) || 0,
+      savedAt: new Date().toISOString(),
+      segments,
+    }, null, 2), 'utf8');
+    return { ok: true, path: file, count: segments.length };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
+/**
+ * Lee el transcript guardado de una secuencia, si hay.
+ * Devuelve { ok:true, found:false } cuando no existe (no es un error).
+ */
+function loadTranscript(body) {
+  body = body || {};
+  try {
+    const dir = ensureOutputDir(body.projectPath, body.sequenceName);
+    const candidates = [
+      { file: path.join(dir, TRANSCRIPT_FILE), legacy: false },
+      { file: path.join(dir, TRANSCRIPT_FILE_LEGACY), legacy: true },
+    ];
+    for (const c of candidates) {
+      if (!fs.existsSync(c.file)) continue;
+      let data;
+      try {
+        data = JSON.parse(fs.readFileSync(c.file, 'utf8'));
+      } catch (e) {
+        continue; // archivo corrupto: probamos el siguiente candidato
+      }
+      const segments = Array.isArray(data && data.segments) ? data.segments : [];
+      if (!segments.length) continue;
+      return {
+        ok: true, found: true, segments,
+        offset: Number(data.offset) || 0,
+        language: data.language || '',
+        tool: data.tool || '',
+        source: data.source || '',
+        savedAt: data.savedAt || '',
+        path: c.file,
+        legacy: c.legacy,
+      };
+    }
+    return { ok: true, found: false };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
 /**
  * Modelos que la suscripción de Cursor tiene disponibles, para el selector del
  * panel. Se cachea igual que la lista de Claude: llamar al CLI cuesta ~1s.
@@ -1332,6 +1413,8 @@ module.exports = {
   listOllamaModels,
   listClaudeModels,
   listCursorModels,
+  saveTranscript,
+  loadTranscript,
   newTempAudioPath,
   loginClaudeStart,
   loginClaudeCode,

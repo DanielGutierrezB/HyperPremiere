@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.11</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.12</span>
       </button>
     </div>
   </header>
@@ -112,6 +112,10 @@
   </div>
 
   <main id="view-markers" class="panel-body">
+    <!-- Aviso cuando cambiaste de secuencia en Premiere: el panel sigue mostrando
+         el contexto de la anterior hasta que recargues los marcadores. -->
+    <div id="seq-notice" class="seq-notice" data-hidden="true" aria-live="polite"></div>
+
     <div id="output" class="output" aria-live="polite">
       <span class="placeholder">Pulsá "Cargar marcadores" para leer la secuencia activa.</span>
     </div>

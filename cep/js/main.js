@@ -64,6 +64,8 @@
         currentProjectPath = projectPath || "";
         currentSequenceName = sequenceName || "";
         HPStore.setContext(currentProjectPath, currentSequenceName);
+        // El contexto quedó al día: si había aviso de "otra secuencia activa", sobra.
+        showSeqNotice("");
         // Al abrir el panel o cambiar de proyecto, cargar la cola guardada de ESE
         // proyecto (queue.json en su carpeta HyperPremiere).
         if (currentProjectPath !== lastRestoredProject) {
@@ -169,6 +171,106 @@
     }
     updateContextSummary();
   }
+
+  // ── Transcript persistido en la carpeta de la secuencia ──────────────
+  // El localStorage del panel es solo una caché: se pierde si se limpia la caché
+  // de CEP o si cambia la ruta del proyecto (guardar como…), y entonces el
+  // transcript "desaparecía" aunque estuviera en disco. La copia de la carpeta de
+  // la secuencia es la fuente de verdad, así que al abrir se lee de ahí.
+
+  // Guarda el transcript actual en la carpeta de la secuencia. Silencioso: si
+  // falla, el panel sigue andando con la copia en memoria.
+  function persistTranscript(segments, extra) {
+    extra = extra || {};
+    var body = {
+      projectPath: currentProjectPath,
+      sequenceName: currentSequenceName,
+      segments: segments,
+      offset: HPStore.getTranscriptOffset() || 0,
+      source: extra.source || "",
+      language: extra.language || "",
+      tool: extra.tool || ""
+    };
+    return hpCall("saveTranscript", body)
+      .then(function (r) {
+        if (r && r.ok) hpLog("Transcript guardado en la secuencia: " + r.path);
+        else hpLog("No pude guardar el transcript en disco: " + ((r && r.error) || "?"), "WARN");
+        return r;
+      })
+      .catch(function (e) {
+        hpLog("No pude guardar el transcript en disco: " + ((e && e.message) || e), "WARN");
+      });
+  }
+
+  // Al abrir (o al recargar contexto) trae el transcript de la secuencia si hay.
+  // Si en disco no hay nada pero sí en la caché local, lo sube a disco: así las
+  // secuencias que ya tenían transcript quedan migradas sin intervención.
+  function hydrateTranscriptFromDisk(done) {
+    hpCall("loadTranscript", { projectPath: currentProjectPath, sequenceName: currentSequenceName })
+      .then(function (r) {
+        if (r && r.ok && r.found && r.segments && r.segments.length) {
+          HPStore.setTranscript(r.segments);
+          // setOffset ya refresca los fragmentos y la fila de desfase.
+          setOffset(Number(r.offset) || 0, r.source ? ("de " + r.source) : "");
+          updateTranscriptStatus();
+          // Sobre el estado normal, aclarar que salió del disco (no lo generó ahora).
+          if (transcriptStatus) {
+            transcriptStatus.textContent = "✓ " + r.segments.length + " segmentos · " +
+              formatTime(transcriptDuration(r.segments)) + " total · guardado en esta secuencia";
+            transcriptStatus.className = "muted transcript-ok";
+          }
+          hpLog("Transcript recuperado del disco: " + r.segments.length + " segmentos · " + r.path +
+            (r.legacy ? " (formato viejo)" : ""));
+          // Un transcript viejo (transcript-whisper.json) se reescribe con el
+          // nombre canónico para que el import de JSON y Whisper compartan archivo.
+          if (r.legacy) persistTranscript(r.segments, { source: r.source, language: r.language, tool: r.tool });
+          if (done) done();
+          return;
+        }
+        var local = HPStore.getTranscript() || [];
+        if (local.length) {
+          hpLog("El transcript estaba solo en la caché local: lo guardo en la carpeta de la secuencia.");
+          persistTranscript(local, { source: "caché del panel" });
+        }
+        if (done) done();
+      })
+      .catch(function (e) {
+        hpLog("No pude leer el transcript del disco: " + ((e && e.message) || e), "WARN");
+        if (done) done();
+      });
+  }
+
+  // ── Cambio de secuencia activa en Premiere ───────────────────────────
+  // El panel fija el contexto al abrirse y al cargar marcadores. Si mientras
+  // tanto cambiás de secuencia en Premiere, seguiría mostrando el objetivo y el
+  // transcript de la anterior. NO se cambia el contexto solo: las tarjetas ya
+  // renderizadas escribirían en el namespace equivocado. Se avisa y decidís vos.
+  var seqNotice = document.getElementById("seq-notice");
+  function showSeqNotice(otherSequence) {
+    if (!seqNotice) return;
+    if (!otherSequence) {
+      seqNotice.setAttribute("data-hidden", "true");
+      seqNotice.textContent = "";
+      return;
+    }
+    seqNotice.textContent = "En Premiere está activa la secuencia “" + otherSequence +
+      "” pero el panel está trabajando sobre “" + (currentSequenceName || "(ninguna)") +
+      "”. Pulsá “Cargar marcadores” para pasarte a ella (con su transcript y su objetivo).";
+    seqNotice.setAttribute("data-hidden", "false");
+  }
+
+  function checkActiveSequenceChanged() {
+    if (!HPHost || !HPHost.getActiveSequenceName) return;
+    HPHost.getActiveSequenceName(function (name) {
+      var live = String(name || "");
+      if (!live || live.indexOf("Error:") === 0 || live.indexOf("(sin secuencia") === 0) return;
+      showSeqNotice(live !== currentSequenceName ? live : "");
+    });
+  }
+
+  // Al volver el foco al panel es el momento exacto en que pudo haber cambiado la
+  // secuencia (fuiste a Premiere y volviste). Más barato que sondear en bucle.
+  window.addEventListener("focus", checkActiveSequenceChanged);
 
   // Resumen del header de "Contexto de la clase" (visible cuando está colapsado):
   // muestra de un vistazo si hay objetivo y transcript.
@@ -505,6 +607,11 @@
       transcriptStatus.className = "muted" + ((cal.match === false || cal.label) ? "" : " transcript-ok");
       hpLog("Transcript importado: " + segments.length + " segmentos · dur " + tDur + "s · seq " + seqDur + "s · calibración: " +
         (cal.label || (cal.match === false ? "NO COINCIDE" : "ok")) + " · desfase reiniciado a 0");
+
+      // Se copia a la carpeta de la secuencia (reemplazando el que hubiera), así
+      // el JSON importado queda disponible al reabrir sin volver a buscarlo.
+      // Se guardan los segmentos YA calibrados: al recargar no hay que recalibrar.
+      persistTranscript(cal.segments, { source: "JSON importado" });
 
       // La IA deriva el objetivo de la clase desde el transcript.
       // Solo si el objetivo está vacío (no pisar lo que el editor haya escrito).
@@ -1061,6 +1168,8 @@
       hydrateGeneral();
       hydrateOffset();
       updateTranscriptStatus();
+      // Cambiar de secuencia acá es lo normal: hay que traer SU transcript.
+      hydrateTranscriptFromDisk();
 
       HPHost.getMarkers(function (result) {
         if (result === undefined || result === null || result === "EvalScript error.") {
@@ -1270,11 +1379,14 @@
   HPWidgets.installTooltips();
 
   // Arranque: fijar contexto y rehidratar objetivo + estado del transcript.
+  // El transcript se busca en la carpeta de la secuencia, no en la caché local:
+  // así al reabrir Premiere reconoce que esta secuencia ya lo tiene hecho.
   loadContext(function () {
     hydrateObjective();
     hydrateGeneral();
     hydrateOffset();
     updateTranscriptStatus();
+    hydrateTranscriptFromDisk();
   });
 
   // Si el motor no cargó, avisar de una (sin esperar a que corra la cola) con la

@@ -197,6 +197,22 @@ button:disabled {
   border-color: rgba(224, 138, 138, 0.35);
 }
 
+/* Aviso de "cambiaste de secuencia en Premiere" (ver #seq-notice en index.html). */
+.seq-notice {
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: rgba(251, 191, 36, 0.10);
+  padding: 6px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warn);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.seq-notice[data-hidden="true"] { display: none; }
+
 /* ── Contexto de la clase ───────────────────────────── */
 
 .class-context {
