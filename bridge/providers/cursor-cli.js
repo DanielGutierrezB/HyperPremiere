@@ -29,7 +29,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
+const { stripHtmlFence, parseImageDataUrl, makeUsage,
+  imageFileName, imagesAsFilesNote } = require('./index');
 const { run } = require('../exec');
 
 const DEFAULT_TIMEOUT_MS = 900_000; // 900s: los modelos con thinking se toman su tiempo
@@ -37,19 +38,8 @@ const DEFAULT_MODEL = 'claude-sonnet-5-thinking-high';
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 4000;
 
-/** Extension de archivo segun media type; png como fallback razonable. */
-function extForMediaType(mediaType) {
-  const map = {
-    'image/png': '.png',
-    'image/jpeg': '.jpg',
-    'image/webp': '.webp',
-    'image/gif': '.gif',
-  };
-  return map[mediaType] || '.png';
-}
-
 /**
- * Crea el directorio de trabajo temporal y deja ahí los stills.
+ * Crea el directorio de trabajo temporal y deja ahí las imágenes de referencia.
  * Ese directorio es también el --workspace del agente: así lo que puede leer
  * queda acotado a lo que nosotros pusimos.
  * Devuelve { dir, names, cleanup } — cleanup borra todo y nunca lanza.
@@ -62,7 +52,7 @@ function makeWorkspace(images) {
     .map(parseImageDataUrl)
     .filter(Boolean)
     .forEach((img, i) => {
-      const name = `still-${i + 1}${extForMediaType(img.mediaType)}`;
+      const name = imageFileName(i + 1, img.mediaType);
       fs.writeFileSync(path.join(dir, name), Buffer.from(img.base64, 'base64'));
       names.push(name);
     });
@@ -120,14 +110,14 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   const ws = makeWorkspace(images);
 
   // Sin --append-system-prompt: el system prompt encabeza el prompt de usuario.
-  let prompt = systemPrompt
+  // Las imágenes se nombran por RUTA ABSOLUTA aunque estén en el directorio de
+  // trabajo: las herramientas de búsqueda del agente no indexan este temporal
+  // (un glob de "imagen-1.png" vuelve vacío), así que con el nombre suelto se
+  // pone a buscar, a veces se rinde y contesta que no encuentra la imagen en vez
+  // de componer. Con la ruta entera abre y listo.
+  const prompt = (systemPrompt
     ? (String(systemPrompt).trim() + '\n\n---\n\n' + userPrompt)
-    : userPrompt;
-  if (ws.names.length > 0) {
-    prompt +=
-      '\n\nStills de referencia (están en tu directorio de trabajo, leelos antes de componer):\n' +
-      ws.names.map((n) => `- ./${n}`).join('\n');
-  }
+    : userPrompt) + imagesAsFilesNote(ws.names.map((n) => path.join(ws.dir, n)));
 
   const args = [
     '-p', prompt,

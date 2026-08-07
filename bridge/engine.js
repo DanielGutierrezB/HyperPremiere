@@ -571,7 +571,9 @@ async function prepareGeneration(body, mode, onProgress) {
   // Los stills pueden venir como data URL (arrastrados) o como RUTA a archivo
   // (capturas guardadas en _capturas — así no revientan la cuota de localStorage).
   // Normalizamos todo a data URL para que providers/saveStills funcionen igual.
-  const stillsList = (Array.isArray(stills) ? stills : []).map(stillToDataUrl).filter(Boolean);
+  const stillsGiven = Array.isArray(stills) ? stills : [];
+  const stillsList = stillsGiven.map(stillToDataUrl).filter(Boolean);
+  const stillsMissing = stillsGiven.length - stillsList.length;
   const resourcesList = Array.isArray(body.resources) ? body.resources : [];
 
   report({ pct: 5, msg: 'Armando el contexto…' });
@@ -625,7 +627,7 @@ async function prepareGeneration(body, mode, onProgress) {
   const assetInfos = saveAssets(assetsDir, assetList);
   if (assetInfos.length) {
     userPrompt += '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
-      'Las imágenes que ves también están disponibles como archivos en la carpeta assets/ del proyecto ' +
+      'Las imágenes de referencia también están disponibles como archivos en la carpeta assets/ del proyecto ' +
       '(con sus dimensiones reales en px — respetá el aspect ratio al usarlas):\n' +
       assetInfos.map((a) => '- assets/' + a.name + (a.w && a.h ? ' (' + a.w + '×' + a.h + ' px)' : '')).join('\n') +
       '\nSi la instrucción pide USAR o incluir una imagen provista (un logo, icono, foto o marca), ' +
@@ -675,6 +677,30 @@ async function prepareGeneration(body, mode, onProgress) {
   const verbo = mode === 'regen' ? 'desde cero' : mode === 'adjust' ? '(refinando)' : '';
   const localHint = config.provider === 'ollama' ? ' — modelo local, puede tardar varios minutos' : '';
   report({ pct: 15, msg: 'Diseñando la animación con ' + config.model + ' ' + verbo + '…' + localHint });
+
+  // Qué entra REALMENTE en esta llamada, escrito antes de gastarla. Cuando un
+  // recurso sale distinto de lo que el editor esperaba, la primera pregunta es
+  // siempre qué vio el modelo; sin esta línea había que deducirlo del resultado.
+  report({ note: 'Entra al modelo: ' + [
+    stillsList.length + ' img de referencia',
+    assetInfos.length + ' img a incrustar',
+    (Array.isArray(transcript) ? transcript.length : 0) + ' segmentos de clase' + (leanPrompt ? ' (no se reenvían)' : ''),
+    (Array.isArray(markerTranscript) ? markerTranscript.length : 0) + ' del marcador',
+    'objetivo ' + ((objective || '').trim() ? 'sí' : 'NO'),
+    'instrucción ' + ((instruction || '').trim() ? 'sí' : 'NO'),
+    'prompt general ' + ((body.generalInstruction || '').trim() ? 'sí' : 'no'),
+    resourcesList.length + ' recursos',
+  ].join(' · ') });
+  // Una referencia que el editor adjuntó y no llegó es un modo de falla mudo: el
+  // panel muestra la miniatura (la sacó de su propia caché) y el modelo diseña
+  // sin ella. Pasa cuando el disco del proyecto no está montado o se movió.
+  if (stillsMissing > 0) {
+    report({
+      level: 'WARN',
+      note: 'OJO: ' + stillsMissing + ' imagen(es) de referencia NO se pudieron leer del disco y el ' +
+        'modelo va a diseñar sin ellas. Si el proyecto vive en un disco externo, revisá que esté montado.',
+    });
+  }
 
   // Hasta tres llamadas al modelo con la regla "nunca empeorar", más el andamiaje
   // completado en código. La política vive en compose.js; acá solo se orquesta.

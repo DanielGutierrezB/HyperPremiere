@@ -95,6 +95,45 @@ function parseImageDataUrl(dataUrl) {
 }
 
 /**
+ * Nombre de archivo de la imagen de referencia número `n` (1-based).
+ *
+ * El prompt numera las imágenes ("imagen 1", "imagen 2"…) porque así las nombra
+ * el editor en su instrucción. Los proveedores que las dejan como archivo usan
+ * ESTE nombre para que el número y el archivo sean lo mismo: pedirle al modelo
+ * que mapee "imagen 2" a un "still-2.png" es trabajo regalado.
+ *
+ * @param {number} n - posición 1-based
+ * @param {string} mediaType - "image/png", "image/jpeg"…
+ * @returns {string}
+ */
+function imageFileName(n, mediaType) {
+  const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' };
+  return 'imagen-' + n + (ext[mediaType] || '.png');
+}
+
+/**
+ * Texto que le explica al modelo que las imágenes son ARCHIVOS, no adjuntos.
+ *
+ * Lo usan los proveedores de línea de comandos (claude-cli, cursor-cli), que no
+ * pueden adjuntar imágenes a un mensaje: las dejan en disco. El resto del prompt
+ * no habla del transporte justamente porque depende de quién atienda; esta es la
+ * mitad que sabe el proveedor.
+ *
+ * @param {string[]} refs - cómo abrir cada imagen, en orden ("./imagen-1.png" o
+ *   una ruta absoluta, según dónde corra el agente)
+ * @returns {string} '' si no hay imágenes
+ */
+function imagesAsFilesNote(refs) {
+  const list = Array.isArray(refs) ? refs : [];
+  if (!list.length) return '';
+  return '\n\n## Dónde están las imágenes de referencia\n' +
+    'No van adjuntas a este mensaje: son archivos en disco.\n' +
+    list.map((r, i) => '- imagen ' + (i + 1) + ' → ' + r).join('\n') +
+    '\nAbrilas antes de diseñar. Es la única forma de ver el cuadro sobre el que se ' +
+    'va a superponer tu composición.';
+}
+
+/**
  * Normaliza el uso de tokens a una forma común para todos los proveedores.
  * Los campos ausentes quedan en 0; costUsd es null cuando el proveedor no lo
  * reporta (Anthropic API) y 0 cuando es local (Ollama).
@@ -120,4 +159,7 @@ function makeUsage(provider, model, raw) {
   };
 }
 
-module.exports = { getProvider, stripHtmlFence, parseImageDataUrl, makeUsage };
+module.exports = {
+  getProvider, stripHtmlFence, parseImageDataUrl, makeUsage,
+  imageFileName, imagesAsFilesNote,
+};

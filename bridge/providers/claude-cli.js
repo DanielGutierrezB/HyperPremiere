@@ -22,21 +22,11 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { stripHtmlFence, parseImageDataUrl, makeUsage } = require('./index');
+const { stripHtmlFence, parseImageDataUrl, makeUsage,
+  imageFileName, imagesAsFilesNote } = require('./index');
 const { run } = require('../exec');
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas y se demora)
-
-/** Extension de archivo segun media type; png como fallback razonable. */
-function extForMediaType(mediaType) {
-  const map = {
-    'image/png': '.png',
-    'image/jpeg': '.jpg',
-    'image/webp': '.webp',
-    'image/gif': '.gif',
-  };
-  return map[mediaType] || '.png';
-}
 
 /**
  * Guarda los data URLs como archivos temporales.
@@ -53,7 +43,7 @@ function writeTempImages(images) {
   if (valid.length > 0) {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperpremiere-stills-'));
     valid.forEach((img, i) => {
-      const file = path.join(dir, `still-${i + 1}${extForMediaType(img.mediaType)}`);
+      const file = path.join(dir, imageFileName(i + 1, img.mediaType));
       fs.writeFileSync(file, Buffer.from(img.base64, 'base64'));
       paths.push(file);
     });
@@ -93,13 +83,9 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   const { paths: imagePaths, cleanup } = writeTempImages(images);
 
-  // Si hay stills, se referencian por ruta en el prompt (ver TODO arriba).
-  let prompt = userPrompt;
-  if (imagePaths.length > 0) {
-    prompt +=
-      '\n\nStills de referencia (leelos desde disco antes de componer):\n' +
-      imagePaths.map((p) => `- ${p}`).join('\n');
-  }
+  // Las imágenes se referencian por ruta absoluta (ver TODO arriba): acá el
+  // directorio de trabajo no es el nuestro, así que el nombre suelto no alcanza.
+  const prompt = userPrompt + imagesAsFilesNote(imagePaths);
 
   // --output-format json => stdout es un objeto JSON con .result (texto) y
   // .usage (tokens) + .total_cost_usd. Así podemos contar el gasto real.

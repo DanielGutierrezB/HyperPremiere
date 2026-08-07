@@ -81,6 +81,17 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
 "imagen 1 arriba, imagen 2 es solo referencia". Las capturas del programa **se acumulan**
 (cada 📸 suma una) y se guardan en la carpeta de la secuencia (`_capturas/`).
 
+**Viajan en toda generación, también al refinar.** Cada llamada al modelo es nueva y no
+recuerda la anterior: lo único que sobrevive es el HTML previo que le mandamos. Cuando
+las imágenes no se reenviaban "porque ya las había visto", al refinar rediseñaba a ciegas
+y se le iba encima de la cara o del logo. Medido con un cuadro de referencia con una zona
+ocupada abajo a la izquierda y la misma instrucción: **sin la imagen puso los 2 elementos
+justo ahí; con la imagen puso los 4 afuera** y escribió en su plan las coordenadas exactas
+que estaba esquivando. Antes de cada llamada, el ⬇ Log dice qué entró ("Entra al modelo:
+2 img de referencia · … · objetivo sí"), y **avisa fuerte si una referencia no se pudo
+leer del disco** — con el proyecto en un disco externo desmontado, el panel te muestra la
+miniatura desde su caché y el modelo diseña sin ella, sin que nada lo delate.
+
 ## Fondo, modo borrador y calidad
 
 - Un marcador se genera **sin fondo** (`.mov` con **alpha**, transparente) o **con fondo**
@@ -97,12 +108,9 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
 - **Refinar / Feedback** usa prompt *lean*: **no reenvía el transcript completo** de la
   clase (el modelo se apoya en el HTML previo + el fragmento del marcador). **Generar** y
   **Regenerar desde cero** sí mandan el contexto completo, porque no hay diseño previo.
-- **Reenvío de imágenes por-imagen en feedback**: como estás refinando sobre lo generado,
-  las imágenes ya adjuntas aparecen **apagadas (gris)** y **no se reenvían** al modelo (la
-  visión es lo más caro en tokens). Tocás **📤 reenviar** en la miniatura que necesites
-  que el modelo vea (ej. igualar colores de un logo). Las imágenes **nuevas** que agregás
-  en el feedback entran **activas** solas. Las marcadas **✓ usar** se **incrustan igual**,
-  se reenvíen o no.
+- **Las imágenes NO son un lugar donde ahorrar**: se reenvían siempre (ver arriba). En la
+  caja de feedback de la Cola cada miniatura tiene su **📤** por si querés dejar alguna
+  afuera a propósito; las marcadas **✓ usar** se **incrustan igual**, viajen o no.
 - La **continuidad** con otros marcadores solo se inyecta si la instrucción lo pide
   (retomar/continuar/mismo estilo), no siempre.
 
@@ -208,6 +216,18 @@ Las imágenes van **numeradas** en orden, así las referenciás en la instrucci�
     codea, y se auto-audita con checklist; si declara `AUDIT: FALLA`, el motor
     pide UNA corrección dirigida (solo gasta llamada extra cuando hay falla).
     + build-context (prompt por marcador, lean en refinamiento, imágenes numeradas).
+    Lo que **no** dice es cómo llegan las imágenes, porque no lo sabe: eso depende de
+    quién atienda. Cuando lo afirmaba ("se adjuntan N imágenes a este mensaje"), con los
+    proveedores de línea de comandos le mentía al modelo — no hay adjuntos ahí, hay
+    archivos al lado — y el modelo salía a buscar un adjunto que no existía.
+  - `bridge/providers/` — un proveedor por backend, mismo contrato. Cada uno pone la
+    mitad del prompt que le corresponde: **cómo llegan las imágenes**. Los de API las
+    adjuntan al mensaje; los de línea de comandos (Claude Code, Cursor) no pueden, así
+    que las dejan en disco y lo dicen. El nombre del archivo es el número que usa el
+    editor (`imagen-1.png`), para que "usá la imagen 2" no necesite traducción, y se
+    nombra por **ruta absoluta**: el buscador del agente no indexa su directorio
+    temporal, así que con el nombre suelto a veces contestaba "no encuentro la imagen"
+    en vez de componer.
   - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`;
     `bridge/store/versions.js` — dueño único del esquema de nombres versionados
     (`<slug> vN [modelo].ext`): parse, formato, próxima versión y listados.

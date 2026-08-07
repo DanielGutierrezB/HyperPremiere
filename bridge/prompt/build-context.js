@@ -113,14 +113,18 @@ function buildUserPrompt(ctx) {
       'que la timeline cubra exactamente ese rango).'
   );
 
+  // Acá NO se dice cómo llegan las imágenes (adjuntas al mensaje o como archivos
+  // en disco): eso lo sabe el proveedor y lo agrega él. Cuando este texto lo
+  // afirmaba, con los proveedores de línea de comandos le mentía al modelo: le
+  // hablaba de adjuntos que no existían mientras los archivos estaban ahí al lado.
   if (stills > 0) {
-    parts.push('\n## Imágenes de referencia adjuntas');
+    parts.push('\n## Imágenes de referencia');
     parts.push(
-      `Se adjuntan ${stills} imagen(es) de referencia, como imágenes aparte de este mensaje. ` +
-        'Están NUMERADAS en el orden en que se envían: la 1ª es "imagen 1", la 2ª "imagen 2", etc. ' +
-        'Si la instrucción del editor menciona "imagen 1", "imagen 2", etc., se refiere EXACTAMENTE a ese orden. ' +
-        'Usalas para leer composición/paleta/zonas libres y ubicar los gráficos sin tapar lo importante ' +
-        '(salvo que estén marcadas para incrustar, ver sección de assets).'
+      `Con este pedido van ${stills} imagen(es) de referencia, NUMERADAS de 1 a ${stills} en ese orden: ` +
+        'cuando la instrucción del editor dice "imagen 1", es exactamente esa. ' +
+        'Miralas antes de diseñar — de ahí salen la composición del cuadro, la paleta y las zonas ' +
+        'libres donde el gráfico no tapa lo que importa ' +
+        '(salvo las marcadas para incrustar, ver la sección de assets).'
     );
   }
 

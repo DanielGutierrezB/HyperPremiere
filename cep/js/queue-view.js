@@ -231,12 +231,11 @@
     // actual (HPStore opera sobre ese contexto).
     var ctx = HPStore.getContext();
     if (j.seqName === ctx.sequenceName && j.projectPath === ctx.projectPath) {
-      // Selección de reenvío por imagen. Se inicializa una vez por apertura: las
-      // imágenes YA adjuntas quedan apagadas (no se reenvían → ahorro de tokens);
-      // las NUEVAS que agregues acá entran activas. Cada miniatura tiene su 📤.
-      HPStills.fbInit(j.id, j.markerKey);
+      // Selección de reenvío por imagen: todas activas, el 📤 apaga la que no
+      // quieras mandar. Se inicializa una vez por apertura de la caja.
+      HPStills.fbInit(j.id);
       var hint = document.createElement("div"); hint.className = "qj-fb-hint";
-      hint.textContent = "Estás refinando lo ya generado: las imágenes adjuntas NO se reenvían (📤 para reactivar la que necesites). Las nuevas que agregues se envían solas. Las ✓ usar se incrustan igual.";
+      hint.textContent = "Al refinar, las imágenes se envían otra vez: el modelo no recuerda la generación anterior. Usá 📤 si querés que alguna NO viaje. Las ✓ usar se incrustan igual.";
       fb.appendChild(hint);
       var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
       mnt.addEventListener("click", function (e) { e.stopPropagation(); });

@@ -25,26 +25,26 @@
   }
 
   // ── Selección de reenvío de imágenes en un feedback, por job ─────────
-  //   sel[jobId] = { base: <nº de stills al abrir>, sel: { index: bool } }
-  // Regla: imágenes existentes (index < base) NO se reenvían por defecto (gris);
-  // las nuevas (index >= base) SÍ. `sel[index]` guarda el override manual.
+  //   sel[jobId] = { sel: { index: bool } }   ← solo los apagados a mano
+  // Todas se reenvían por defecto. Antes las que ya estaban adjuntas venían
+  // apagadas, con la idea de que el modelo "ya las había visto"; no las ve: cada
+  // generación es una llamada sin memoria, y refinar sin el cuadro de referencia
+  // era rediseñar a ciegas. El 📤 queda para apagar alguna a propósito.
   var feedbackImgSel = {};
   function fbSend(jobId, index) {
     var rec = feedbackImgSel[jobId];
     if (!rec) return false;
     if (rec.sel[index] !== undefined) return rec.sel[index];
-    return index >= rec.base;
+    return true;
   }
   function fbToggle(jobId, index) {
     var rec = feedbackImgSel[jobId];
     if (!rec) return;
     rec.sel[index] = !fbSend(jobId, index);
   }
-  /** Registra la línea base del job (una vez por apertura de la caja de feedback). */
-  function fbInit(jobId, markerKey) {
-    if (feedbackImgSel[jobId] === undefined) {
-      feedbackImgSel[jobId] = { base: ((HPStore.getMarkerData(markerKey) || {}).stills || []).length, sel: {} };
-    }
+  /** Abre el estado de selección del job (una vez por apertura de la caja). */
+  function fbInit(jobId) {
+    if (feedbackImgSel[jobId] === undefined) feedbackImgSel[jobId] = { sel: {} };
   }
   /** Índices de las imágenes que quedaron activas (📤) para reenviar al modelo. */
   function fbCollect(jobId, markerKey) {

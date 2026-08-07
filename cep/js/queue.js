@@ -281,14 +281,17 @@
           segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
         // Stills (visión) + assets (a incrustar) = marcador + generales.
         job.payload.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
-        // Refinamiento (adjust): solo reenviamos como visión las imágenes que el editor
-        // dejó activas (stillsSend = índices en los stills del marcador). Ahorro de
-        // tokens. Los assets "usar" se incrustan en el render igual, se reenvíen o no.
+        // Las imágenes viajan en TODA generación, también al refinar: el modelo no
+        // recuerda la llamada anterior, así que una imagen que no se manda es una
+        // imagen que no existe para él. Lo único que se respeta es que el editor
+        // apague alguna a mano en la caja de feedback (stillsSend = índices en los
+        // stills DEL MARCADOR); las del prompt general van siempre, son la marca.
         if (job.payload.mode === "adjust" && Array.isArray(job.payload.stillsSend)) {
           var _all = md.stills || [];
           job.payload.stills = job.payload.stillsSend
             .map(function (ix) { return _all[ix]; })
-            .filter(function (s) { return !!s; });
+            .filter(function (s) { return !!s; })
+            .concat(gen.stills || []);
         } else {
           job.payload.stills = (md.stills || []).concat(gen.stills || []);
         }
@@ -639,8 +642,11 @@
         j.payload = j.payload || {};
         if (txt) {
           j.payload.adjustment = txt; j.payload.mode = "adjust"; j.kind = "feedback";
-          // Índices (en los stills del marcador) a reenviar como visión; [] = ninguno.
-          j.payload.stillsSend = Array.isArray(stillsSend) ? stillsSend : [];
+          // Índices (en los stills del marcador) que el editor dejó activos. Sin
+          // lista, van TODAS: quedarse sin referencias tiene que ser una decisión
+          // explícita suya, no lo que pasa cuando alguien no pasó el parámetro.
+          if (Array.isArray(stillsSend)) j.payload.stillsSend = stillsSend;
+          else delete j.payload.stillsSend;
         }
         else { j.payload.mode = "generate"; j.kind = "generate"; delete j.payload.stillsSend; }
         j.status = "queued"; j.pct = 0;

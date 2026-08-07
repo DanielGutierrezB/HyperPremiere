@@ -927,13 +927,6 @@
     return "Marcador " + n;
   }
 
-  // ¿El texto de un refinamiento se refiere a las imágenes adjuntas? Si NO las
-  // menciona, en un feedback podemos NO reenviarlas como visión (ahorro grande de
-  // tokens: las imágenes son lo más caro). Las imágenes marcadas "✓ usar" igual se
-  // incrustan en el gráfico por archivo, así que el logo/ícono sigue apareciendo.
-  var IMG_REF_RE = /(im[aá]genes?|logo|isotipo|logotipo|[íi]conos?|\bmarca\b|foto|captura|referenci|ilustraci)/i;
-  function feedbackNeedsImages(text) { return IMG_REF_RE.test(String(text || "")); }
-
   function createTranscriptSlice(marker) {
     var segments = HPStore.getTranscript();
     if (!segments || !segments.length) return null;
@@ -1154,14 +1147,14 @@
       background: !!data.background, draft: draftMode,
       markerSlug: markerKey, mode: mode
     };
-    if (mode === "adjust") {
-      payload.adjustment = data.instruction || "";
-      // Auto (sin UI por-imagen en la tarjeta): si la instrucción menciona imágenes,
-      // reenvía TODAS las del marcador; si no, ninguna (ahorro de tokens).
-      payload.stillsSend = feedbackNeedsImages(payload.adjustment)
-        ? (data.stills || []).map(function (_s, ix) { return ix; })
-        : [];
-    }
+    // Refinar NO reenviaba las imágenes salvo que el texto las nombrara, para
+    // ahorrar tokens. Eso daba por sentado que el modelo "ya las vio", y no es
+    // así: cada generación es una llamada nueva, sin memoria de la anterior. Lo
+    // único que viaja del pasado es el HTML previo. Así que al refinar el modelo
+    // rediseñaba a ciegas y se le iba la zona libre del cuadro y la paleta —
+    // justo lo que la referencia estaba ahí para sostener. Ahora viajan siempre;
+    // la selección por imagen sigue disponible en la caja de feedback de la Cola.
+    if (mode === "adjust") payload.adjustment = data.instruction || "";
     var job = {
       kind: mode === "generate" ? "generate" : "feedback",
       payload: payload, seqName: currentSequenceName, projectPath: currentProjectPath,
