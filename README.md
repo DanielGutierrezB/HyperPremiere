@@ -92,6 +92,25 @@ que estaba esquivando. Antes de cada llamada, el ⬇ Log dice qué entró ("Entr
 leer del disco** — con el proyecto en un disco externo desmontado, el panel te muestra la
 miniatura desde su caché y el modelo diseña sin ella, sin que nada lo delate.
 
+## Repetir el diseño de otro marcador
+
+Si un recurso te quedó como querías, **nombralo en la instrucción del siguiente**: "un
+título con el mismo diseño del **Marcador 3**". La herramienta detecta el número, busca la
+**última versión** de ese marcador en la secuencia y le manda **ese HTML entero** al
+modelo, junto con la consigna de repetir su sistema visual —paleta, tipografía, ritmo,
+transiciones— y cambiar solo el contenido. Podés nombrar más de uno ("los marcadores 2 y
+5"); van los dos y nada más.
+
+Nombrar un marcador **ya es pedir continuidad**: no hace falta ninguna otra palabra clave.
+Y si no nombrás a ninguno pero pedís continuidad en general ("mantené el mismo estilo"),
+sigue el comportamiento viejo: entran los primeros marcadores que quepan en un presupuesto
+chico, recortados.
+
+El ⬇ Log te dice cuál se usó de referencia (`sigue el diseño de Marcador 3 v4`) y **te
+avisa si el marcador que nombraste todavía no tiene ninguna versión generada** — antes eso
+se generaba igual y parecía que la referencia se había ignorado. Cuesta ~1.100 tokens
+extra, solo cuando lo usás.
+
 ## Fondo, modo borrador y calidad
 
 - Un marcador se genera **sin fondo** (`.mov` con **alpha**, transparente) o **con fondo**
@@ -112,7 +131,9 @@ miniatura desde su caché y el modelo diseña sin ella, sin que nada lo delate.
   caja de feedback de la Cola cada miniatura tiene su **📤** por si querés dejar alguna
   afuera a propósito; las marcadas **✓ usar** se **incrustan igual**, viajen o no.
 - La **continuidad** con otros marcadores solo se inyecta si la instrucción lo pide
-  (retomar/continuar/mismo estilo), no siempre.
+  (retomar/continuar/mismo estilo, o nombrar un marcador), no siempre. Nombrando el
+  marcador gastás **más por recurso pero en el correcto**: va uno entero (~3k tok) en vez
+  de dos ajenos recortados a la mitad.
 
 ## La cola
 

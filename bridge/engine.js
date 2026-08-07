@@ -662,15 +662,33 @@ async function prepareGeneration(body, mode, onProgress) {
   // Continuidad: SOLO inyectar el HTML de otros marcadores si la instrucción
   // realmente pide continuar/retomar/mantener estilo (ahorra tokens y latencia;
   // antes se mandaba siempre, hasta 12k chars por generación).
+  //
+  // Nombrar un marcador ya ES pedir continuidad: "basate en el marcador 2" no
+  // tiene ninguna de las palabras de la lista y es el pedido más explícito que
+  // existe. Antes eso no disparaba nada, y cuando sí disparaba mandaba los dos
+  // primeros marcadores por orden alfabético, que rara vez eran el que pediste.
   const contHint = ((instruction || '') + ' ' + (adjustment || '')).toLowerCase();
-  const wantsContinuity = /(retom|continu|anterior|sigu|mism[oa]|coheren|igual que|como (el|la)|estilo|empalm|coincid|en línea con|misma línea)/.test(contHint);
+  const nombrados = referencedMarkerNumbers(contHint);
+  const wantsContinuity = nombrados.length > 0 ||
+    /(retom|continu|anterior|sigu|mism[oa]|coheren|igual que|como (el|la)|estilo|empalm|coincid|en línea con|misma línea)/.test(contHint);
+  let continuidadNota = 'sin continuidad';
+  let continuidadFaltan = [];
   if (wantsContinuity) {
-    const others = listOtherResources(baseDir, markerSlug);
-    if (others.length) {
-      userPrompt += '\n\n## Otros recursos ya generados en esta clase (referencia de continuidad y estilo)\n' +
-        'Mantené coherencia con estos (tu instrucción pide continuar/retomar):\n' +
-        others.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
+    const others = listOtherResources(baseDir, markerSlug, nombrados);
+    if (others.items.length) {
+      const dirigido = nombrados.length > 0;
+      userPrompt += '\n\n## ' + (dirigido
+        ? 'El diseño que te pidieron seguir (mismo estilo, otro contenido)\n' +
+          'El editor nombró este recurso: seguí SU sistema visual —paleta, tipografía, ritmo, ' +
+          'tipo de transiciones y disposición— y cambiá solo lo que pida su instrucción y el ' +
+          'contenido de este tramo. No lo copies literal: es la misma familia, no el mismo cartel.\n'
+        : 'Otros recursos ya generados en esta clase (referencia de continuidad y estilo)\n' +
+          'Mantené coherencia con estos (tu instrucción pide continuar/retomar):\n') +
+        others.items.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
+      continuidadNota = (dirigido ? 'sigue el diseño de ' : 'continuidad con ') +
+        others.items.map((o) => o.slug).join(' + ');
     }
+    continuidadFaltan = others.missing;
   }
 
   const provider = getProvider(config.provider);
@@ -690,7 +708,17 @@ async function prepareGeneration(body, mode, onProgress) {
     'instrucción ' + ((instruction || '').trim() ? 'sí' : 'NO'),
     'prompt general ' + ((body.generalInstruction || '').trim() ? 'sí' : 'no'),
     resourcesList.length + ' recursos',
+    continuidadNota,
   ].join(' · ') });
+  // Pediste seguir un marcador que todavía no tiene nada generado: sin este
+  // aviso, la generación sale igual y parece que la referencia no se respetó.
+  if (continuidadFaltan.length) {
+    report({
+      level: 'WARN',
+      note: 'Pediste seguir el diseño del Marcador ' + continuidadFaltan.join(' y el ') +
+        ', pero todavía no tiene ninguna versión generada en esta secuencia: se diseña sin esa referencia.',
+    });
+  }
   // Una referencia que el editor adjuntó y no llegó es un modo de falla mudo: el
   // panel muestra la miniatura (la sacó de su propia caché) y el modelo diseña
   // sin ella. Pasa cuando el disco del proyecto no está montado o se movió.
@@ -858,24 +886,82 @@ function loginClaudeCancel() {
 
 const REPO_ROOT = path.join(__dirname, '..');
 
-// Junta el HTML de la última versión de los OTROS marcadores ya generados en
-// esta clase, para dar continuidad (retomar/continuar lo hecho en otro marcador).
-function listOtherResources(baseDir, currentSlug) {
-  const bySlug = groupBySlug(baseDir, ['.html']);
+// Números de marcador que el editor nombró en su instrucción ("seguí el estilo
+// del marcador 3", "como los marcadores 2 y 5"). Se exige la palabra "marcador"
+// pegada al número: un número suelto casi siempre es del contenido de la clase
+// ("los 3 pasos"), no una referencia.
+function referencedMarkerNumbers(text) {
   const out = [];
-  let budget = 6000; // tope total de chars para no inflar tokens
-  for (const slug of Object.keys(bySlug)) {
-    if (slug === currentSlug) continue;
-    if (budget <= 0) break;
+  const re = /marcador(?:es)?\s*(?:n[°ºo]\.?\s*)?(\d+(?:\s*(?:,|y|&)\s*\d+)*)/gi;
+  let m;
+  while ((m = re.exec(String(text || '')))) {
+    for (const n of m[1].split(/\s*(?:,|y|&)\s*/)) {
+      const v = parseInt(n, 10);
+      if (v > 0 && out.indexOf(v) === -1) out.push(v);
+    }
+  }
+  return out;
+}
+
+// Qué slug de los que hay en disco es "el marcador n". Lo normal es que la
+// herramienta los haya nombrado ella ("Marcador 3"); un marcador renombrado en
+// Premiere puede traer otro texto, y ahí alcanza con que termine en ese número
+// ("Paso 3"). El nombre canónico gana siempre, para que "Marcador 3" no pierda
+// contra un "Paso 3" que estaba antes en la lista.
+function findMarkerSlug(slugs, n) {
+  const canonico = new RegExp('^marcador\\s*0*' + n + '$', 'i');
+  const termina = new RegExp('(^|[^0-9])0*' + n + '$');
+  return slugs.find((s) => canonico.test(String(s).trim())) ||
+    slugs.find((s) => termina.test(String(s).trim()));
+}
+
+// Junta el HTML de la última versión de OTROS marcadores de esta clase, para dar
+// continuidad. Dos modos:
+//
+// - Con marcadores NOMBRADOS (`wanted`): van esos y nada más, y van ENTEROS. Si
+//   pediste el estilo del 3, mandarle además el 1 y el 2 no es contexto, es
+//   ruido caro; y recortarlo a la mitad le esconde justo el final del script,
+//   que es donde vive el movimiento que querés repetir.
+// - Sin nombrar ninguno ("mantené el mismo estilo", a secas): los primeros que
+//   entren en un presupuesto chico, como antes.
+//
+// Devuelve { items, missing }: `missing` son los números que pediste y todavía
+// no tienen ningún diseño generado, para poder avisarlo en vez de ignorarlo.
+function listOtherResources(baseDir, currentSlug, wanted) {
+  const bySlug = groupBySlug(baseDir, ['.html']);
+  const slugs = Object.keys(bySlug).filter((s) => s !== currentSlug);
+  const items = [];
+  const missing = [];
+
+  function push(slug, maxChars) {
     const latest = bySlug[slug][bySlug[slug].length - 1]; // orden ascendente → última
     try {
       let html = fs.readFileSync(path.join(baseDir, latest.name), 'utf8');
-      if (html.length > 4000) html = html.slice(0, 4000) + '\n<!-- …(recortado)… -->';
-      budget -= html.length;
-      out.push({ slug: slug + ' v' + latest.version, html: html });
-    } catch (e) {}
+      if (html.length > maxChars) html = html.slice(0, maxChars) + '\n<!-- …(recortado)… -->';
+      items.push({ slug: slug + ' v' + latest.version, html: html });
+      return html.length;
+    } catch (e) { return 0; }
   }
-  return out;
+
+  const pedidos = Array.isArray(wanted) ? wanted : [];
+  if (pedidos.length) {
+    for (const n of pedidos) {
+      // Nombrarse a sí mismo ("el marcador 3" estando en el 3) no es continuidad
+      // ni es un error: su propio HTML ya viaja aparte en el refinamiento.
+      if (findMarkerSlug([currentSlug], n)) continue;
+      const slug = findMarkerSlug(slugs, n);
+      if (slug) push(slug, 12000); // tope alto: que entre entero, pero acotado
+      else missing.push(n);
+    }
+    return { items: items, missing: missing };
+  }
+
+  let budget = 6000; // tope total de chars para no inflar tokens
+  for (const slug of slugs) {
+    if (budget <= 0) break;
+    budget -= push(slug, 4000);
+  }
+  return { items: items, missing: missing };
 }
 
 // Lee un PNG (el frame capturado por host.jsx) y lo devuelve como dataURL.
@@ -1441,4 +1527,7 @@ module.exports = {
   checkUpdate,
   selfUpdate,
   saveCapture,
+  // Expuestos para los tests de continuidad (qué diseño se manda como referencia).
+  _referencedMarkerNumbers: referencedMarkerNumbers,
+  _listOtherResources: listOtherResources,
 };

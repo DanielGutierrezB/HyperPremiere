@@ -1227,7 +1227,9 @@
 
     var instruction = document.createElement("textarea");
     instruction.className = "marker-instruction";
-    instruction.placeholder = "¿Qué querés que haga la IA en este marcador?";
+    // La segunda línea no es decorativa: nombrar un marcador ("como el Marcador 3")
+    // le manda ese diseño entero al modelo, y no hay otra forma de enterarse.
+    instruction.placeholder = "¿Qué querés que haga la IA en este marcador?\nTip: “con el mismo diseño del Marcador 3” usa ese recurso como referencia.";
     // Si el marcador trae un comentario en Premiere y todavía no escribiste una
     // instrucción, lo usamos como punto de partida (y lo guardamos).
     var initialInstruction = HPStore.getMarkerData(markerKey).instruction;
