@@ -27,8 +27,17 @@ const { ensureOutputDir } = require('./store/project-fs');
 
 const IS_WIN = process.platform === 'win32';
 
-// Modelo por defecto; se puede cambiar por máquina sin tocar código.
-const WHISPER_MODEL = process.env.HYPERPREMIERE_WHISPER_MODEL || 'large-v3';
+// Modelo por defecto, según lo que la máquina puede sostener.
+//
+// En Mac (mlx, GPU de Apple Silicon) large-v3 corre rápido y es el más preciso.
+// Fuera de Mac casi siempre se transcribe en CPU, y ahí large-v3 va a un RTF de
+// ~2,5: una clase de una hora tarda dos horas y media, o sea que no se usa.
+// large-v3-turbo tiene 809M de parámetros contra 1550M y va ~4× más rápido; en
+// español la diferencia medida es de 0,4 puntos de WER (2,9% → 3,3%), que para
+// un transcript que sirve de CONTEXTO —no de subtítulo en pantalla— no se nota.
+// Lo único que turbo no sabe hacer es traducir, y acá nunca se traduce.
+const DEFAULT_WHISPER_MODEL = process.platform === 'darwin' ? 'large-v3' : 'large-v3-turbo';
+const WHISPER_MODEL = process.env.HYPERPREMIERE_WHISPER_MODEL || DEFAULT_WHISPER_MODEL;
 // Watchdog de INACTIVIDAD de whisper: si pasa este lapso sin NINGUNA salida,
 // está colgado y se mata (la carga del modelo y la transcripción imprimen
 // algo con regularidad; 15 min mudo no es normal).
@@ -50,18 +59,26 @@ function cancelTranscription() {
 
 // Herramientas soportadas, ordenadas por VELOCIDAD (rápidas primero). El CLI
 // clásico `whisper` (openai) corre en CPU y con large-v3 es LENTO (varios
-// minutos por clase); los otros dos son mucho más rápidos con la misma calidad:
+// minutos por clase); los otros son mucho más rápidos con la misma calidad:
 //   - mlx_whisper: GPU de Apple Silicon (Metal/MLX) — el más rápido en Mac M.
-//   - whisper-ctranslate2: faster-whisper (CTranslate2, int8) — ~4× en CPU,
-//     multiplataforma; flags compatibles con openai-whisper.
+//   - faster-whisper-xxl: el ejecutable standalone de Purfview. Es la mejor
+//     opción en Windows y por lejos la más fácil de instalar: no necesita
+//     Python ni que el editor pelee con cuBLAS/cuDNN (trae las librerías
+//     adentro), detecta CUDA solo y baja el modelo solo. Se descomprime y anda.
+//   - whisper-ctranslate2: el mismo motor (faster-whisper) pero por pip — ~4×
+//     en CPU, multiplataforma; flags compatibles con openai-whisper.
 //   - whisper: openai, CPU puro — último recurso (lo que la mayoría ya tiene).
 // `fast:true` marca los backends acelerados (para el indicador del panel).
 // Se puede forzar uno con HYPERPREMIERE_WHISPER_BIN=<nombre>.
 const TOOLS = [
   { bin: 'mlx_whisper', style: 'mlx', fast: true },
+  { bin: 'faster-whisper-xxl', style: 'fwxxl', fast: true },
   { bin: 'whisper-ctranslate2', style: 'ct2', fast: true },
   { bin: 'whisper', style: 'openai', fast: false },
 ];
+
+// De dónde se baja el standalone que recomendamos fuera de Mac.
+const FWXXL_URL = 'https://github.com/Purfview/whisper-standalone-win/releases';
 
 // mlx_whisper no entiende alias tipo "large-v3": mapear a su repo de HF.
 const MLX_MODELS = {
@@ -253,6 +270,16 @@ function whisperArgs(tool, inputPath, outDir, opts) {
     const model = MLX_MODELS[WHISPER_MODEL] || WHISPER_MODEL;
     return [inputPath, '--model', model, '--output-dir', outDir, '--output-format', 'json'].concat(extra);
   }
+  if (tool.style === 'fwxxl') {
+    // Ejecutable standalone de Purfview. Mismo motor y mismos flags que ct2,
+    // más dos que solo tiene él y que acá son obligatorios:
+    //   --print_progress: por defecto manda el avance a la BARRA DE TÍTULO de
+    //     la consola, no a stdout. Sin esto nuestro watchdog no ve salida y a
+    //     los 15 minutos mata una transcripción que iba perfecta.
+    //   --beep_off: al terminar hace sonar un beep. Adentro de Premiere, no.
+    return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
+      '--compute_type', 'int8', '--verbose', 'True', '--print_progress', '--beep_off'].concat(extra);
+  }
   if (tool.style === 'ct2') {
     // whisper-ctranslate2 (faster-whisper): flags estilo openai + int8 en CPU
     // (rápido y buena calidad). Detecta idioma solo si no se pasa --language.
@@ -325,8 +352,11 @@ async function transcribeMedia(body, onProgress) {
   if (!tool) {
     return {
       ok: false,
-      error: 'No encontré Whisper en el PATH. Instalá el CLI clásico (pip install openai-whisper) ' +
-        'o mlx-whisper en Apple Silicon (pip install mlx-whisper) y reintentá.',
+      error: 'No encontré Whisper en el PATH. ' + (process.platform === 'darwin'
+        ? 'En Apple Silicon: `pip install mlx-whisper` (rápido) o `pip install openai-whisper`.'
+        : 'Bajá Faster-Whisper-XXL de ' + FWXXL_URL + ', descomprimilo y dejá esa carpeta en el PATH ' +
+          '(es un ejecutable suelto: no hace falta Python). Alternativa: `pip install whisper-ctranslate2`.') +
+        ' Después reintentá.',
     };
   }
 
@@ -587,11 +617,11 @@ async function whisperStatus() {
   if (tool && !tool.fast) {
     out.recommend = (process.platform === 'darwin')
       ? 'Tenés el whisper de openai (CPU, lento). En Apple Silicon, `pip install mlx-whisper` es varias veces más rápido con la misma calidad.'
-      : 'Tenés el whisper de openai (CPU, lento). `pip install whisper-ctranslate2` (faster-whisper) es ~4× más rápido con la misma calidad.';
+      : 'Tenés el whisper de openai (CPU, lento). Bajá Faster-Whisper-XXL (' + FWXXL_URL + '): es un ejecutable, no necesita Python, usa la GPU si hay NVIDIA y va varias veces más rápido con la misma calidad.';
   } else if (!tool) {
     out.recommend = (process.platform === 'darwin')
       ? 'Instalá uno local: `pip install mlx-whisper` (rápido en Apple Silicon) o `pip install openai-whisper`.'
-      : 'Instalá uno local: `pip install whisper-ctranslate2` (rápido) o `pip install openai-whisper`.';
+      : 'Bajá Faster-Whisper-XXL (' + FWXXL_URL + '), descomprimilo y dejá la carpeta en el PATH: es un ejecutable suelto, sin Python. Alternativa por pip: `pip install whisper-ctranslate2`.';
   }
   return out;
 }
@@ -599,4 +629,7 @@ async function whisperStatus() {
 module.exports = {
   transcribeMedia, detectWhisper, cancelTranscription, whisperStatus,
   stripRepetitionLoops, trailingSilenceStart,
+  // Expuestos para el test de Windows (qué modelo y qué flags según plataforma).
+  _whisperArgs: whisperArgs,
+  _model: () => WHISPER_MODEL,
 };

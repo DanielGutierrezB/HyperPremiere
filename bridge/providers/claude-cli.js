@@ -89,13 +89,29 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
 
   // --output-format json => stdout es un objeto JSON con .result (texto) y
   // .usage (tokens) + .total_cost_usd. Así podemos contar el gasto real.
-  const args = ['-p', prompt, '--output-format', 'json'];
+  const args = ['-p', '--output-format', 'json'];
   if (model) args.push('--model', model);
   // Nivel de pensamiento. Diseñar una animación es trabajo de razonamiento, así
   // que es la palanca de calidad. Un valor desconocido el CLI solo lo advierte
   // y sigue con el default, no rompe la generación.
   if (cfg.effort) args.push('--effort', String(cfg.effort));
-  if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
+
+  // Cómo viaja el prompt. En mac/Linux va como argumento, que es lo probado en
+  // producción. En Windows NO PUEDE: con shell (obligatorio para el shim .cmd)
+  // la línea entera pasa por cmd.exe, que la corta a los 8191 caracteres — y
+  // solo el system prompt ya son 12.500. Ahí el prompt entra por STDIN, que el
+  // CLI acepta cuando -p viene sin texto, y el system prompt se antepone al de
+  // usuario (lo mismo que hace el proveedor de Cursor).
+  const viaStdin = cfg.promptViaStdin !== undefined
+    ? !!cfg.promptViaStdin
+    : process.platform === 'win32';
+  let input;
+  if (viaStdin) {
+    input = systemPrompt ? (String(systemPrompt).trim() + '\n\n---\n\n' + prompt) : prompt;
+  } else {
+    args.splice(1, 0, prompt); // "-p <prompt>"
+    if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
+  }
 
   try {
     // Token OAuth de suscripción: desde config (botón "Iniciar sesión") o del entorno.
@@ -104,7 +120,9 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     if (oauth) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauth;
 
     // shell solo en Windows (shim .cmd); en mac/Linux args por array sin shell.
-    const r = await run(bin, args, { timeoutMs, env: childEnv, shell: process.platform === 'win32' });
+    const r = await run(bin, args, {
+      timeoutMs, env: childEnv, input, shell: process.platform === 'win32',
+    });
     if (r.timedOut) {
       throw new Error(`claude-cli: timeout tras ${timeoutMs}ms`);
     }

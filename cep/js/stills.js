@@ -58,11 +58,21 @@
   function fbClear(jobId) { delete feedbackImgSel[jobId]; }
 
   // Fuente para el <img> del thumbnail: data URL tal cual, o ruta de archivo
-  // (captura guardada en disco) servida por file:// (encodeURI para espacios).
+  // (captura guardada en disco) servida por file://.
+  //
+  // La ruta hay que convertirla a URL, no concatenarla. En Windows es
+  // "C:\Users\…\captura.png" y pegarle "file://" daba "file://C:%5CUsers…",
+  // que Chromium no carga: hace falta "file:///C:/Users/…" con barras normales
+  // y la barra extra de la raíz. En mac funcionaba de casualidad, porque la
+  // ruta ya empieza con "/". Las miniaturas igual viajaban al modelo (eso lee
+  // del disco); lo que no se veía era la imagen en el panel.
   function stillThumbSrc(s) {
     s = String(s || "");
     if (/^data:/i.test(s) || /^file:\/\//i.test(s)) return s;
-    return "file://" + encodeURI(s);
+    var p = s.replace(/\\/g, "/");
+    if (p.charAt(0) !== "/") p = "/" + p;
+    // encodeURI deja pasar # y ?, que en una URL cortarían la ruta.
+    return "file://" + encodeURI(p).replace(/#/g, "%23").replace(/\?/g, "%3F");
   }
 
   function renderStills(container, markerKey, fbJobId) {
@@ -357,6 +367,8 @@
     // Selección de reenvío en feedback (dueño del estado por job):
     fbInit: fbInit,
     fbCollect: fbCollect,
-    fbClear: fbClear
+    fbClear: fbClear,
+    // Expuesta para el test de Windows (armado de la URL file://).
+    stillThumbSrc: stillThumbSrc
   };
 })(typeof window !== "undefined" ? window : this);

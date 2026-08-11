@@ -11,6 +11,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { killTree, quoteForShell } = require('../exec');
+
 // Watchdog de INACTIVIDAD (no un tope total): matamos el render solo si pasa
 // este lapso sin NINGUNA salida del CLI. Así un render lento pero vivo (marcador
 // largo en máquina modesta, captura por software) no se mata por tardar; solo
@@ -305,12 +307,22 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
       } else {
         delete childEnv.PRODUCER_BROWSER_GPU_MODE;
       }
-      const child = spawn(bin, args, {
-        cwd: workDir,
-        env: childEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: isWin, // Windows: el shim .cmd/npx necesita shell
-      });
+      // Windows: el shim .cmd/npx necesita shell, y con shell spawn concatena
+      // sin escapar. La ruta de salida SIEMPRE trae espacios ("Marcador 1 v2
+      // [modelo].mov"), así que sin entrecomillar el CLI recibiría el nombre
+      // partido en pedazos y ningún render terminaría bien.
+      const child = spawn(
+        isWin ? quoteForShell(bin) : bin,
+        isWin ? args.map(quoteForShell) : args,
+        {
+          cwd: workDir,
+          env: childEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: isWin,
+          // Líder de grupo en POSIX → killTree se lleva también los Chromium.
+          detached: !isWin,
+        }
+      );
 
       let stderr = '';
       let stdout = '';
@@ -323,7 +335,9 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
         idleTimer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          child.kill('SIGKILL');
+          // killTree y no child.kill: con shell el hijo directo es cmd.exe, y
+          // matarlo a él deja vivos el Node del CLI y sus Chromium.
+          killTree(child);
           const idleSec = Math.round((Date.now() - lastOutputAt) / 1000);
           reject(Object.assign(new Error(
             `hyperframes: sin actividad por ${idleSec}s (watchdog ${IDLE_TIMEOUT_MS / 1000}s) — ` +

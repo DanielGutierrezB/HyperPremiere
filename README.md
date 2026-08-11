@@ -20,14 +20,15 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    pulsás **Cargar marcadores** → una **tarjeta** por marcador.
 2. Le das **contexto**: el **Objetivo de la clase** y el transcript. Lo más directo es
    **🎙 Transcribir esta secuencia**: Premiere exporta el audio de la secuencia a un
-   **.wav temporal** (mono 16 kHz), lo transcribe con tu **Whisper local** (large-v3,
-   sin nube ni tokens) y lo **borra**. Detecta el idioma solo (sirve mezclando español
+   **.wav temporal** (mono 16 kHz), lo transcribe con tu **Whisper local** (sin nube ni
+   tokens) y lo **borra**. Detecta el idioma solo (sirve mezclando español
    e inglés) y, como transcribe la *mezcla de la secuencia*, los tiempos ya coinciden
    con el timeline: **desfase 0**, sin ajustes a mano.
    Si la secuencia termina con una cola sin narración (overlays, cierre), se recorta
    antes de transcribir: ahí Whisper alucina y entra en **bucle** repitiendo la última
-   frase. Por si igual aparece, las repeticiones se colapsan al guardar y al importar. Requiere `whisper` (pip install openai-whisper) o
-   `mlx_whisper` en el PATH; el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
+   frase. Por si igual aparece, las repeticiones se colapsan al guardar y al importar.
+   Requiere un Whisper local en el PATH (ver **Requisitos**: `mlx_whisper` en Mac,
+   Faster-Whisper-XXL en Windows); el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
    También podés **cargar un transcript JSON**: si viene del video original y editaste
    el timeline, corregí el corrimiento con **Desfase (s)** o **Detectar del timeline**
    (los fragmentos se actualizan en vivo; se guarda por secuencia).
@@ -291,11 +292,45 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   copiás el **código** que te muestra la página y lo pegás en el panel. Requiere el CLI
   `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)
   en "…o pegá el token directamente" (corré `claude setup-token` en tu terminal y copialo).
-- **Transcripción local (🎙, opcional):** para máxima velocidad, en Apple Silicon
-  `pip install mlx-whisper`; multiplataforma `pip install whisper-ctranslate2` (faster-whisper).
-  El CLI clásico `pip install openai-whisper` funciona pero es lento en CPU. La herramienta
-  elige el más rápido que encuentre; forzá uno con `HYPERPREMIERE_WHISPER_BIN` y el modelo
-  con `HYPERPREMIERE_WHISPER_MODEL` (default `large-v3`).
+- **Transcripción local (🎙, opcional):** en **Mac (Apple Silicon)**, `pip install mlx-whisper`:
+  usa la GPU y es lo más rápido. En **Windows**, bajá
+  [Faster-Whisper-XXL](https://github.com/Purfview/whisper-standalone-win/releases),
+  descomprimilo y dejá esa carpeta en el PATH — es un **ejecutable suelto**: no hace falta
+  Python ni pelearse con CUDA (trae las librerías adentro, detecta la placa NVIDIA solo y
+  baja el modelo solo). Alternativa por pip en cualquier sistema:
+  `pip install whisper-ctranslate2`. El CLI clásico `pip install openai-whisper` funciona
+  pero es lento en CPU. La herramienta elige el más rápido que encuentre; forzá uno con
+  `HYPERPREMIERE_WHISPER_BIN` y el modelo con `HYPERPREMIERE_WHISPER_MODEL`.
+  El modelo por defecto **depende del sistema**: `large-v3` en Mac (la GPU de Apple lo
+  banca sin despeinarse) y `large-v3-turbo` fuera de Mac, que es ~4× más rápido con
+  prácticamente la misma calidad — sin eso, una clase de una hora en una notebook sin
+  placa dedicada tarda demasiado.
+
+## Windows
+
+El panel corre en Windows, pero **el sistema operativo cambia cosas que se notan**. Lo que
+hay que saber, y lo que la herramienta ya resuelve sola:
+
+- **Instalar las herramientas externas.** Node 18+, ffmpeg y el Whisper de arriba. Lo más
+  cómodo es `winget install OpenJS.NodeJS.LTS` y `winget install Gyan.FFmpeg`, o bajar
+  ffmpeg a mano y dejarlo en `C:\ffmpeg\bin`.
+- **El PATH que ve el panel no es el tuyo.** Premiere arranca desde el Explorador y le pasa
+  al panel un entorno recortado: aunque en tu consola `ffmpeg` funcione, adentro del panel
+  puede "no existir". Por eso, en Windows el motor **agrega solo** los lugares donde esas
+  cosas suelen estar (`%APPDATA%\npm`, `Program Files\nodejs`, los `Scripts` de cada Python
+  instalado, chocolatey, scoop, `C:\ffmpeg\bin`). Se agregan **al final**, así que si tenés
+  una versión propia en el PATH, esa gana.
+- **Las rutas con espacios ya no rompen nada.** `C:\Users\Juan Pérez\...` o
+  `Marcador 1 v2 [claude-sonnet-5].mov` se pasan entre comillas al lanzar cada proceso.
+- **Los CLI de Claude y Cursor reciben el prompt por la entrada estándar.** En Windows hay
+  que invocarlos a través de `cmd.exe` (son `.cmd`), y ahí la línea de comandos **se corta a
+  los 8191 caracteres**: un prompt con transcript y contexto los pasa de largo. Mandarlo por
+  stdin evita el límite y de paso cualquier problema de comillas.
+- **Render:** la aceleración por GPU del H.264 es de Mac (VideoToolbox), así que en Windows
+  el MP4 se codifica por software. El **ProRes con alpha**, que es el que se usa para llevar
+  a Premiere, no cambia: sale idéntico en las dos plataformas.
+- **Instalación en modo desarrollo:** `scripts/install-dev.sh` es solo para Mac. En Windows,
+  usá el **ZXP** (Opción A).
 
 ## Instalación
 

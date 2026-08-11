@@ -119,14 +119,24 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     ? (String(systemPrompt).trim() + '\n\n---\n\n' + userPrompt)
     : userPrompt) + imagesAsFilesNote(ws.names.map((n) => path.join(ws.dir, n)));
 
+  // En Windows el prompt NO puede ir como argumento: con shell (que el shim
+  // .cmd exige) la línea pasa por cmd.exe, que la corta a los 8191 caracteres,
+  // y acá el prompt son decenas de miles. Por stdin no hay tope; el CLI lo lee
+  // cuando -p viene sin texto.
+  const viaStdin = cfg.promptViaStdin !== undefined
+    ? !!cfg.promptViaStdin
+    : process.platform === 'win32';
+  const input = viaStdin ? prompt : undefined;
+
   const args = [
-    '-p', prompt,
+    '-p',
     '--output-format', 'json',
     '--mode', 'ask',   // solo lectura: que no escriba archivos ni corra comandos
     '--trust',         // headless lo exige; el workspace es nuestro temp, no el proyecto
     '--model', useModel,
     '--workspace', ws.dir,
   ];
+  if (!viaStdin) args.splice(1, 0, prompt);
 
   try {
     const childEnv = Object.assign({}, process.env);
@@ -135,7 +145,8 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     let lastErr = '';
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const r = await run(bin, args, {
-        timeoutMs, env: childEnv, cwd: ws.dir, shell: process.platform === 'win32',
+        timeoutMs, env: childEnv, cwd: ws.dir, input,
+        shell: process.platform === 'win32',
       });
 
       if (r.timedOut) throw new Error(`cursor-cli: timeout tras ${timeoutMs}ms`);

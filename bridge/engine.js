@@ -47,17 +47,58 @@ const { versionFile, nextVersion, listVersions, groupBySlug } = require('./store
 const IS_WIN = process.platform === 'win32';
 
 // CEP corre Node con un PATH mínimo (apps de GUI no heredan el shell).
-// En mac/Linux prependemos las rutas típicas de claude/ffmpeg/node/git. En
-// Windows el instalador ya deja esos binarios en el PATH del sistema, así que
-// no tocamos nada (evita romper el PATH de Windows con separadores unix).
-(function ensurePath() {
-  if (IS_WIN) return;
+// Las apps de GUI arrancan con un PATH mínimo, así que el panel no ve los
+// binarios que el editor sí tiene (ffmpeg, node/npm, git, claude, whisper).
+// Pasa igual en mac y en Windows: la idea de que "en Windows el instalador ya
+// los deja en el PATH" no se sostiene — pip mete sus scripts en un directorio
+// con el número de versión adentro y npm en %APPDATA%\npm, y ninguno de los dos
+// llega al proceso de Premiere de forma confiable.
+//
+// Diferencia entre plataformas: en mac las rutas van ADELANTE (son las
+// canónicas de Homebrew y compañía); en Windows van ATRÁS, porque son conjeturas
+// sobre dónde pudo instalarse cada cosa y no queremos tapar lo que el editor
+// eligió a propósito.
+
+// Directorios donde Windows suele dejar lo que necesitamos. Solo conjeturas:
+// se filtran por existencia antes de entrar al PATH.
+function windowsExtraPaths() {
   const home = os.homedir();
-  const extra = ['/opt/homebrew/bin', path.join(home, '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
-  const current = (process.env.PATH || '').split(':').filter(Boolean);
+  const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const out = [
+    path.join(appData, 'npm'),                              // binarios globales de npm (claude.cmd)
+    path.join(programFiles, 'nodejs'),
+    path.join(programFiles, 'Git', 'cmd'),
+    path.join(localAppData, 'Programs', 'cursor-agent'),
+    path.join(localAppData, 'Microsoft', 'WindowsApps'),
+    'C:\\ProgramData\\chocolatey\\bin',                     // choco
+    path.join(home, 'scoop', 'shims'),                      // scoop
+    'C:\\ffmpeg\\bin',                                      // la descarga manual de siempre
+  ];
+  // pip deja los ejecutables en un directorio con la versión en el nombre
+  // (…\Python313\Scripts), así que hay que mirar qué hay en vez de adivinar.
+  for (const base of [path.join(localAppData, 'Programs', 'Python'), path.join(appData, 'Python')]) {
+    try {
+      for (const d of fs.readdirSync(base)) {
+        if (/^Python\d+/i.test(d)) out.push(path.join(base, d, 'Scripts'));
+      }
+    } catch (e) {}
+  }
+  return out;
+}
+
+(function ensurePath() {
+  const home = os.homedir();
+  const sep = IS_WIN ? ';' : ':';
+  const extra = IS_WIN
+    ? windowsExtraPaths().filter((p) => { try { return fs.existsSync(p); } catch (e) { return false; } })
+    : ['/opt/homebrew/bin', path.join(home, '.local/bin'), '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  const current = (process.env.PATH || '').split(sep).filter(Boolean);
+  const ordered = IS_WIN ? current.concat(extra) : extra.concat(current);
   const merged = [];
-  for (const p of extra.concat(current)) if (p && merged.indexOf(p) === -1) merged.push(p);
-  process.env.PATH = merged.join(':');
+  for (const p of ordered) if (p && merged.indexOf(p) === -1) merged.push(p);
+  process.env.PATH = merged.join(sep);
 })();
 
 const SYSTEM_PROMPT_PATH = path.join(__dirname, 'prompt', 'system.md');
@@ -1530,4 +1571,6 @@ module.exports = {
   // Expuestos para los tests de continuidad (qué diseño se manda como referencia).
   _referencedMarkerNumbers: referencedMarkerNumbers,
   _listOtherResources: listOtherResources,
+  // Expuesto para el test de Windows (dónde busca los binarios que CEP no ve).
+  _windowsExtraPaths: windowsExtraPaths,
 };
