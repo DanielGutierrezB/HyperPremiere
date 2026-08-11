@@ -68,10 +68,21 @@ function auditFixPrompt(userPrompt, html, falla) {
  * @param {string[]} a.images    Stills para visión.
  * @param {number} a.durationSec Duración del marcador (la verdad para data-duration).
  * @param {string} a.markerSlug  Respaldo para el id de la composición.
- * @param {function} [a.report]  onProgress({ pct, msg, note, level }).
+ * @param {function} [a.report]  onProgress({ pct, msg, note, level, act }).
  */
 async function composeAnimation(a) {
   const report = typeof a.report === 'function' ? a.report : function () {};
+  // Estado en vivo de lo que el modelo está haciendo AHORA. Va en su propio
+  // campo del sobre (`act`) y no en `msg`: el mensaje dice en qué etapa de la
+  // escalera estamos —que cambia tres veces— y esto se refresca cada segundo.
+  // Los proveedores que no saben contarlo simplemente no llaman a onActivity y
+  // el panel se queda con la etapa y el reloj, sin inventar nada.
+  // Es decoración: si el panel falla dibujándola, la generación sigue. Sin este
+  // try, un error pintando el cartelito viajaba hacia atrás por el proveedor y
+  // tiraba abajo un diseño de tres minutos ya pagado.
+  const onActivity = function (act) {
+    try { report({ act: act }); } catch (e) { /* la vista no manda acá */ }
+  };
   const usage = {
     inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
     costUsd: null, calls: 0,
@@ -92,8 +103,10 @@ async function composeAnimation(a) {
   async function ask(promptText) {
     const gen = await a.provider.generate({
       systemPrompt: a.systemPrompt, userPrompt: promptText, images: a.images,
-      model: a.config.model, config: a.config,
+      model: a.config.model, config: a.config, onActivity,
     });
+    // La etapa terminó: lo último que dijo el modelo ya no es lo que pasa.
+    onActivity(null);
     addUsage(gen.usage);
     const seen = inspectComposition(stripHtmlFence(gen.text), {
       durationSec: a.durationSec, markerSlug: a.markerSlug,

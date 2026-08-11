@@ -24,6 +24,68 @@
   var feedbackOpen = {};
   var feedbackDraft = {};
 
+  // ── Reloj y estado en vivo de los jobs activos ───────────────────────
+  // Dos cosas cambian cuando la cola NO emite: el tiempo, que corre solo, y lo
+  // que el modelo está haciendo, que llega varias veces por segundo (ver `act`
+  // en queue.js). Ninguna de las dos puede redibujar la cola: el re-render
+  // borraría lo que el editor esté tipeando en una caja de feedback y le
+  // movería el scroll. Por eso render() anota los NODOS de cada job activo y
+  // este tic los va pisando por referencia, una vez por segundo.
+  var liveRows = [];
+  var liveTimer = null;
+
+  // Cuánto puede pasar sin una sola novedad del modelo antes de que valga la
+  // pena decirlo. Los avisos llegan cada pocos segundos, así que un minuto
+  // callado ya es raro: puede ser una herramienta larga o un CLI trabado, y el
+  // editor merece poder distinguirlo del "está pensando".
+  var SIN_NOVEDAD_MS = 60000;
+
+  // La segunda línea de un job activo: qué está haciendo el modelo ahora. Si el
+  // proveedor no sabe contarlo, se dice —callado quedaría igual que colgado, y
+  // un texto decorativo que rote solo sería mentir.
+  function liveDetail(j) {
+    if (j.act && j.act.label) {
+      var quieto = j.act.at ? (Date.now() - j.act.at) : 0;
+      // El reloj de arriba sigue corriendo igual; lo que se agrega acá es que
+      // ese tiempo NO es de algo que esté avanzando a la vista.
+      return "↳ " + j.act.label +
+        (quieto > SIN_NOVEDAD_MS ? " · sin novedad hace " + fmtDuration(quieto / 1000) : "");
+    }
+    // Sin detalle: puede ser el hueco entre dos llamadas al modelo (el
+    // proveedor sí informa, ver _actSeen) o un proveedor que no lo informa
+    // nunca —API directa, Ollama—, y ahí conviene decirlo.
+    if (j.status === "modeling" && !j._actSeen && j.startedAt && (Date.now() - j.startedAt) > 15000) {
+      return "↳ este proveedor no informa el detalle de lo que hace";
+    }
+    // En el render no hay nada que "contar", pero sí cuánto debería tardar:
+    // la cola ya tiene calibrado su ritmo con los renders anteriores.
+    if (j.status === "running" && HPQueue.timing.calibrated() && Number(j.markerDuration) > 0) {
+      return "↳ estimado ≈ " + fmtDuration(HPQueue.timing.estimateSec(0, j.markerDuration));
+    }
+    return "";
+  }
+
+  function tickLive() {
+    for (var i = 0; i < liveRows.length; i++) {
+      var r = liveRows[i], j = r.job;
+      if (r.clk) r.clk.textContent = j.startedAt ? "⏱ " + fmtDuration((Date.now() - j.startedAt) / 1000) : "";
+      if (r.fill) r.fill.style.width = (j.pct || 0) + "%";
+      if (r.act) {
+        var txt = liveDetail(j);
+        r.act.textContent = txt;
+        r.act.setAttribute("data-hidden", txt ? "false" : "true");
+      }
+    }
+  }
+
+  // Arranca el tic si hay algo vivo que mirar y lo apaga si no: un intervalo
+  // corriendo sobre nodos que ya no están en el DOM es una fuga silenciosa.
+  function syncLiveClock() {
+    if (liveRows.length && !liveTimer) liveTimer = setInterval(tickLive, 1000);
+    if (!liveRows.length && liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+    if (liveRows.length) tickLive(); // que el primer dibujo ya salga con la hora puesta
+  }
+
   function iconBtn(txt, title, cb) {
     var b = document.createElement("button");
     b.type = "button"; b.className = "qbtn"; b.textContent = txt; b.title = title;
@@ -275,8 +337,11 @@
         badge.className = "tab-badge";
       }
     }
+    // Los nodos vivos del dibujo anterior ya no existen: se re-anotan abajo.
+    liveRows = [];
     if (!jobs.length) {
       panel.innerHTML = '<div class="queue-empty">La cola está vacía. Encolá marcadores con “Enviar a la cola” o arrancá con “Generar”.</div>';
+      syncLiveClock();
       return;
     }
     panel.innerHTML = "";
@@ -403,6 +468,9 @@
       var qIdx = 0, qCount = g.jobs.filter(function (j) { return j.status === "queued"; }).length;
       g.jobs.forEach(function (j) {
         var row = document.createElement("div"); row.className = "queue-job is-" + j.status;
+        // Nodos de este job que se refrescan solos (reloj, estado del modelo,
+        // barra). Se llena abajo y solo se registra si el job está activo.
+        var liveJob = { job: j, clk: null, act: null, fill: null };
         var line = document.createElement("div"); line.className = "qj-line";
         var top = document.createElement("div"); top.className = "qj-title";
         var dot = (j.status === "running") ? "▶ " : (j.status === "modeling") ? "✎ " : (j.status === "ready") ? "◔ " : (j.status === "queued") ? "• " : (j.status === "done") ? "✓ " : (j.status === "waiting") ? "⏳ " : "⚠ ";
@@ -430,6 +498,11 @@
           wc.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
           line.appendChild(wc);
         } else if (HPQueue.isActive(j.status)) {
+          // Reloj de la corrida: el dato que faltaba para saber si un marcador
+          // que lleva tres minutos es normal o se colgó. Lo actualiza tickLive.
+          var clk = document.createElement("span"); clk.className = "qj-clock";
+          line.appendChild(clk);
+          liveJob.clk = clk;
           // Job activo: se puede cancelar (lo en vuelo termina en 2º plano y se descarta).
           var ac = document.createElement("span"); ac.className = "qj-ctrls";
           ac.appendChild(iconBtn("✕ cancelar", "Cancelar este marcador (para rehacerlo). Lo que esté en vuelo se descarta.",
@@ -482,6 +555,15 @@
           msg.textContent = j.msg || j.status;
         }
         row.appendChild(msg);
+        // Lo que el modelo está haciendo AHORA, debajo de la etapa. Es la línea
+        // que resuelve el "no sé si avanza": la etapa ("Diseñando la animación
+        // con X…") se escribe una vez y no cambia en varios minutos.
+        if (HPQueue.isActive(j.status)) {
+          var act = document.createElement("div"); act.className = "qj-act";
+          act.setAttribute("data-hidden", "true");
+          row.appendChild(act);
+          liveJob.act = act;
+        }
         // Caja de feedback inline (solo en jobs terminados y si el usuario la abrió).
         if (j.status === "done" && feedbackOpen[j.id]) {
           row.appendChild(buildFeedbackBox(j));
@@ -490,11 +572,14 @@
           var bar = document.createElement("div"); bar.className = "hp-bar";
           var fill = document.createElement("div"); fill.className = "hp-bar-fill"; fill.style.width = (j.pct || 0) + "%"; bar.appendChild(fill);
           row.appendChild(bar);
+          liveJob.fill = fill;
         }
+        if (HPQueue.isActive(j.status)) liveRows.push(liveJob);
         panel.appendChild(row);
       });
     });
     renderQueueEstimate(panel, jobs);
+    syncLiveClock();
     // Preservar el scroll de la vista de cola (se refresca seguido durante el proceso).
     if (scroller) scroller.scrollTop = savedScroll;
   }
@@ -502,6 +587,13 @@
   global.HPQueueView = {
     /** Cablea las dependencias del panel. Llamar UNA vez antes de renderizar. */
     init: function (d) { deps = d; },
-    render: render
+    render: render,
+    /**
+     * Línea "qué está haciendo ahora" de un job activo ("" si no hay nada que
+     * decir). La comparte la tarjeta del marcador (main.js), que muestra lo
+     * mismo en otro lugar: dos redacciones del mismo estado envejecerían
+     * distinto.
+     */
+    activityLine: liveDetail
   };
 })(typeof window !== "undefined" ? window : this);

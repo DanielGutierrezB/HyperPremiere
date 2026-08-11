@@ -1292,10 +1292,24 @@
     status.className = "marker-status";
     var buttons = [genBtn, regenBtn, queueBtn];
 
+    // Lo que tardó la última versión de este marcador. Sale del store y no de
+    // la cola: la cola se vacía, y la pregunta "¿cuánto me costó este recurso?"
+    // aparece justamente días después, mirando el marcador.
+    function syncTimes() {
+      var t = HPStore.getMarkerData(markerKey).timings;
+      if (!t || !(t.totalMs > 0)) { times.textContent = ""; return; }
+      var partes = [];
+      if (t.modelMs > 0) partes.push("IA " + HPUtil.fmtDuration(t.modelMs / 1000));
+      if (t.renderMs > 0) partes.push("render " + HPUtil.fmtDuration(t.renderMs / 1000));
+      times.textContent = "⏱ " + (t.version ? "v" + t.version + ": " : "") +
+        HPUtil.fmtDuration(t.totalMs / 1000) + (partes.length ? " · " + partes.join(" · ") : "");
+    }
+
     // Refleja el estado: sin generar → solo "Generar"; ya generado → "Generar"
     // (refina) + "Regenerar desde cero", y badge ✓.
     function syncUI() {
       var generated = HPStore.getMarkerData(markerKey).generated;
+      syncTimes();
       genBtn.textContent = generated ? "Generar (refinar)" : "Generar";
       genBtn.title = generated
         ? "Ajusta sobre la última versión usando tu nueva instrucción (mantiene lo que funciona)"
@@ -1347,13 +1361,20 @@
         var msgTxt = document.createElement("span"); msgTxt.textContent = job.msg || "";
         var clk = document.createElement("span"); clk.className = "hp-bar-clock";
         m.appendChild(msgTxt); m.appendChild(clk);
-        status.appendChild(bar); status.appendChild(m);
+        var actLine = document.createElement("div"); actLine.className = "qj-act";
+        actLine.setAttribute("data-hidden", "true");
+        status.appendChild(bar); status.appendChild(m); status.appendChild(actLine);
         sBadge.textContent = (job.status === "running" || job.status === "modeling") ? "⏳" : "…";
-        // Reloj en vivo: tiempo transcurrido junto a la barra + mensaje.
+        // Reloj en vivo: tiempo transcurrido junto a la barra + mensaje. En el
+        // mismo tic va el estado del modelo, que llega demasiado seguido como
+        // para redibujar la tarjeta cada vez (ver `act` en queue.js).
         card._activeJob = job;
         var tickClock = function () {
           var j = card._activeJob; if (!j) return;
           clk.textContent = j.startedAt ? " · ⏱ " + HPUtil.fmtDuration((Date.now() - j.startedAt) / 1000) : "";
+          var det = HPQueueView.activityLine(j);
+          actLine.textContent = det;
+          actLine.setAttribute("data-hidden", det ? "false" : "true");
         };
         tickClock();
         card._clockTimer = setInterval(tickClock, 1000);
@@ -1388,6 +1409,8 @@
 
     var estimate = document.createElement("div");
     estimate.className = "marker-estimate";
+    var times = document.createElement("div");
+    times.className = "marker-times";
 
     // Estima los tokens de entrada de este marcador (sin llamar al modelo).
     function updateEstimate() {
@@ -1424,6 +1447,7 @@
     actions.appendChild(queueBtn);
     body.appendChild(actions);
     body.appendChild(estimate);
+    body.appendChild(times);
     body.appendChild(status);
 
     // ── Editor de HTML manual (elegir versión → Abrir → editar → Render) ──

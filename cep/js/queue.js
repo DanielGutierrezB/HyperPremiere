@@ -103,6 +103,9 @@
       msg: j.msg, kind: j.kind, seqName: j.seqName, projectPath: j.projectPath,
       markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
       markerDuration: j.markerDuration, version: j.version, usage: j.usage,
+      // Cuánto tardó cada etapa: el mensaje ya lo dice, pero guardar los números
+      // deja que la vista los vuelva a componer sin parsear texto.
+      _modelMs: j._modelMs, _renderMs: j._renderMs,
       _failedStage: j._failedStage, payload: p
     };
   }
@@ -119,6 +122,23 @@
         .then(function () {}).catch(function (e) { hpLog("saveQueue falló: " + ((e && e.message) || e), "WARN"); });
     }, 1000);
   }
+  // Cuánto tardó ESTE recurso, guardado en el marcador. El mensaje de la cola
+  // también lo dice, pero la cola se vacía: acá queda para cuando el editor
+  // mire el marcador la semana que viene y quiera saber qué le costó.
+  function saveMarkerTimings(job) {
+    try {
+      HPStore.withContext(job.projectPath, job.seqName, function () {
+        HPStore.setMarkerTimings(job.markerKey, {
+          modelMs: job._modelMs || 0,
+          renderMs: job._renderMs || 0,
+          totalMs: job._totalMs || 0,
+          version: job.version || 0,
+          at: Date.now()
+        });
+      });
+    } catch (e) {}
+  }
+
   function markGenerated(job) {
     // Persistir el flag en el namespace del job (aunque estés en otra secuencia).
     try {
@@ -174,15 +194,30 @@
   function onP(job) {
     return function (p) {
       if (!p) return;
-      if (typeof p.pct === "number") job.pct = Math.max(0, Math.min(100, p.pct));
-      if (p.msg) job.msg = p.msg;
-      if (p.usage) job.usage = p.usage;
+      var visible = false;
+      if (typeof p.pct === "number") { job.pct = Math.max(0, Math.min(100, p.pct)); visible = true; }
+      if (p.msg) { job.msg = p.msg; visible = true; }
+      if (p.usage) { job.usage = p.usage; visible = true; }
       // "note": lo que el motor quiere dejar por escrito y no cabe en la barra
       // (qué reparó del contrato, por qué gastó una llamada extra, con qué
       // configuración renderizó). Va al ⬇ Log, que es donde se diagnostica, con
       // el nivel que mande el motor: varias notas son avisos, no información.
-      if (p.note) hpLog("[" + job.label + "] " + p.note, p.level);
-      emit();
+      if (p.note) { hpLog("[" + job.label + "] " + p.note, p.level); visible = true; }
+      // "act": qué está haciendo el modelo AHORA (razonando, leyendo una imagen,
+      // escribiendo la composición). Llega varias veces por segundo, así que
+      // NO emite: emitir redibuja la cola entera y encima agenda una escritura
+      // de queue.json. Lo levanta el reloj de la vista en su próximo tic, que
+      // ya corre por el temporizador. Se distingue `act: null` (la etapa
+      // terminó, hay que borrar la línea) de que no venga el campo.
+      if (Object.prototype.hasOwnProperty.call(p, "act")) {
+        job.act = (p.act && p.act.label) ? { label: p.act.label, phase: p.act.phase, at: Date.now() } : null;
+        // Que este proveedor SÍ sabe contar lo que hace se aprende una sola vez
+        // y no se olvida entre llamada y llamada: si no, en el hueco entre el
+        // diseño y una corrección el panel decía "este proveedor no informa el
+        // detalle" justo del que sí informa.
+        if (job.act) job._actSeen = true;
+      }
+      if (visible) emit();
     };
   }
 
@@ -190,6 +225,7 @@
   // en error. _failedStage permite reintentar desde el punto de fallo.
   function failJob(job, err, stage) {
     var f = classifyFailure(err);
+    job.act = null; // lo que estaba haciendo cuando falló ya no es el estado
     if (f.rate) {
       job.status = "waiting"; job.pct = 0;
       job.msg = "⏳ Sin tokens / límite alcanzado — esperá el reinicio y tocá ↻ Reactivar · " + shortenErr(f.msg);
@@ -223,11 +259,28 @@
     });
   }
 
+  // Cuánto tardó cada ETAPA, para el mensaje del job terminado. Son dos trabajos
+  // muy distintos (la nube pensando vs. tu máquina renderizando) y saber cuál se
+  // llevó el tiempo es lo que dice si conviene bajar el nivel de pensamiento o
+  // achicar el marcador. NO suman el total a propósito: entre una y otra el job
+  // puede haber esperado un carril de render libre, y colocar el clip en
+  // Premiere va después.
+  function stageBreakdown(job) {
+    var partes = [];
+    if (job._modelMs > 0) partes.push("IA " + fmtDuration(job._modelMs / 1000));
+    if (job._renderMs > 0) partes.push("render " + fmtDuration(job._renderMs / 1000));
+    return partes.length ? " (" + partes.join(" · ") + ")" : "";
+  }
+
   function markDone(job, msgTxt) {
-    var dur = fmtDuration((Date.now() - job.startedAt) / 1000);
+    // Tiempo de pared del recurso, salvo en el reintento de SOLO render: ahí el
+    // diseño se pagó antes de que este reloj arrancara, así que manda la suma
+    // de las etapas (si no, el total quedaba más chico que una de sus partes).
+    job._totalMs = Math.max(Date.now() - job.startedAt, (job._modelMs || 0) + (job._renderMs || 0));
+    var dur = fmtDuration(job._totalMs / 1000);
     var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
-    job.status = "done"; job.pct = 100;
-    job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur;
+    job.status = "done"; job.pct = 100; job.act = null;
+    job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur + stageBreakdown(job);
     hpLog("Job DONE [" + job.label + "] v" + job.version + " · " + msgTxt + " · " + dur);
     // Calibración en CARRIL-segundos: lo medido es tiempo de pared, y si el render
     // compartió la máquina con otro, tardó más por eso. Guardar el tiempo × los
@@ -241,6 +294,7 @@
       saveTiming();
     }
     markGenerated(job);
+    saveMarkerTimings(job);
   }
 
   // Coloca el resultado en Premiere y cierra el job. Devuelve una promesa que
@@ -305,6 +359,7 @@
 
   function startModel(job) {
     modelRunning++; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
+    job._modelStart = Date.now(); job._modelMs = 0; job.act = null; job._actSeen = false;
     job._modelLanes = modelRunning; // para calibrar en carril-segundos
     rehydratePayload(job); emit();
     var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
@@ -315,11 +370,13 @@
       if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
       job.prepared = prep;
       countUsage(job, prep.usage);
-      job.status = "ready"; job.msg = "En espera de render…";
+      job._modelMs = Date.now() - (job._modelStart || Date.now());
+      job.status = "ready"; job.msg = "En espera de render… · IA " + fmtDuration(job._modelMs / 1000);
+      job.act = null; // el modelo ya no está haciendo nada: no dejar su último paso colgado
       // Calibración: segundos que tardó el modelo (para estimar la cola).
       // En carril-segundos, igual que el render (ver markDone): con 3 diseños a la
       // vez cada uno tarda más de pared, y la estimación divide por el cupo.
-      var _ms = (Date.now() - (job.startedAt || Date.now())) / 1000;
+      var _ms = job._modelMs / 1000;
       if (_ms > 1 && _ms < 3600) {
         TIMING.modelJobs++;
         TIMING.modelSec += _ms * (job._modelLanes || 1);
@@ -338,7 +395,7 @@
   function startRender(job) {
     takeRenderLane(job);
     job.status = "running"; if (!job.startedAt) job.startedAt = Date.now();
-    job._renderStart = Date.now();
+    job._renderStart = Date.now(); job._renderMs = 0; job.act = null;
     job._renderLanes = renderRunning(); // para calibrar en carril-segundos
     job.msg = "Renderizando…"; emit();
     hpLog("Job RENDER [" + job.label + "] · kind=" + job.kind + " · en paralelo=" + renderRunning());
@@ -353,6 +410,10 @@
     // el último eslabón: pase lo que pase (error, cancelación, o que Premiere no
     // conteste) hay UN solo lugar que lo suelta.
     p.then(function (res) {
+      // El render propiamente dicho termina ACÁ: lo que viene después (importar
+      // y colocar el clip en Premiere) es otra cosa y no debe contarse como
+      // tiempo de render.
+      job._renderMs = Date.now() - (job._renderStart || Date.now());
       if (!res || !res.ok) throw new Error(res && res.error ? res.error : "error desconocido");
       if (job._cancelled) { hpLog("Job CANCELADO [" + job.label + "] tras render — descartado."); return; }
       return finishPlace(job, res);
@@ -593,6 +654,11 @@
         var j = jobs[i];
         if (j.id !== id || (j.status !== "error" && j.status !== "waiting")) continue;
         j.pct = 0; j._usageCounted = false; j._cancelled = false; j.startedAt = 0;
+        j._renderMs = 0; j.act = null;
+        // El tiempo del modelo solo se borra si el modelo va a correr de nuevo:
+        // en un reintento de SOLO render el diseño ya se pagó y ese rato se
+        // gastó igual, así que sigue contando en el total del recurso.
+        if (j._failedStage !== "render") { j._modelMs = 0; j._actSeen = false; }
         if (j._failedStage === "render") {
           if (j.prepared) {
             // Diseño en memoria → solo re-render (renderPrepared).
@@ -652,7 +718,7 @@
         j.status = "queued"; j.pct = 0;
         j.msg = txt ? "Reencolado con feedback, esperando turno…" : "Reencolado, esperando turno…";
         j.prepared = null; j._usageCounted = false; j.version = undefined;
-        j.startedAt = 0; j.usage = null;
+        j.startedAt = 0; j.usage = null; j._modelMs = 0; j._renderMs = 0; j.act = null;
         break;
       }
       paused = false; emit(); pump();

@@ -773,10 +773,17 @@ async function prepareGeneration(body, mode, onProgress) {
 
   // Hasta tres llamadas al modelo con la regla "nunca empeorar", más el andamiaje
   // completado en código. La política vive en compose.js; acá solo se orquesta.
+  //
+  // Se cronometra: MODELO y RENDER son dos trabajos distintos (la nube pensando
+  // vs. esta máquina capturando frames) y sumados en un solo número no dicen
+  // nada. Separados, contestan la pregunta útil: si un recurso tardó ocho
+  // minutos, ¿bajo el nivel de pensamiento o acorto el marcador?
+  const modelStartedAt = Date.now();
   const { html, usage } = await composeAnimation({
     provider, config, systemPrompt, userPrompt, images: stillsList,
     durationSec, markerSlug, report,
   });
+  const modelMs = Date.now() - modelStartedAt;
 
   fs.writeFileSync(outPaths.html, html, 'utf8');
   report({
@@ -790,7 +797,7 @@ async function prepareGeneration(body, mode, onProgress) {
     ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
     durationSec, videoExt, draft: body.draft === true, version, markerSlug, baseDir,
     usage, background: withBackground, instruction, marker, assetsDir,
-    model: config.model, provider: config.provider, mode, adjustment,
+    model: config.model, provider: config.provider, mode, adjustment, modelMs,
   };
 }
 
@@ -811,11 +818,13 @@ async function renderPrepared(prepared, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!prepared || !prepared.ok) throw new Error('renderPrepared: prepared inválido');
   report({ pct: 60, msg: prepared.background ? 'Renderizando video HD (con fondo)…' : 'Renderizando el video con alpha…' });
+  const renderStartedAt = Date.now();
   await renderComposition({
     html: prepared.html, outMovPath: prepared.outMovPath, durationSec: prepared.durationSec,
     onProgress: report, format: prepared.videoExt, quality: prepared.draft ? 'draft' : 'high',
     assetsDir: prepared.assetsDir,
   });
+  const renderMs = Date.now() - renderStartedAt;
 
   saveMeta(prepared.metaPath, {
     instruction: prepared.instruction, marker: prepared.marker, version: prepared.version,
@@ -823,10 +832,15 @@ async function renderPrepared(prepared, onProgress) {
     adjustment: prepared.mode === 'adjust' ? prepared.adjustment : undefined,
     background: prepared.background, format: prepared.videoExt,
     createdAt: new Date(Date.now()).toISOString(),
+    // Cuánto costó hacer ESTA versión, por etapa y en ms. Vive en la meta y no
+    // solo en la cola porque acá sobrevive a cerrar Premiere: dentro de un mes
+    // el recurso sigue sabiendo lo que tardó. `modelMs` es 0 en los renders que
+    // no llaman a la IA (re-render, HTML editado a mano).
+    timings: { modelMs: prepared.modelMs || 0, renderMs: renderMs },
     history: buildHistory(prepared.baseDir, prepared.markerSlug, prepared.version),
   });
 
-  return { ok: true, movPath: prepared.outMovPath, htmlPath: prepared.htmlPath, version: prepared.version, markerSlug: prepared.markerSlug, usage: prepared.usage, background: prepared.background };
+  return { ok: true, movPath: prepared.outMovPath, htmlPath: prepared.htmlPath, version: prepared.version, markerSlug: prepared.markerSlug, usage: prepared.usage, background: prepared.background, renderMs: renderMs };
 }
 
 // Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al
@@ -1281,11 +1295,14 @@ async function renderManualHtml(body, onProgress) {
   fs.writeFileSync(outPaths.html, cleanHtml, 'utf8');
 
   report({ pct: 40, msg: 'Renderizando el video con alpha…' });
+  const renderStartedAt = Date.now();
   await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
 
   saveMeta(outPaths.meta, {
     instruction: '(edición manual)', marker, version, model: 'manual', provider: 'manual',
     mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(),
+    // Sin IA de por medio: acá el tiempo del modelo es cero de verdad.
+    timings: { modelMs: 0, renderMs: Date.now() - renderStartedAt },
     history: buildHistory(baseDir, markerSlug, version),
   });
 

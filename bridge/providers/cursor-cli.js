@@ -24,6 +24,11 @@
  * - El backend a veces responde "[unavailable]" de forma transitoria; ante eso
  *   se reintenta en vez de perder la generación.
  * - No informa costo en dólares (es suscripción), solo tokens.
+ * - Si quien llama pasa `onActivity`, se usa `--output-format stream-json` (más
+ *   `--stream-partial-output`): el CLI va contando qué herramienta usa y va
+ *   mandando la respuesta a pedazos. El resultado se sigue leyendo del stdout
+ *   completo al terminar, así que el estado en vivo no toca ni el HTML ni los
+ *   tokens.
  */
 
 const fs = require('fs');
@@ -32,6 +37,7 @@ const path = require('path');
 const { stripHtmlFence, parseImageDataUrl, makeUsage,
   imageFileName, imagesAsFilesNote } = require('./index');
 const { run } = require('../exec');
+const agentStream = require('./agent-stream');
 
 const DEFAULT_TIMEOUT_MS = 900_000; // 900s: los modelos con thinking se toman su tiempo
 const DEFAULT_MODEL = 'claude-sonnet-5-thinking-high';
@@ -93,9 +99,12 @@ function setupHint(bin) {
  * @param {string[]} [opts.images] - data URLs de stills
  * @param {string} opts.model
  * @param {object} [opts.config] - { timeoutMs?, cursorBinPath?, apiKey? }
+ * @param {function} [opts.onActivity] - se lo llama con lo que el agente está
+ *   haciendo mientras trabaja (ver agent-stream.js). Sin él, formato de salida
+ *   de siempre.
  * @returns {Promise<{text:string, usage:object|null}>} HTML de la composicion
  */
-async function generate({ systemPrompt, userPrompt, images, model, config }) {
+async function generate({ systemPrompt, userPrompt, images, model, config, onActivity }) {
   const cfg = config || {};
   if (!userPrompt || typeof userPrompt !== 'string') {
     throw new Error('cursor-cli: userPrompt es requerido');
@@ -128,31 +137,59 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     : process.platform === 'win32';
   const input = viaStdin ? prompt : undefined;
 
-  const args = [
-    '-p',
-    '--output-format', 'json',
-    '--mode', 'ask',   // solo lectura: que no escriba archivos ni corra comandos
-    '--trust',         // headless lo exige; el workspace es nuestro temp, no el proyecto
-    '--model', useModel,
-    '--workspace', ws.dir,
-  ];
-  if (!viaStdin) args.splice(1, 0, prompt);
+  // ¿Contamos en vivo lo que el agente va haciendo? Con stream-json, Cursor
+  // avisa cada herramienta que usa (leer una imagen, buscar un archivo) y, con
+  // --stream-partial-output, va mandando la respuesta a pedazos mientras la
+  // escribe. Y el último evento es el MISMO objeto que devuelve
+  // `--output-format json`, con su `usage` — el conteo de tokens no cambia.
+  const live = typeof onActivity === 'function' &&
+    !agentStream.envDisabled('HYPERPREMIERE_STREAM');
+  // Ver el texto salir es un flag aparte, igual que en Claude: sin él quedan
+  // las herramientas, que ya alcanzan para saber que sigue vivo.
+  const partial = !agentStream.envDisabled('HYPERPREMIERE_STREAM_THINKING');
+
+  function buildArgs(streaming) {
+    const args = [
+      '-p',
+      '--output-format', streaming ? 'stream-json' : 'json',
+      '--mode', 'ask',   // solo lectura: que no escriba archivos ni corra comandos
+      '--trust',         // headless lo exige; el workspace es nuestro temp, no el proyecto
+      '--model', useModel,
+      '--workspace', ws.dir,
+    ];
+    if (streaming && partial) args.push('--stream-partial-output');
+    if (!viaStdin) args.splice(1, 0, prompt);
+    return args;
+  }
 
   try {
     const childEnv = Object.assign({}, process.env);
     if (cfg.apiKey) childEnv.CURSOR_API_KEY = cfg.apiKey;
 
+    let streaming = live;
     let lastErr = '';
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const r = await run(bin, args, {
+      const reader = streaming
+        ? agentStream.createActivityReader('cursor', onActivity, { partial: partial })
+        : { onData: null };
+      const r = await run(bin, buildArgs(streaming), {
         timeoutMs, env: childEnv, cwd: ws.dir, input,
         shell: process.platform === 'win32',
+        onData: reader.onData || undefined,
       });
 
       if (r.timedOut) throw new Error(`cursor-cli: timeout tras ${timeoutMs}ms`);
       if (r.code === -1) throw new Error(setupHint(bin) + '\nDetalle: ' + r.err);
 
       const combined = (r.err || '') + '\n' + (r.out || '');
+      // Un CLI más viejo que stream-json lo rechaza al instante, sin gastar un
+      // token: se apaga el estado en vivo y se reintenta. No consume intento:
+      // el modelo nunca llegó a correr.
+      if (streaming && r.code !== 0 && agentStream.isUnsupportedFlag(combined)) {
+        streaming = false;
+        attempt--;
+        continue;
+      }
       if (r.code !== 0) {
         lastErr = r.err.trim() || r.out.trim() || '(sin salida)';
         if (isTransient(combined) && attempt < MAX_ATTEMPTS) {
@@ -167,12 +204,20 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
         throw new Error(`cursor-cli: salió con código ${r.code}. ${lastErr.slice(0, 400)}`);
       }
 
-      // Con --output-format json, stdout es un objeto con .result y .usage.
-      let parsed;
-      try {
-        parsed = JSON.parse(r.out);
-      } catch (e) {
-        throw new Error('cursor-cli: la salida no era JSON válido: ' + r.out.slice(0, 300));
+      // Con json, stdout es UN objeto; con stream-json, una línea por evento y
+      // el último es ese mismo objeto (.result y .usage). Un solo camino de acá
+      // para abajo.
+      let parsed = streaming ? agentStream.finalResult(r.out) : null;
+      if (!parsed) {
+        try {
+          parsed = JSON.parse(r.out);
+        } catch (e) {
+          // Con stream, antes de perder una generación ya pagada se rearma la
+          // respuesta con los mensajes del agente (se pierden los tokens, no el HTML).
+          const salvado = streaming ? agentStream.assistantText(r.out) : '';
+          if (!salvado) throw new Error('cursor-cli: la salida no era JSON válido: ' + r.out.slice(0, 300));
+          parsed = { result: salvado, usage: null };
+        }
       }
 
       if (parsed && parsed.is_error) {

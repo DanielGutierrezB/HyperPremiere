@@ -137,7 +137,13 @@
    *
    * El motor llama `prog(p)` con un sobre de campos OPCIONALES, y cada uno tiene
    * un destino distinto (quien lo consume es onP en queue.js):
-   *   - `pct`   (0-100) y `msg`  → la barra del job: el estado de AHORA, se pisa.
+   *   - `pct`   (0-100) y `msg`  → la barra del job: la ETAPA de AHORA, se pisa.
+   *   - `act`   → qué está haciendo el modelo DENTRO de esa etapa (razonando,
+   *               leyendo una imagen, escribiendo la composición), con el texto
+   *               ya redactado en `.label`. Llega varias veces por segundo, así
+   *               que NO redibuja: lo levanta el reloj de la vista en su tic.
+   *               `act: null` = la etapa terminó y hay que borrar la línea;
+   *               no mandar el campo = "sin novedad", se deja lo que había.
    *   - `usage` → contador de tokens del job.
    *   - `note`  → una línea al ⬇ Log, que queda: lo que hay que poder leer
    *               después (qué se reparó, por qué se gastó una llamada extra, con

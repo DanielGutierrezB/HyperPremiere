@@ -161,6 +161,29 @@ extra, solo cuando lo usás.
   sin ningún error: Premiere no siempre materializa el import de inmediato. Por lo mismo
   el clip importado se busca por su **ruta de media** y no por nombre ni por posición.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
+- **Qué está haciendo, en vivo, y cuánto lleva.** La barra ya no dice una sola frase
+  durante tres minutos. Debajo de la etapa va una línea que se refresca sola con lo
+  que el modelo está haciendo **ahora** —"razonando (4.200 tok) · …dónde poner el
+  título", "leyendo un archivo · imagen-2.png", "escribiendo la composición · 8.400
+  caracteres"— y al lado del marcador corre un **⏱ reloj** con lo que lleva. El texto
+  no lo inventa el panel: lo va contando el propio CLI mientras trabaja (Claude y
+  Cursor). Los proveedores que no saben contarlo —API de Claude, OpenAI-compatible,
+  Ollama— lo **dicen** ("este proveedor no informa el detalle de lo que hace") y
+  siguen mostrando la etapa y el reloj, que nunca se frena: callar sería igual que
+  parecer colgado. Y si pasa un minuto sin una sola novedad, la línea lo aclara, así
+  un CLI trabado deja de parecerse a un modelo pensando. Cada marcador lleva lo suyo
+  aunque haya tres generándose a la vez. Si en alguna máquina molesta, se apaga sin
+  tocar código: `HYPERPREMIERE_STREAM=0` (todo) o `HYPERPREMIERE_STREAM_THINKING=0`
+  (solo el texto del razonamiento). Apagado, vuelve el comportamiento viejo; el
+  estado en vivo **nunca** puede voltear una generación: si el CLI no entiende los
+  flags, el motor reintenta sin ellos antes de gastar un token.
+- **Cuánto tardó cada recurso.** Al terminar, el job cierra con el total y el
+  desglose: `✓ Listo y colocado (v3) · 12.400↑ 6.100↓ · 4m 12s (IA 3m 05s · render
+  1m 07s)`. Separado a propósito, porque son dos trabajos distintos: si el tiempo se
+  fue en la **IA**, la palanca es el nivel de pensamiento; si se fue en el **render**,
+  es la duración del marcador o la máquina. El número **queda en el marcador**:
+  cerrás Premiere, volvés la semana que viene y la tarjeta sigue diciendo
+  `⏱ v3: 4m 12s · IA 3m 05s · render 1m 07s`.
 - Controles: **pausar/reanudar** (retoma desde el llamado a la IA o desde el render, según
   dónde estaba), **cancelar** un ítem, **reintentar** ante fallo (si el modelo ya había
   terminado y falló el render, reintenta **solo el render** sin gastar IA), **mover** el
@@ -242,6 +265,11 @@ extra, solo cuando lo usás.
     quién atienda. Cuando lo afirmaba ("se adjuntan N imágenes a este mensaje"), con los
     proveedores de línea de comandos le mentía al modelo — no hay adjuntos ahí, hay
     archivos al lado — y el modelo salía a buscar un adjunto que no existía.
+  - `bridge/providers/agent-stream.js` — traduce la salida en vivo de los CLI de
+    agente (Claude y Cursor, dos dialectos distintos) al vocabulario que muestra el
+    panel. Es **solo para el cartel**: el HTML y los tokens se siguen leyendo de la
+    salida completa al terminar, así que un CLI que cambie el formato se lleva
+    puesto el estado en vivo, nunca la generación.
   - `bridge/providers/` — un proveedor por backend, mismo contrato. Cada uno pone la
     mitad del prompt que le corresponde: **cómo llegan las imágenes**. Los de API las
     adjuntan al mensaje; los de línea de comandos (Claude Code, Cursor) no pueden, así
@@ -363,6 +391,22 @@ node scripts/sign-zxp.js          # genera dist/HyperPremiere.zxp (self-signed, 
 
 El firmador arma un staging con `cep/` + `bridge/` (sin `node_modules`) → ZXP autocontenido
 del código. `dist/` está gitignoreado (forzar `git add -f dist/HyperPremiere.zxp` para versionar).
+
+## Tests
+
+```bash
+node test/run.js          # sin dependencias, sin red, sin tokens
+```
+
+Cubren sobre todo el **estado en vivo**: el traductor de la salida de los CLI —con
+salidas **reales** capturadas de `claude` y `cursor-agent`, que están en
+`test/fixtures/`—, que el diseño no se pierda si el stream se corta antes del
+final, que el prompt por stdin (el camino de Windows) y el stream **convivan**, y
+que dos marcadores generándose a la vez no se mezclen el estado.
+
+Aparte, `node test/manual/live-providers.js` habla con los CLI de verdad (gasta
+tokens y tarda): es lo que hay que correr cuando un CLI se actualiza, para ver si
+sigue hablando el mismo idioma.
 
 ## Diagnóstico
 

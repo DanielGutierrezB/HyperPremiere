@@ -258,7 +258,7 @@
       var entry = state.markers[String(markerKey)];
       if (!entry || typeof entry !== 'object') {
         // Misma forma que la rama con datos: los callers nunca ven undefined.
-        return { instruction: '', stills: [], stillUse: [], resources: [], generated: false, background: false };
+        return { instruction: '', stills: [], stillUse: [], resources: [], generated: false, background: false, timings: null };
       }
       // stillUse[i]: true = "recurso a usar/incrustar", false/ausente = "referencia".
       return {
@@ -267,7 +267,10 @@
         stillUse: isArray(entry.stillUse) ? entry.stillUse : [],
         resources: isArray(entry.resources) ? entry.resources : [],
         generated: Boolean(entry.generated),
-        background: Boolean(entry.background)
+        background: Boolean(entry.background),
+        // Lo que tardó la última versión (ver setMarkerTimings). null si el
+        // marcador viene de antes de que esto se midiera.
+        timings: (entry.timings && typeof entry.timings === 'object') ? entry.timings : null
       };
     },
 
@@ -301,6 +304,26 @@
       var state = readState();
       var entry = ensureMarker(state, markerKey);
       entry.background = Boolean(value);
+      writeState(state);
+    },
+
+    /**
+     * Guarda cuánto tardó la ÚLTIMA versión de este marcador, en ms y por
+     * etapa: `{ modelMs, renderMs, totalMs, version, at }`. Se pisa cada vez
+     * que se genera de nuevo (interesa lo que cuesta hoy, no el promedio
+     * histórico) y sobrevive a cerrar Premiere, que es todo el punto: la cola
+     * se vacía, el marcador queda.
+     */
+    setMarkerTimings: function (markerKey, t) {
+      var state = readState();
+      var entry = ensureMarker(state, markerKey);
+      entry.timings = {
+        modelMs: Math.max(0, Math.round(Number(t && t.modelMs) || 0)),
+        renderMs: Math.max(0, Math.round(Number(t && t.renderMs) || 0)),
+        totalMs: Math.max(0, Math.round(Number(t && t.totalMs) || 0)),
+        version: Math.max(0, Math.round(Number(t && t.version) || 0)),
+        at: Math.round(Number(t && t.at) || 0)
+      };
       writeState(state);
     },
 
