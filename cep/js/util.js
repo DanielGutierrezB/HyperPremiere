@@ -51,12 +51,43 @@
     return String(n);
   }
 
+  /**
+   * Cómo se muestra el botón ⟳ según lo que contestó el motor (checkUpdate).
+   * Son TRES estados, no dos: el tercero existe porque durante mucho tiempo
+   * "no pude consultar GitHub" se veía igual que "estás al día", y así nadie
+   * se enteró de que el chequeo estaba ciego.
+   *   update  → hay versión nueva.
+   *   ok      → al día, CONFIRMADO contra la fuente fresca.
+   *   unknown → no se pudo averiguar (o contestó el respaldo, que puede estar
+   *             atrasado). Se avisa, no se hace pasar por "al día".
+   */
+  function updateBadge(res, fallbackVersion) {
+    var current = (res && res.current) || fallbackVersion || "";
+    var v = current ? "v" + current : "v?";
+    if (res && res.ok && res.changed) {
+      return {
+        state: "update", label: v + " → v" + res.remote,
+        title: "¡Nueva versión v" + res.remote + " disponible en GitHub! Tocá para actualizar.",
+      };
+    }
+    if (res && res.ok && res.verified) {
+      return { state: "ok", label: v, title: "Estás en la última versión (verificado en GitHub). Tocá ⟳ para recargar el panel." };
+    }
+    return {
+      state: "unknown", label: v + " ?",
+      title: "No pude consultar GitHub, así que NO sé si hay una versión nueva." +
+        ((res && res.error) ? " Motivo: " + res.error : "") +
+        " Tocá ⟳ para reintentar.",
+    };
+  }
+
   global.HPUtil = {
     debounce: debounce,
     escapeHtml: escapeHtml,
     formatTime: formatTime,
     fmtDuration: fmtDuration,
     addThousands: addThousands,
-    fmtTokens: fmtTokens
+    fmtTokens: fmtTokens,
+    updateBadge: updateBadge
   };
 })(typeof window !== "undefined" ? window : this);

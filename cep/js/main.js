@@ -1701,24 +1701,33 @@
   // ── Actualización (⟳): versión, aviso de update y recarga del panel ──
   var btnUpdate = document.getElementById("btn-update");
   var versionLabel = document.getElementById("version-label");
+  var localVersion = "";
   hpCall("getVersion").then(function (v) {
-    if (versionLabel && v) versionLabel.textContent = "v" + v;
+    if (!v) return;
+    localVersion = v;
+    if (versionLabel) versionLabel.textContent = "v" + v;
   }).catch(function () {});
 
-  // Aviso de actualización: al abrir el panel (y cada 30 min) consulta GitHub;
-  // si hay versión nueva, el botón ⟳ se resalta y avisa que puede actualizar.
+  // Aviso de actualización: al abrir el panel (y cada 30 min) consulta GitHub.
+  // Tres desenlaces posibles y los tres se muestran distinto (ver
+  // HPUtil.updateBadge): hay versión nueva, estás al día, o NO SE PUDO
+  // AVERIGUAR. Este último no puede volver a disfrazarse de "al día".
+  function pintarEstadoUpdate(res) {
+    if (!btnUpdate) return;
+    var badge = HPUtil.updateBadge(res, localVersion);
+    btnUpdate.classList.toggle("has-update", badge.state === "update");
+    btnUpdate.classList.toggle("check-failed", badge.state === "unknown");
+    btnUpdate.title = badge.title;
+    if (versionLabel) versionLabel.textContent = badge.label;
+    if (badge.state === "unknown") hpLog(badge.title, "WARN");
+  }
+
   function checkForUpdate() {
-    hpCall("checkUpdate").then(function (res) {
-      if (!btnUpdate) return;
-      if (res && res.ok && res.changed) {
-        btnUpdate.classList.add("has-update");
-        if (versionLabel) versionLabel.textContent = "v" + res.current + " → v" + res.remote;
-        btnUpdate.title = "¡Nueva versión v" + res.remote + " disponible en GitHub! Tocá para actualizar.";
-      } else {
-        btnUpdate.classList.remove("has-update");
-        if (res && res.ok && res.current && versionLabel) versionLabel.textContent = "v" + res.current;
-      }
-    }).catch(function () {});
+    hpCall("checkUpdate")
+      .then(pintarEstadoUpdate)
+      .catch(function (e) {
+        pintarEstadoUpdate({ ok: false, error: (e && e.message) || String(e) });
+      });
   }
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
@@ -1754,8 +1763,13 @@
           if (res && res.ok && res.changed) {
             hpLog("Update aplicado v" + (res.previous || "?") + " → v" + res.version + " (GitHub).");
             if (versionLabel) versionLabel.textContent = "v" + res.version;
+          } else if (res && res.ok && res.verified) {
+            hpLog("Ya en la última (v" + res.version + "), verificado en GitHub. Recargo igual.");
           } else if (res && res.ok) {
-            hpLog("Ya en la última (v" + res.version + "). Recargo igual.");
+            // Contestó el respaldo cacheado: puede haber una versión nueva que
+            // no vemos. Decirlo, en vez de dar por hecho que estamos al día.
+            hpLog("No pude confirmar si hay versión nueva: " + (res.error || "GitHub no respondió bien") +
+              " Seguís en v" + res.version + ". Recargo igual.", "WARN");
           } else {
             hpLog("selfUpdate sin cambios: " + ((res && res.error) || "?") + ". Recargo igual.", "WARN");
           }

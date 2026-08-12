@@ -517,6 +517,19 @@ hay versión nueva y la aplica (`git fetch` + `reset --hard origin/main` + recar
 Flujo de trabajo entre equipos: se edita el repo → **commit + push** → tocar **⟳** en la
 Premiere de destino trae exactamente esos cambios.
 
+En una instalación **empaquetada** (ZXP, sin `.git`) no hay `git fetch`, así que la versión
+publicada se lee de la **API de contenidos** de GitHub
+(`/repos/{owner}/{repo}/contents/version.json?ref=main`), y el update se aplica bajando el zip
+de `codeload`. **No** se usa `raw.githubusercontent.com` como fuente principal: se sirve por un
+CDN que cachea por ruta durante minutos e **ignora los cache-busters de query**, así que puede
+devolver una versión vieja y hacer creer que no hay nada nuevo. Queda solo de respaldo, y una
+respuesta suya nunca alcanza para afirmar que estás al día.
+
+Por eso el botón tiene **tres** estados, no dos: hay versión nueva (resaltado), estás al día
+*verificado*, y **no se pudo averiguar** (borde punteado, `v… ?` y el motivo en el tooltip y en
+el ⬇ Log). El tercero incluye quedarse sin cupo de la API — 60 consultas por hora por IP sin
+autenticar, contra las ~2 que gasta el panel. Nunca se muestra como "estás al día".
+
 ## Empaquetar el ZXP
 
 ```bash
@@ -566,6 +579,12 @@ baja un giga en un test): que se detecte bien cuándo falta, que lo instalado po
 gane sobre el PATH, que un archivo incompleto o con la firma cambiada se **rechace** sin
 dejar restos, que reintentar después de un corte **retome** donde iba, y que en una
 plataforma donde no se puede instalar quede el camino a mano.
+
+Y el **chequeo de versión** del botón ⟳, también contra un GitHub local de mentira: que una
+versión nueva se detecte, que la fuente cacheada y atrasada **no** haga perder la
+actualización, que quedarse sin cupo de la API se reporte como "no pude averiguar" y **no**
+como "estás al día", que si la API falla el respaldo sirva igual, y que nunca se proponga
+"actualizar" a una versión más vieja que la instalada.
 
 Aparte, `node test/manual/live-providers.js` habla con los CLI de verdad (gasta
 tokens y tarda): es lo que hay que correr cuando un CLI se actualiza, para ver si

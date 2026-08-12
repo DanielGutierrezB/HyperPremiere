@@ -1078,6 +1078,18 @@ function gitRun(args) {
 const GH_OWNER = 'DanielGutierrezB';
 const GH_REPO = 'HyperPremiere';
 const GH_BRANCH = 'main';
+// De dónde se lee la versión publicada, y por qué en ese orden:
+//
+// raw.githubusercontent.com se sirve por un CDN que cachea POR RUTA (5 min o
+// más) e IGNORA el "?t=<ahora>" que le colgábamos para esquivarlo. Resultado:
+// durante minutos devolvía la versión ANTERIOR y el panel concluía "estás al
+// día". Ese fue el bug: la detección quedaba ciega sin que se notara.
+//
+// La API de contenidos lee el archivo del commit actual de la rama, sin esa
+// capa de caché. Es la fuente principal. `raw` queda de RESPALDO: si la API no
+// contesta, una respuesta posiblemente vieja sirve más que ninguna — pero se
+// marca como tal (ver decideUpdate) para no volver a mentir "estás al día".
+const API_VERSION_URL = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/version.json?ref=${GH_BRANCH}`;
 const RAW_VERSION_URL = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/version.json`;
 const ZIP_URL = `https://codeload.github.com/${GH_OWNER}/${GH_REPO}/zip/refs/heads/${GH_BRANCH}`;
 
@@ -1096,18 +1108,77 @@ function cmpVersions(a, b) {
   return 0;
 }
 
-// Lee la versión remota desde el version.json crudo de GitHub (con cache-buster).
-async function fetchRemoteVersion() {
+// Un pedido a una de las dos fuentes. Nunca lanza: devuelve
+//   { ok:true, version, source } | { ok:false, error }
+// `source` es 'api' (fresca) o 'raw' (puede venir cacheada y atrasada).
+async function readVersionFrom(url, source, timeoutMs) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await hpFetch(RAW_VERSION_URL + '?t=' + Date.now(), { signal: controller.signal });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // GitHub RECHAZA con 403 cualquier pedido a la API sin User-Agent, así que
+    // no es cosmético: sin esto la fuente principal no funciona nunca.
+    const headers = source === 'api'
+      ? {
+          'accept': 'application/vnd.github+json',
+          'user-agent': 'HyperPremiere/' + getVersion(),
+          'x-github-api-version': '2022-11-28',
+        }
+      : { 'user-agent': 'HyperPremiere/' + getVersion() };
+    const res = await hpFetch(url, { headers, signal: controller.signal });
+    if (!res.ok) {
+      // Sin autenticar son 60 consultas por hora por IP. El panel gasta 2, pero
+      // si se agotan (otro programa en la misma red, por ejemplo) hay que
+      // DECIRLO: es exactamente el caso que antes se leía como "no hay update".
+      if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
+        return { ok: false, error: 'GitHub limitó las consultas por un rato (60 por hora sin cuenta); se repone solo.' };
+      }
+      return { ok: false, error: 'HTTP ' + res.status };
+    }
     const data = JSON.parse(await res.text());
-    return String(data.version || '').trim();
+    // La API devuelve el archivo en base64; raw lo devuelve tal cual.
+    const texto = source === 'api'
+      ? Buffer.from(String(data.content || ''), data.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8')
+      : null;
+    const version = String((texto ? JSON.parse(texto) : data).version || '').trim();
+    if (!version) return { ok: false, error: 'la respuesta no traía número de versión' };
+    return { ok: true, version, source };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Lee la versión publicada en GitHub: API primero, raw de respaldo.
+// Nunca lanza: { ok:true, version, source } | { ok:false, error }.
+async function fetchRemoteVersion(opts) {
+  opts = opts || {};
+  const api = await readVersionFrom(opts.apiUrl || API_VERSION_URL, 'api', 12_000);
+  if (api.ok) return api;
+
+  const raw = await readVersionFrom(opts.rawUrl || RAW_VERSION_URL, 'raw', 8_000);
+  if (raw.ok) return Object.assign(raw, { apiError: api.error });
+  return { ok: false, error: 'la API dijo "' + api.error + '" y el respaldo "' + raw.error + '"' };
+}
+
+// Traduce (versión instalada + respuesta de GitHub) al estado que ve el editor.
+//
+// La distinción que importa: `changed:false` con `verified:false` significa
+// "no pude averiguarlo", NO "estás al día". Una fuente cacheada puede estar
+// ATRASADA, nunca adelantada: si dice que hay versión nueva es verdad, pero si
+// dice que no hay, puede estar mintiendo. Por eso solo la API (o git) alcanzan
+// para afirmar que no hay nada nuevo.
+function decideUpdate(current, r) {
+  if (!r.ok) {
+    return { ok: false, current, changed: false, verified: false, error: 'No se pudo consultar GitHub: ' + r.error };
+  }
+  const changed = cmpVersions(r.version, current) > 0;
+  const out = { ok: true, current, remote: r.version, changed, verified: changed || r.source === 'api', source: r.source };
+  if (!out.verified) {
+    out.error = 'No pude confirmar si hay una versión nueva: la API de GitHub falló (' +
+      (r.apiError || 'sin detalle') + ') y el respaldo puede estar atrasado.';
+  }
+  return out;
 }
 
 // Descarga el zip del branch a un archivo local.
@@ -1194,55 +1265,61 @@ async function applyPackagedUpdate() {
   }
 }
 
-// Chequea GitHub SIN aplicar. Devuelve { ok, current, remote, changed }.
-async function checkUpdate() {
+// Chequea GitHub SIN aplicar. Devuelve
+// { ok, current, remote, changed, verified, source }.
+//   ok:false            → no se pudo consultar (hay `error` para mostrar).
+//   changed:false + verified:true  → estás al día, confirmado.
+//   changed:false + verified:false → NO SE SABE (respondió el respaldo cacheado).
+async function checkUpdate(opts) {
   const current = getVersion();
   if (isGitRepo()) {
+    // Instalación de desarrollo: git es la fuente más fresca que hay y no pasa
+    // por ningún CDN. Se compara por COMMIT, no por versión, para que se vean
+    // también los cambios que todavía no subieron el número.
     const f = await gitRun(['fetch', 'origin', 'main']);
-    if (f.code !== 0) return { ok: false, error: 'No se pudo consultar GitHub: ' + salidaDe(f, 'fetch falló').slice(0, 200), current };
+    if (f.code !== 0) return { ok: false, current, changed: false, verified: false, error: 'No se pudo consultar GitHub: ' + salidaDe(f, 'fetch falló').slice(0, 200) };
     const rv = await gitRun(['show', 'origin/main:version.json']);
     let remote = current;
     try { remote = JSON.parse(rv.out).version || remote; } catch (e) {}
     const cnt = await gitRun(['rev-list', '--count', 'HEAD..origin/main']);
     const behind = parseInt((cnt.out || '0').trim(), 10) || 0;
-    return { ok: true, current, remote, behind, changed: behind > 0 };
+    return { ok: true, current, remote, behind, changed: behind > 0, verified: true, source: 'git' };
   }
-  try {
-    const remote = await fetchRemoteVersion();
-    // Solo hacia ADELANTE: si lo local es igual o más nuevo que main, no hay
-    // actualización (evita que ⟳ "baje" una instalación adelantada).
-    return { ok: true, current, remote, changed: !!remote && cmpVersions(remote, current) > 0 };
-  } catch (e) {
-    return { ok: false, error: 'No se pudo consultar GitHub: ' + ((e && e.message) || e), current };
-  }
+  return checkPackagedUpdate(current, opts);
+}
+
+// El chequeo de la instalación empaquetada (ZXP), aparte para poder probarlo
+// contra un GitHub de mentira sin depender de si esta copia tiene .git.
+// Solo hacia ADELANTE: ⟳ nunca "baja" una instalación adelantada respecto de main.
+async function checkPackagedUpdate(current, opts) {
+  return decideUpdate(current, await fetchRemoteVersion(opts));
 }
 
 // Actualiza el plugin a la versión remota. Instalación git → reset --hard;
 // instalación empaquetada → descarga+reemplazo. Devuelve
 // { ok, changed, version, previous, remoteVersion }.
-async function selfUpdate() {
+async function selfUpdate(opts) {
   const before = getVersion();
 
+  // Una sola fuente de verdad para los dos caminos: si ⟳ y el aviso automático
+  // usaran criterios distintos, volveríamos a tener un panel que dice una cosa
+  // y hace otra.
+  const chk = await checkUpdate(opts);
+  if (!chk.ok) return { ok: false, error: chk.error };
+  if (!chk.changed) {
+    return { ok: true, changed: false, verified: chk.verified, version: before, remoteVersion: chk.remote, error: chk.error };
+  }
+
   if (isGitRepo()) {
-    const chk = await checkUpdate();
-    if (!chk.ok) return { ok: false, error: chk.error };
-    if (!chk.changed) return { ok: true, changed: false, version: before, remoteVersion: chk.remote };
     const r = await gitRun(['reset', '--hard', 'origin/main']);
     if (r.code !== 0) return { ok: false, error: 'No se pudo aplicar la actualización: ' + salidaDe(r, 'reset falló').slice(0, 200) };
-    return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
+    return { ok: true, changed: true, verified: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
   }
 
   // Instalación empaquetada (ZXP): descarga + reemplazo, sin git.
-  let remote;
-  try { remote = await fetchRemoteVersion(); }
-  catch (e) { return { ok: false, error: 'No se pudo consultar GitHub: ' + ((e && e.message) || e) }; }
-  if (!remote) return { ok: false, error: 'No se pudo leer la versión remota de GitHub.' };
-  // Solo hacia adelante (igual que checkUpdate): nunca "bajar" de versión.
-  if (cmpVersions(remote, before) <= 0) return { ok: true, changed: false, version: before, remoteVersion: remote };
-
   try {
     await applyPackagedUpdate();
-    return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: remote };
+    return { ok: true, changed: true, verified: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
   } catch (e) {
     return { ok: false, error: 'No se pudo actualizar: ' + ((e && e.message) || e) };
   }
@@ -1632,4 +1709,7 @@ module.exports = {
   _listOtherResources: listOtherResources,
   // Expuesto para el test de Windows (dónde busca los binarios que CEP no ve).
   _windowsExtraPaths: windowsExtraPaths,
+  // Expuestos para los tests del chequeo de versión (GitHub de mentira local).
+  _fetchRemoteVersion: fetchRemoteVersion,
+  _checkPackagedUpdate: checkPackagedUpdate,
 };
