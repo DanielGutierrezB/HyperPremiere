@@ -144,6 +144,28 @@ async function composeAnimation(a) {
   }
 
   if (!best.html) throw new Error('El proveedor "' + a.config.provider + '" devolvió respuesta vacía');
+
+  // Si después de todo el andamiaje sigue incompleto, esta composición NO se
+  // puede renderizar, y decirlo acá es parte del trabajo de este módulo: es el
+  // que conoce el contrato.
+  //
+  // Antes se devolvía igual y el render se la comía. Los dos finales posibles
+  // eran malos: o el CLI cortaba con "Composition has zero duration" —que él
+  // mismo marca como permanente— después de gastar los tres intentos de la
+  // escalera bajando GPU y workers, y el editor terminaba leyendo un error que
+  // nombraba la placa de video; o salía un .mov de la duración pedida con la
+  // animación congelada, que es peor, porque eso no falla: se descubre mirando.
+  //
+  // El HTML viaja en el error para que quien llame lo pueda guardar: se pagó, y
+  // con él se puede ver qué pasó o arreglarlo a mano.
+  if (best.problem) {
+    throw Object.assign(new Error(
+      'La composición no quedó renderizable: ' + problemText(best.problem) + '.\n' +
+      'No la mando a renderizar porque no puede salir bien: daría un error de duración o un video congelado.\n' +
+      'Qué hacer: volvé a generar el marcador, o corregí el HTML a mano y usá "Renderizar HTML".'
+    ), { html: best.html, problem: best.problem, usage: usage, noRenderizable: true });
+  }
+
   return { html: best.html, usage: usage };
 }
 

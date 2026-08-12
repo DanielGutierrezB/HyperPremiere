@@ -155,13 +155,25 @@ extra, solo cuando lo usás.
   se **reparte** entre los carriles (con 2 carriles, 3 workers cada uno en vez de 6). Y
   repartir salió gratis, incluso mejor — medido con el mismo HTML y salida idéntica byte a
   byte, bajar de 6 a 3 workers dio **51s → 38s (-26%)** en un marcador de 54s: la captura
-  no era el cuello, cada worker extra era otro Chrome que arrancar.
+  no era el cuello, cada worker extra era otro Chrome que arrancar. Con cuántos workers
+  conviene en **tu** máquina ya no se supone: se aprende de tus propios renders (ver
+  **Con cuántos workers conviene renderizar**). Mientras aprende, los carriles se quedan
+  quietos — si cambiaran de render en render, cada medición se habría tomado con otra
+  cantidad de Chrome al lado y no habría con qué comparar.
 - **Lo que toca Premiere va de a uno.** Importar el video, colocarlo y agregar pistas
   comparten el bin de la secuencia y las pistas, así que esas escrituras se serializan
   aunque los renders vayan en paralelo (cuesta ~1s por clip y la ganancia queda intacta).
   Sin eso, dos colocaciones simultáneas podían dejar el video de un marcador en otro,
   sin ningún error: Premiere no siempre materializa el import de inmediato. Por lo mismo
   el clip importado se busca por su **ruta de media** y no por nombre ni por posición.
+- **Colocar no te reacomoda la secuencia.** El panel solo agrega la pista de video que
+  necesita cuando la de arriba está ocupada; pista de **audio** agrega únicamente si el
+  archivo que está colocando trae sonido, y la pone al final para que A1, A2… sigan
+  siendo las mismas. Antes aparecía un "Audio N" vacío en cada colocación: el comando de
+  Premiere que agrega pistas suma **una de audio por defecto** si no le decís que no.
+  Si el archivo tiene audio (una animación con música o voz), Premiere baja el clip
+  entero, video y audio. Quién trae audio y quién no lo mira el motor con `ffprobe`
+  antes de llamar: adentro de Premiere no hay con qué abrir el archivo.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
 - **Qué está haciendo, en vivo, y cuánto lleva.** La barra ya no dice una sola frase
   durante tres minutos. Debajo de la etapa va una línea que se refresca sola con lo
@@ -237,7 +249,8 @@ extra, solo cuando lo usás.
   `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
   marcadores + wiring). `css/style.css`.
 - **ExtendScript** (`cep/jsx/host.jsx`) — lee marcadores, mueve el playhead, importa y
-  coloca/recolorea el clip por nombre, exporta el frame del programa, purga clips al limpiar.
+  coloca/recolorea el clip (buscándolo por su ruta de media) sin agregar pistas de más,
+  exporta el frame del programa, purga clips al limpiar.
 - **Motor Node in-process** (`bridge/`) — corre **dentro del panel** vía `require` (sin
   proceso externo ni servidor):
   - `bridge/engine.js` — orquestación en 2 etapas (`prepareGenerate`/`prepareFeedback` =
@@ -266,7 +279,14 @@ extra, solo cuando lo usás.
     (`renderLanes`) y los workers de cada render, que **se reparten el mismo presupuesto**
     en vez de ser dos diales sueltos sobre los mismos cores. Al terminar deja en el ⬇ Log
     con qué configuración renderizó y cuánto tardó, así un render lento se distingue de uno
-    que cayó al modo software.
+    que cayó al modo software. Tres piezas viven sueltas y no adentro del render, porque
+    son decisiones con consecuencias y así se prueban sin levantar Chromium: `argsDeRender`
+    (qué comando se arma), `esErrorDeComposicion` (si reintentar puede servir) y
+    `correrEscalera` (hasta dónde bajar antes de rendirse).
+  - `bridge/store/render-profile.js` — lo que esta máquina fue mostrando sobre con cuántos
+    workers rinde mejor, aprendido de sus propios renders. La comparación es lo delicado
+    (solo entre marcadores de tamaño parecido, por el mejor tiempo de cada uno, y con una
+    ventaja mínima), así que vive en una función pura y aparte.
   - `bridge/prompt/` — system prompt con el sistema de diseño ("menos es más",
     acompañar sin ilustrar literal, coreografía del motion) y el protocolo
     **PLAN → CÓDIGO → AUDITORÍA**: el modelo diseña regiones que no se pisan,
@@ -425,6 +445,67 @@ Ahora la precisión se elige según lo que haya:
 
 Solo se reintenta **una vez**: si en CPU también falla, el problema no era la placa y el
 mensaje lo dice.
+
+## Cuando el render no puede salir bien
+
+Un caso real (Marcador 13): el modelo devolvió una composición **sin el andamiaje** que el
+motor de captura necesita —no declaraba duración, no registraba la timeline—. Se mandó
+igual a renderizar y el CLI cortó con *"Composition has zero duration… this is permanent"*.
+La escalera de intentos, que existe para los **crashes**, reaccionó como si fuera un
+problema de máquina: bajó la GPU a software, bajó los workers, reintentó. Tres veces el
+mismo error. Un minuto tirado y, al final, un mensaje que le hablaba al editor de
+`browser-gpu=software`, o sea de una placa de video que no tenía nada que ver.
+
+Tres cambios, en el orden en que actúan:
+
+1. **El reparador adopta cualquier raíz.** Antes exigía `<div id="stage">` literal. Ahora
+   busca en orden: `id="stage"`, cualquier elemento con `data-composition-id`, o —si del
+   `<body>` cuelga uno solo— ése. Con la raíz encontrada completa en código los atributos
+   que falten, sin gastar otra llamada al modelo. También distingue una animación de
+   **puro CSS** (que no necesita registrar nada) de una **timeline de GSAP sin registrar**
+   (que sí, y para eso se vuelve al modelo): antes las trataba igual y pedía correcciones
+   que no hacían falta.
+2. **Lo que no se puede renderizar, no se renderiza.** Si después de todo eso el andamiaje
+   sigue incompleto, la generación **corta ahí** con el motivo escrito y qué hacer. El
+   HTML se guarda igual —ya se pagó— así se puede mirar o corregir a mano y usar
+   **Renderizar HTML**. Los dos finales que evita son igual de malos: el error de duración
+   después de tres intentos, o un `.mov` de la duración pedida con la animación
+   **congelada**, que no falla y se descubre mirando.
+3. **La escalera distingue un crash de un problema de contenido.** Bajar GPU y workers
+   arregla un Chromium que se muere o una máquina sin memoria; no le agrega una duración a
+   una composición que no la declara. Ante un error de contenido corta en el primer
+   intento y lo dice con todas las letras: *el problema no está en el hardware*.
+
+## Con cuántos workers conviene renderizar
+
+Salía de una cuenta sobre la RAM y los cores. Da un número plausible, y nadie había
+comprobado que fuera el bueno.
+
+El primer intento de comprobarlo fue **medir con una composición de prueba** antes del
+primer render de cada máquina. Se descartó por lo que mostró la propia medición: en el M3
+Max dio **58,1s el reparto en paralelo contra 65,2s el de un worker**, al revés de lo que
+había dado un banco de pruebas anterior **en la misma máquina**. La diferencia entre las
+dos fue el estado del equipo — la segunda con Premiere abierto y la carga en 7, que es
+exactamente cómo trabaja un editor. Una medición de una sola vez, tomada en un mal
+momento, queda grabada para siempre; y encima cuesta minutos de espera antes del primer
+render.
+
+Lo que quedó: **aprender de los renders que ya se hacen**. Cada render exitoso deja
+anotado cuántos fotogramas fueron y cuánto tardó, en
+`~/.hyperpremiere/render-profile.json`. Mientras junta datos alterna los dos repartos, y
+elige uno solo cuando la evidencia alcanza:
+
+- **Solo compara marcadores de tamaño parecido.** Un render corto está dominado por el
+  arranque de Chrome y el encode (~40s fijos contra ~0,1s por fotograma en el M3 Max):
+  comparar uno de 4s contra uno de 30s no dice cuál reparto es mejor, dice cuál marcador
+  era más largo.
+- **Se queda con el mejor tiempo de cada uno,** no con el promedio. Premiere exportando o
+  un backup corriendo solo pueden hacer las cosas más lentas, nunca más rápidas.
+- **Necesita 3 corridas de cada reparto y una ventaja de 10%,** ganando en todos los
+  tamaños comparables. Por debajo de eso no toca nada: el reparto de siempre se queda.
+
+En el M3 Max los dos repartos terminaron a 52,5s y 54,2s sobre el mismo marcador — un 3%,
+o sea empate. Ahí la regla correcta es justamente **no cambiar nada**.
 
 ## Cuando el login de Claude falla
 
@@ -620,9 +701,24 @@ actualización, que quedarse sin cupo de la API se reporte como "no pude averigu
 como "estás al día", que si la API falla el respaldo sirva igual, y que nunca se proponga
 "actualizar" a una versión más vieja que la instalada.
 
-Aparte, `node test/manual/live-providers.js` habla con los CLI de verdad (gasta
-tokens y tarda): es lo que hay que correr cuando un CLI se actualiza, para ver si
-sigue hablando el mismo idioma.
+Y el **render que no puede salir bien**, que es donde se tiraba un minuto para llegar a un
+mensaje equivocado: que una composición sin andamiaje **no llegue** al render, que el
+motivo no nombre la GPU (porque no es la GPU), que el HTML se conserve igual, que el error
+permanente **corte** la escalera en el primer intento y que un crash, en cambio, **sí**
+baje al escalón siguiente. Y el **reparto de workers aprendido**: que no se comparen
+marcadores de tamaños distintos, que una diferencia chica no cambie nada, que un pico de
+carga no hunda a un reparto que en su mejor momento fue más rápido, y que lo aprendido en
+otra máquina no se use acá.
+
+Aparte, dos scripts a mano para cuando se toca el render:
+`node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué
+fue aprendiendo; `node test/manual/mutaciones-render.js` mete a propósito cada regresión
+que estos tests dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando
+rompés el código no está probando nada.
+
+Y `node test/manual/live-providers.js` habla con los CLI de verdad (gasta tokens y tarda):
+es lo que hay que correr cuando un CLI se actualiza, para ver si sigue hablando el mismo
+idioma.
 
 ## Diagnóstico
 

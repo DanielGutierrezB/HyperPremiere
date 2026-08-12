@@ -85,10 +85,16 @@
     /**
      * Importa el video y lo coloca en la secuencia con etiqueta de color.
      * Serializada (ver callMutating): toca el bin y las pistas.
+     *
+     * `hasAudio` viaja como 1/0 y lo resuelve el motor con ffprobe (mediaHasAudio):
+     * es lo que le permite al host agregar pista de audio SOLO cuando el archivo
+     * trae sonido. Ante la duda va 0, que es lo que no le mueve las pistas al
+     * editor; el audio del clip lo baja Premiere igual si existe.
      */
-    placeClip: function (movPath, seqName, startSec, durationSec, colorLabel, cb) {
+    placeClip: function (movPath, seqName, startSec, durationSec, colorLabel, hasAudio, cb) {
       callMutating("hp_placeClipInSequence(" + JSON.stringify(movPath) + ", " + JSON.stringify(seqName) + ", " +
-        Number(startSec) + ", " + Number(durationSec) + ", " + Number(colorLabel) + ")", cb);
+        Number(startSec) + ", " + Number(durationSec) + ", " + Number(colorLabel) + ", " +
+        (hasAudio ? 1 : 0) + ")", cb);
     },
     /** Recolorea el clip que arranca en startSec (marca "procesado en HQ"). */
     recolorClip: function (seqName, startSec, colorLabel, cb) {

@@ -114,6 +114,93 @@ function scanStringVars(html, isCode) {
   return vars;
 }
 
+// Elementos sin cierre: no abren nivel de anidación.
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+  'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+/**
+ * Elementos que cuelgan DIRECTAMENTE del `<body>`.
+ *
+ * Hay que contar la anidación: "el primer div del documento" puede ser un hijo
+ * cualquiera. Y hay que saltear el contenido de `<script>`/`<style>`, donde un
+ * `<` es un menor-que y no el principio de un tag.
+ */
+function topLevelElements(html, isCode) {
+  const openBody = html.match(/<body[^>]*>/i);
+  const start = openBody ? openBody.index + openBody[0].length : 0;
+  const closeBody = html.toLowerCase().lastIndexOf('</body>');
+  const end = closeBody === -1 ? html.length : closeBody;
+
+  const re = /<(\/?)([a-zA-Z][\w-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+  re.lastIndex = start;
+  const out = [];
+  let depth = 0;
+  let m;
+  while ((m = re.exec(html)) && m.index < end) {
+    if (!isCode(m.index)) continue;
+    const name = m[2].toLowerCase();
+    const closing = m[1] === '/';
+    if (!closing && (name === 'script' || name === 'style')) {
+      const cierre = html.toLowerCase().indexOf('</' + name, m.index);
+      re.lastIndex = cierre === -1 ? end : cierre;
+      continue;
+    }
+    if (VOID_TAGS.has(name) || /\/\s*$/.test(m[3])) continue;
+    if (closing) { depth = Math.max(0, depth - 1); continue; }
+    if (depth === 0) out.push({ name: name, text: m[0], index: m.index });
+    depth++;
+  }
+  return out;
+}
+
+/**
+ * Cuál es el contenedor de la composición.
+ *
+ * Nuestra plantilla pide `<div id="stage">` y el modelo casi siempre la
+ * respeta. Cuando no, rendirse sale caro: se gasta una llamada extra y, si esa
+ * tampoco cumple, se manda a renderizar algo que no puede funcionar. Además
+ * `id="stage"` es una convención NUESTRA — lo que el motor de render mira es
+ * `data-composition-id`.
+ *
+ * Por eso se buscan tres cosas, en orden, y solo se adopta lo que no deja lugar
+ * a dudas: elegir mal la raíz no falla rápido, deja el diseño roto en pantalla.
+ * Adoptar es barato y seguro porque solo AGREGAMOS atributos: el layout no se
+ * toca.
+ */
+function findStage(html, isCode) {
+  const tags = scanOpenTags(html, isCode);
+
+  const porId = tags.filter((t) => {
+    const a = parseAttrs(t.text).get('id');
+    return a && a.value === 'stage';
+  });
+  if (porId.length === 1) return { tag: porId[0] };
+  if (porId.length > 1) return { problem: PROBLEM.MANY_STAGES };
+
+  const porContrato = tags.filter((t) => parseAttrs(t.text).has('data-composition-id'));
+  if (porContrato.length === 1) {
+    return { tag: porContrato[0], adopted: 'la raíz venía marcada con data-composition-id en vez de id="stage"' };
+  }
+  if (porContrato.length > 1) return { problem: PROBLEM.MANY_STAGES };
+
+  const raiz = topLevelElements(html, isCode);
+  if (raiz.length === 1) {
+    return { tag: raiz[0], adopted: 'se adoptó como contenedor el único elemento que cuelga del <body>' };
+  }
+  return { problem: PROBLEM.NO_STAGE };
+}
+
+// ¿Hay una timeline de GSAP que registrar? Si la composición anima con CSS o
+// WAAPI no hay NADA que registrar: el motor saca la duración de data-duration y
+// un `window.__timelines` vacío es correcto, no un defecto. Tratar los dos casos
+// igual mandaba al modelo composiciones que estaban bien.
+function hasGsapTimeline(html, isCode) {
+  const re = /gsap\s*\.\s*timeline\s*\(/g;
+  let m;
+  while ((m = re.exec(html))) if (isCode(m.index)) return true;
+  return false;
+}
+
 // Aplica ediciones {start, end, text} de atrás hacia adelante, así los índices de
 // las anteriores siguen siendo válidos. Concatena porciones: ningún `$` se
 // interpreta.
@@ -148,24 +235,14 @@ function inspectComposition(html, opts) {
   const durationSec = Number(opts.durationSec || 0);
 
   const isCode = outsideComments(out);
-  const stages = scanOpenTags(out, isCode).filter((t) => {
-    const a = parseAttrs(t.text).get('id');
-    return a && a.value === 'stage';
-  });
-  if (stages.length !== 1) {
-    // Sin un #stage único no hay nada que se pueda reparar a ciegas (y una
-    // composición con sub-composiciones no es lo que generamos acá).
-    return {
-      html: out,
-      fixes: [],
-      problem: stages.length ? PROBLEM.MANY_STAGES : PROBLEM.NO_STAGE,
-    };
-  }
+  const hallazgo = findStage(out, isCode);
+  if (!hallazgo.tag) return { html: out, fixes: [], problem: hallazgo.problem };
 
-  const stage = stages[0];
+  const stage = hallazgo.tag;
   const attrs = parseAttrs(stage.text);
   const fixes = [];
   const tagEdits = [];
+  if (hallazgo.adopted) fixes.push(hallazgo.adopted);
 
   // Escribe un atributo del stage: si ya está se reemplaza su valor en su lugar,
   // si no se encola para agregarlo antes del '>' de cierre (todos los agregados
@@ -197,22 +274,28 @@ function inspectComposition(html, opts) {
     const keyStart = rm.index + rm[0].indexOf(keyText, '__timelines'.length);
     regs.push({ keyText: keyText, start: keyStart, end: keyStart + keyText.length });
   }
-  if (!regs.length) {
-    // No se inventa: habría que adivinar el nombre de la variable de la timeline
-    // Y que esté en el alcance donde insertemos el código. Si erramos, el render
-    // no falla rápido — sale un video roto. Para esto sí se vuelve al modelo.
-    return { html: out, fixes: fixes, problem: PROBLEM.NO_REGISTRATION };
-  }
   if (regs.length > 1) {
     // Varios registros con un solo stage: no se sabe cuál es el de esta
     // composición, y elegir mal deja el video congelado.
     return { html: out, fixes: fixes, problem: PROBLEM.MANY_REGISTRATIONS };
   }
+  if (!regs.length && hasGsapTimeline(out, isCode)) {
+    // Hay una timeline armada pero sin registrar, y el registro no se inventa:
+    // habría que adivinar el nombre de la variable Y que esté en el alcance
+    // donde insertemos el código. Si erramos, el render no falla rápido — sale
+    // un video congelado. Para esto sí se vuelve al modelo.
+    return { html: out, fixes: fixes, problem: PROBLEM.NO_REGISTRATION };
+  }
+
+  // Sin registro y sin GSAP no falta nada: la composición anima con CSS o WAAPI
+  // y al motor le alcanza con data-duration.
+  const reg = regs[0] || null;
 
   // A qué id apunta hoy el registro: el literal si es literal, o el valor de la
   // variable si la podemos resolver. `undefined` = no resolvable (una expresión).
-  const literalKey = (regs[0].keyText.match(/^["']([^"']*)["']$/) || [])[1];
-  const keyValue = literalKey !== undefined ? literalKey : scanStringVars(out, isCode).get(regs[0].keyText);
+  const literalKey = reg ? (reg.keyText.match(/^["']([^"']*)["']$/) || [])[1] : undefined;
+  const keyValue = !reg ? undefined
+    : (literalKey !== undefined ? literalKey : scanStringVars(out, isCode).get(reg.keyText));
 
   // 1) Id de la composición. Manda el del stage (es lo que escanea el motor); si
   //    no tiene, se adopta el que ya usa el script para no romper su registro.
@@ -240,10 +323,10 @@ function inspectComposition(html, opts) {
   //    Si ya apunta bien (el caso normal: COMP_ID con el valor correcto) no se
   //    toca nada — el HTML tiene que volver idéntico cuando está sano.
   const docEdits = [];
-  if (keyValue !== id) {
-    docEdits.push({ start: regs[0].start, end: regs[0].end, text: "'" + id + "'" });
+  if (reg && keyValue !== id) {
+    docEdits.push({ start: reg.start, end: reg.end, text: "'" + id + "'" });
     fixes.push('el registro de la timeline apuntaba a ' +
-      (keyValue === undefined ? regs[0].keyText + ' (no resolvible)' : '"' + keyValue + '"') +
+      (keyValue === undefined ? reg.keyText + ' (no resolvible)' : '"' + keyValue + '"') +
       ' y el stage a "' + id + '": alineado');
   }
 

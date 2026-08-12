@@ -21,7 +21,7 @@ const { hpFetch } = require('./providers/http');
 // Spawn de procesos externos (git, claude, npm, unzip): nunca lanza.
 const { run, salidaDe } = require('./exec');
 // Transcripción local de la secuencia con Whisper (sin nube, sin tokens).
-const { transcribeMedia, cancelTranscription, whisperStatus } = require('./transcribe');
+const { transcribeMedia, cancelTranscription, whisperStatus, hasAudioStream } = require('./transcribe');
 // Instalar Whisper desde el panel (parte del mismo flujo de "preparar motor").
 const { whisperInstallPlan, installWhisper, cancelWhisperInstall } = require('./whisper-install');
 // Login de Claude en dos fases (URL + código) o token pegado directo.
@@ -456,6 +456,20 @@ function newTempAudioPath() {
   return { ok: true, path: path.join(dir, 'sequence.wav') };
 }
 
+// ¿El video que estamos por colocar trae audio? Lo pregunta el panel JUSTO antes
+// de mandarlo a Premiere: el host usa la respuesta para agregar pista de audio
+// solo cuando hace falta (una animación con alpha es muda, y agregarle una pista
+// le reacomoda la secuencia al editor). Se responde acá porque ExtendScript no
+// puede abrir el archivo y ffprobe sí — es el mismo hasAudioStream que usa la
+// transcripción. Si no se puede saber (sin ffprobe), `ok: false` y el panel
+// asume mudo, que es lo que no toca nada.
+async function mediaHasAudio(body) {
+  const p = (body && body.path) || '';
+  if (!p) return { ok: false, hasAudio: false, error: 'falta la ruta del archivo' };
+  const has = await hasAudioStream(p);
+  return { ok: has !== null, hasAudio: has === true };
+}
+
 // ── Modelos de Anthropic disponibles de verdad ───────────────────────
 // Antes la lista estaba hardcodeada en el panel: cada modelo nuevo (Opus 5…)
 // había que agregarlo a mano y no aparecía. Ahora se pregunta a Anthropic.
@@ -688,12 +702,20 @@ async function prepareGeneration(body, mode, onProgress) {
   // Recursos de referencia (PDFs, imágenes, docs) subidos por el editor: se
   // guardan al lado de la render y se referencian por ruta en el prompt para
   // que el agente (claude-cli) los lea con sus herramientas antes de componer.
+  //
+  // Nombrar la ruta no alcanza para que el modelo pueda abrirla: los CLI solo
+  // leen sin preguntar dentro de las carpetas que tienen declaradas, y esta
+  // vive en el disco del proyecto (que en Windows puede ser otra unidad
+  // entera). Por eso la carpeta viaja aparte, en `readDirs`, y el proveedor se
+  // la declara al CLI. Sin eso el modelo compone sin los recursos y no avisa.
+  const readDirs = [];
   if (resourcesList.length) {
     const savedResPaths = saveResources(outPaths.resourcesDir, resourcesList);
     if (savedResPaths.length) {
       userPrompt += '\n\n## Recursos de referencia adjuntos (leelos desde disco antes de componer)\n' +
         'El editor subió estos archivos como referencia. Abrilos/leelos antes de diseñar la composición:\n' +
         savedResPaths.map((p) => '- ' + p).join('\n');
+      readDirs.push(outPaths.resourcesDir);
     }
   }
 
@@ -787,10 +809,25 @@ async function prepareGeneration(body, mode, onProgress) {
   // nada. Separados, contestan la pregunta útil: si un recurso tardó ocho
   // minutos, ¿bajo el nivel de pensamiento o acorto el marcador?
   const modelStartedAt = Date.now();
-  const { html, usage } = await composeAnimation({
-    provider, config, systemPrompt, userPrompt, images: stillsList,
-    durationSec, markerSlug, report,
-  });
+  let html, usage;
+  try {
+    ({ html, usage } = await composeAnimation({
+      provider, config: Object.assign({}, config, { readDirs }),
+      systemPrompt, userPrompt, images: stillsList,
+      durationSec, markerSlug, report,
+    }));
+  } catch (e) {
+    // compose corta cuando la composición no es renderizable. El HTML igual se
+    // guarda: ya se pagó, y es con lo que el editor puede ver qué pasó o
+    // arreglarlo a mano y darle a "Renderizar HTML".
+    if (e && e.noRenderizable && e.html) {
+      try {
+        fs.writeFileSync(outPaths.html, e.html, 'utf8');
+        e.message += '\nEl HTML quedó guardado en: ' + outPaths.html;
+      } catch (e2) {}
+    }
+    throw e;
+  }
   const modelMs = Date.now() - modelStartedAt;
 
   fs.writeFileSync(outPaths.html, html, 'utf8');
@@ -1695,6 +1732,7 @@ module.exports = {
   loadTranscript,
   transcriptSummary,
   newTempAudioPath,
+  mediaHasAudio,
   loginClaudeStart,
   loginClaudeCode,
   loginClaudeToken,

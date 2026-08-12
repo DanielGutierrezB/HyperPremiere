@@ -134,6 +134,75 @@ function imagesAsFilesNote(refs) {
 }
 
 /**
+ * El andamiaje obligatorio, repetido corto y tajante al FINAL del mensaje.
+ *
+ * APAGADO POR DEFECTO. Se prende con `contractTail: true` en el proveedor de
+ * Cursor. Lo que sigue es por qué existe y por qué igual no se usa.
+ *
+ * La hipótesis: `cursor-agent` no tiene canal de system prompt (su --help no
+ * ofrece ninguno), así que el system prompt viaja adentro del mensaje de
+ * usuario. Como lo que queda al final de un texto largo se obedece más que lo
+ * que queda al principio —que es el modo de falla que se vio en Windows con el
+ * CLI de Claude, con el system prompt en el carácter 4.223 y composiciones sin
+ * `<div id="stage">`—, repetir el andamiaje al final debería subir el
+ * cumplimiento.
+ *
+ * LA MEDICIÓN DIJO QUE NO. Contra el cursor-agent de verdad
+ * (test/manual/cursor-contrato.js), corridas intercaladas, contando cuántas
+ * composiciones cumplen el contrato SIN que el reparador tenga que adoptarles
+ * la raíz:
+ *
+ *   claude-sonnet-5-thinking-high (el modelo por defecto), corridas
+ *   intercaladas de 10 y 10:  prompt anterior 10/10  ·  con recordatorio 10/10
+ *   composer-2.5 con el caso difícil (la continuidad de engine.js empujando el
+ *   contrato a 5.000 caracteres del final), 10 y 10:  10/10  ·  10/10
+ *   grok-4.6-low-fast y codex-5.3-low-fast, 3 cada uno: 3/3 sin recordatorio
+ *   Y 6/6 más en el modelo por defecto con lo que quedó puesto (encabezados
+ *   sin recordatorio), para confirmar que no aparecen rechazos.
+ *
+ * No hay margen que ganar: el contrato ya se cumple siempre. De hecho el
+ * control negativo —borrarle al prompt system.md ENTERO y la sección de
+ * contrato de build-context.js— igual devolvió `id="stage"`,
+ * `data-composition-id` y `window.__timelines[...]` en 4 de 4: estos modelos
+ * conocen las convenciones de HyperFrames sin que se las digamos.
+ *
+ * Y cuesta: +843 caracteres de entrada por llamada (~5,8% del prompt) y, en el
+ * modelo por defecto, una mediana de +14% de tokens de salida y +16% de tiempo
+ * (172s → 200s). Los rangos se pisan, así que el sobrecosto de salida no está
+ * probado; el de entrada sí, y la mejora es cero.
+ *
+ * Se deja el código, no el interruptor puesto: la respuesta vale para estos
+ * modelos y este prompt. Si mañana cambia el modelo por defecto, o engine.js
+ * empieza a colgar secciones mucho más largas después del contrato, la pregunta
+ * se vuelve a abrir — y entonces se vuelve a medir, no a suponer.
+ *
+ * Qué repite y qué no: SOLO el andamiaje —el contenedor con sus data-*, la
+ * timeline única y su registro—, que son las tres cosas sin las cuales el
+ * render no existe. Nada de estilo: saltear el estilo da composiciones
+ * distintas, no composiciones rotas.
+ *
+ * Los proveedores con system prompt de verdad (claude-cli, claude-api) NO usan
+ * esto: ahí el contrato ya viaja donde se obedece.
+ *
+ * @returns {string}
+ */
+function contractReminder() {
+  return '\n\n---\n\n' +
+    '# ANTES DE RESPONDER — el contrato que no se negocia\n\n' +
+    'Esto va último porque es lo único sin lo cual el render NO EXISTE. ' +
+    'Repasá los cuatro puntos sobre tu propio HTML antes de mandarlo:\n\n' +
+    '1. UN solo contenedor raíz, con TODOS estos atributos:\n' +
+    '   `<div id="stage" data-composition-id="comp" data-start="0" ' +
+    'data-width="1920" data-height="1080" data-duration="…" data-fps="30">`\n' +
+    '   donde `data-duration` es la duración objetivo que te pedí arriba, en segundos, número > 0.\n' +
+    '2. UNA sola timeline GSAP, pausada, con tiempos absolutos.\n' +
+    '3. El script TERMINA registrándola con la MISMA clave que `data-composition-id`:\n' +
+    "   `window.__timelines['comp'] = tl;`\n" +
+    '4. Devolvé SOLO el HTML, de `<!DOCTYPE html>` a `</html>`. Nada antes, nada después.\n\n' +
+    'Si falta cualquiera de los cuatro, la composición no se puede renderizar y el trabajo se pierde entero.';
+}
+
+/**
  * Normaliza el uso de tokens a una forma común para todos los proveedores.
  * Los campos ausentes quedan en 0; costUsd es null cuando el proveedor no lo
  * reporta (Anthropic API) y 0 cuando es local (Ollama).
@@ -161,5 +230,5 @@ function makeUsage(provider, model, raw) {
 
 module.exports = {
   getProvider, stripHtmlFence, parseImageDataUrl, makeUsage,
-  imageFileName, imagesAsFilesNote,
+  imageFileName, imagesAsFilesNote, contractReminder,
 };

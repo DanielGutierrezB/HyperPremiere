@@ -25,6 +25,12 @@
  * temporales y se mencionan por ruta absoluta dentro del prompt para que el
  * agente los lea con sus propias herramientas. Cuando el CLI soporte adjuntar
  * imagenes directamente en headless, migrar a ese mecanismo.
+ *
+ * Y como esos archivos NO están en el directorio de trabajo del CLI, hay que
+ * declararle la carpeta con --add-dir: sin eso el CLI contesta "ask" a la
+ * lectura ("Path is outside allowed working directories") y en headless no hay
+ * a quién preguntarle, así que la deniega y el modelo diseña sin ver el cuadro.
+ * Ver `dirsPermitidos`.
  */
 
 const fs = require('fs');
@@ -41,7 +47,7 @@ const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas 
 
 /**
  * Guarda los data URLs como archivos temporales.
- * Devuelve { paths, cleanup } — cleanup borra todo y nunca lanza.
+ * Devuelve { paths, dir, cleanup } — cleanup borra todo y nunca lanza.
  */
 function writeTempImages(images) {
   const paths = [];
@@ -69,7 +75,67 @@ function writeTempImages(images) {
     }
   }
 
-  return { paths, cleanup };
+  return { paths, dir, cleanup };
+}
+
+/**
+ * Deja el system prompt en un archivo temporal.
+ *
+ * Por qué un archivo y no el texto: en Windows el prompt de usuario viaja por
+ * stdin (cmd.exe corta la línea de comandos a 8191 caracteres) y stdin es UNO
+ * SOLO, así que ahí no entra también el system prompt sin dejar de ser un
+ * system prompt. Con `--append-system-prompt-file` lo que viaja por la línea de
+ * comandos es la RUTA —un puñado de bytes— y el CLI lee el texto del disco.
+ *
+ * Devuelve { file, cleanup } — cleanup borra todo y nunca lanza.
+ */
+function writeTempSystemPrompt(systemPrompt) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperpremiere-sys-'));
+  const file = path.join(dir, 'system-prompt.md');
+  fs.writeFileSync(file, systemPrompt, 'utf8');
+  return {
+    file,
+    cleanup() {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch (_) {
+        // Best-effort: un temp file huerfano no debe romper el flujo.
+      }
+    },
+  };
+}
+
+/**
+ * Carpetas que el CLI tiene que poder leer sin preguntar.
+ *
+ * El prompt le dice al modelo "abrí tal archivo" con la ruta absoluta, pero el
+ * permiso no viene con la ruta: el CLI solo lee de entrada dentro de sus
+ * "allowed working directories", que salen del directorio de trabajo del
+ * proceso más lo que se declare con --add-dir. Nosotros nunca fijamos el
+ * directorio de trabajo: el CLI hereda el de Premiere, que no es el mismo en
+ * las dos plataformas. En mac ese directorio es la raíz y el temporal
+ * (/var/folders/...) cuelga de ahí, así que la lectura salía bien de casualidad;
+ * en Windows el temporal está en C:\Users\...\AppData\Local\Temp y el proyecto
+ * puede estar en otra unidad entera (E:\), y no cuelgan de ningún lado.
+ *
+ * Se filtra lo que no es una carpeta que existe (el disco del proyecto puede
+ * estar desmontado). Comprobado contra el CLI: una ruta inexistente la ignora
+ * en silencio, pero una que existe y NO es carpeta le hace escribir "X is not a
+ * directory" por stderr — y stderr es justo lo que el panel le muestra al editor
+ * cuando algo falla. No vale la pena ensuciarlo con un aviso nuestro.
+ *
+ * @param {string[]} dirs
+ * @returns {string[]} sin repetidos y sin las que no son carpetas existentes
+ */
+function dirsPermitidos(dirs) {
+  const out = [];
+  (Array.isArray(dirs) ? dirs : []).forEach((d) => {
+    if (!d || typeof d !== 'string') return;
+    if (out.indexOf(d) !== -1) return;
+    try { if (!fs.statSync(d).isDirectory()) return; } catch (_) { return; }
+    out.push(d);
+  });
+  return out;
 }
 
 /**
@@ -148,24 +214,40 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     : DEFAULT_TIMEOUT_MS;
   const bin = cfg.binPath || 'claude';
 
-  const { paths: imagePaths, cleanup } = writeTempImages(images);
+  const { paths: imagePaths, dir: imagesDir, cleanup } = writeTempImages(images);
 
   // Las imágenes se referencian por ruta absoluta (ver TODO arriba): acá el
   // directorio de trabajo no es el nuestro, así que el nombre suelto no alcanza.
   const prompt = userPrompt + imagesAsFilesNote(imagePaths);
 
+  // El texto del system prompt es el MISMO en las dos plataformas, hasta el
+  // último byte: se recorta una sola vez acá y de ahí sale para los dos caminos.
+  const system = String(systemPrompt || '').trim();
+
+  // Carpetas cuyo contenido el prompt manda abrir: el temporal de las imágenes
+  // de referencia, más lo que agregue quien llama (los recursos que subió el
+  // editor viven al lado de la render, en el disco del proyecto).
+  const addDirs = dirsPermitidos([imagesDir].concat(cfg.readDirs || []));
+
   // Cómo viaja el prompt. En mac/Linux va como argumento, que es lo probado en
   // producción. En Windows NO PUEDE: con shell (obligatorio para el shim .cmd)
   // la línea entera pasa por cmd.exe, que la corta a los 8191 caracteres — y
-  // solo el system prompt ya son 12.500. Ahí el prompt entra por STDIN, que el
-  // CLI acepta cuando -p viene sin texto, y el system prompt se antepone al de
-  // usuario (lo mismo que hace el proveedor de Cursor).
+  // solo el system prompt ya son 12.500. Ahí el prompt de USUARIO entra por
+  // STDIN, que el CLI acepta cuando -p viene sin texto.
   const viaStdin = cfg.promptViaStdin !== undefined
     ? !!cfg.promptViaStdin
     : process.platform === 'win32';
-  const input = viaStdin
-    ? (systemPrompt ? (String(systemPrompt).trim() + '\n\n---\n\n' + prompt) : prompt)
-    : undefined;
+
+  // El system prompt NO se mete en stdin junto al de usuario. Eso se hacía
+  // antes y era la diferencia grande entre plataformas: en mac viajaba por
+  // --append-system-prompt (system prompt de verdad) y en Windows terminaba
+  // siendo el arranque de un mensaje de usuario de decenas de miles de
+  // caracteres, con un "---" en el medio. Las instrucciones seguían estando,
+  // pero no donde se obedecen: en la máquina Windows del editor, dos de tres
+  // marcadores volvieron sin el `<div id="stage">` que la plantilla obligatoria
+  // exige, contra 21 de 21 cumpliendo en mac. Ahora va a un archivo temporal y
+  // por la línea de comandos viaja solo la ruta, que sí entra en el tope.
+  const sysFile = (viaStdin && system) ? writeTempSystemPrompt(system) : null;
 
   // ¿Contamos en vivo lo que el modelo va haciendo? Solo si hay alguien
   // mirando. Sin esto la barra decía "Diseñando la animación…" y no se movía
@@ -182,7 +264,11 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
   // usage y total_cost_usd — verificado contra los dos formatos): mirar el
   // proceso en vivo no cambia ni el HTML que sale ni los tokens que se cuentan.
   // En print mode, stream-json EXIGE --verbose.
-  function buildArgs(streaming) {
+  //
+  // `viejo` es el plan B para un CLI anterior a --append-system-prompt-file
+  // (existe desde claude 2.1.x) o a --add-dir: se arma la llamada como antes,
+  // con el system prompt pegado al mensaje de usuario. Es peor, pero genera.
+  function buildArgs(streaming, viejo) {
     const args = streaming
       ? ['-p', '--output-format', 'stream-json', '--verbose']
       : ['-p', '--output-format', 'json'];
@@ -192,11 +278,26 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     // que es la palanca de calidad. Un valor desconocido el CLI solo lo advierte
     // y sigue con el default, no rompe la generación.
     if (cfg.effort) args.push('--effort', String(cfg.effort));
+    // OJO con el orden: --add-dir es VARIÁDICO ("--add-dir <directories...>"),
+    // así que se come todo lo que le siga hasta el próximo flag. Comprobado
+    // contra el CLI: `--add-dir /tmp hola` se traga "hola" y el CLI corta con
+    // "Input must be provided...". Por eso el prompt de usuario va SIEMPRE
+    // pegado a -p (posición 1), antes que cualquier --add-dir.
+    if (!viejo) addDirs.forEach((d) => args.push('--add-dir', d));
     if (!viaStdin) {
       args.splice(1, 0, prompt); // "-p <prompt>"
-      if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
+      if (system) args.push('--append-system-prompt', system);
+    } else if (sysFile && !viejo) {
+      args.push('--append-system-prompt-file', sysFile.file);
     }
     return args;
+  }
+
+  /** Lo que se le escribe por STDIN en cada variante de llamada. */
+  function buildInput(viejo) {
+    if (!viaStdin) return undefined;
+    if (sysFile && !viejo) return prompt;
+    return system ? (system + '\n\n---\n\n' + prompt) : prompt;
   }
 
   try {
@@ -205,27 +306,39 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     var oauth = cfg.oauthToken || cfg.apiKey || process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (oauth) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauth;
 
-    function attempt(streaming) {
+    function attempt(streaming, viejo) {
       const reader = streaming
         ? agentStream.createActivityReader('claude', onActivity, { partial })
         : { onData: null };
       // shell solo en Windows (shim .cmd); en mac/Linux args por array sin shell.
-      return run(bin, buildArgs(streaming), {
-        timeoutMs, env: childEnv, input, shell: process.platform === 'win32',
+      return run(bin, buildArgs(streaming, viejo), {
+        timeoutMs, env: childEnv, input: buildInput(viejo),
+        shell: process.platform === 'win32',
         onData: reader.onData || undefined,
       });
     }
 
+    // Un CLI más viejo que alguno de estos flags lo rechaza al instante, antes
+    // de gastar un token: se reintenta sin él. Nadie se queda sin generar por un
+    // cartelito, y el reintento no cuesta nada porque el primero ni llegó a
+    // llamar al modelo. Se prueba primero apagando el estado en vivo (lo más
+    // barato de perder) y después volviendo a la forma vieja de mandar el
+    // system prompt.
+    function rechazoDeFlag(res) {
+      return res.code !== 0 && !res.timedOut &&
+        agentStream.isUnsupportedFlag((res.err || '') + '\n' + (res.out || ''));
+    }
+
     let streaming = live;
-    let r = await attempt(streaming);
-    // Un CLI más viejo que estos flags los rechaza al instante, antes de gastar
-    // un token. Ahí se reintenta sin streaming: nadie se queda sin generar por
-    // un cartelito, y el reintento no cuesta nada porque el primero no llegó a
-    // llamar al modelo.
-    if (streaming && r.code !== 0 && !r.timedOut &&
-        agentStream.isUnsupportedFlag((r.err || '') + '\n' + (r.out || ''))) {
+    let viejo = false;
+    let r = await attempt(streaming, viejo);
+    if (streaming && rechazoDeFlag(r)) {
       streaming = false;
-      r = await attempt(false);
+      r = await attempt(streaming, viejo);
+    }
+    if (!viejo && rechazoDeFlag(r)) {
+      viejo = true;
+      r = await attempt(streaming, viejo);
     }
     if (r.timedOut) {
       throw new Error(`claude-cli: timeout tras ${timeoutMs}ms`);
@@ -286,11 +399,30 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       warning = agentStream.rescueWarning(!!usage);
     }
 
+    // Permisos que el CLI pidió y nadie le pudo dar. En headless no hay a quién
+    // preguntarle, así que una lectura denegada no falla: sale igual, con el
+    // modelo diseñando sin haber visto la imagen de referencia o el documento
+    // que el editor subió a propósito. Es el modo de falla más mudo que tiene
+    // esto, y la única forma de que se note es decirlo.
+    const negados = (parsed && Array.isArray(parsed.permission_denials))
+      ? parsed.permission_denials : [];
+    if (negados.length) {
+      const que = negados
+        .map((d) => (d && (d.tool_name || d.tool)) || 'una herramienta')
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .join(', ');
+      warning = (warning ? warning + '\n' : '') +
+        'OJO: el CLI necesitó permiso para usar ' + que + ' (' + negados.length +
+        ' vez/veces) y no lo tuvo, así que el modelo diseñó sin eso. Suele ser una ' +
+        'imagen de referencia o un recurso que quedó fuera de las carpetas que el CLI puede leer.';
+    }
+
     const html = stripHtmlFence(text);
     if (!html) throw new Error('claude-cli: la respuesta del CLI vino vacia');
     return { text: html, usage, warning };
   } finally {
     cleanup();
+    if (sysFile) sysFile.cleanup();
   }
 }
 

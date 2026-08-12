@@ -21,10 +21,51 @@ const modo = process.env.FAKE_MODE || 'stream';
 const log = process.env.FAKE_LOG;
 const fixtures = path.join(__dirname, '..');
 
+/** Valor del flag `nombre`, o null si no vino. */
+function flag(nombre) {
+  const i = args.indexOf(nombre);
+  return (i !== -1 && i + 1 < args.length) ? args[i + 1] : null;
+}
+
+/** Todos los valores de un flag repetible (ej. --add-dir). */
+function flags(nombre) {
+  const out = [];
+  args.forEach((a, i) => { if (a === nombre && i + 1 < args.length) out.push(args[i + 1]); });
+  return out;
+}
+
+// El system prompt puede llegar como texto en la línea de comandos o como
+// archivo. Se resuelve ACÁ, mientras el archivo temporal todavía existe: el
+// proveedor lo borra apenas termina, así que el test no lo puede leer después.
+function systemPromptRecibido() {
+  const inline = flag('--append-system-prompt');
+  if (inline !== null) return { systemPrompt: inline, systemPromptVia: 'argumento' };
+  const file = flag('--append-system-prompt-file');
+  if (file !== null) {
+    try { return { systemPrompt: fs.readFileSync(file, 'utf8'), systemPromptVia: 'archivo' }; } catch (e) {
+      return { systemPrompt: null, systemPromptVia: 'archivo-ilegible' };
+    }
+  }
+  return { systemPrompt: null, systemPromptVia: 'no vino' };
+}
+
 function anotar(extra) {
   if (!log) return;
-  const datos = Object.assign({ args: args, modo: modo }, extra);
+  // `stdinCompleto` y `systemPrompt` son la prueba: con esto un test puede
+  // comparar BYTE A BYTE lo que recibe el CLI por el camino de mac (argumentos)
+  // y por el de Windows (stdin), que es donde se escondía la diferencia.
+  const datos = Object.assign({
+    args: args,
+    modo: modo,
+    cwd: process.cwd(),
+    addDirs: flags('--add-dir'),
+  }, systemPromptRecibido(), extra);
   try { fs.writeFileSync(log, JSON.stringify(datos), 'utf8'); } catch (e) {}
+  // Una línea por invocación, al lado del log. Cuando el motor reintenta (un
+  // flag que el CLI rechaza, el streaming que se apaga), el archivo de arriba
+  // se pisa y solo queda el último intento; acá quedan TODOS, que es lo que hay
+  // que mirar para afirmar que el reintento pasó por donde tenía que pasar.
+  try { fs.appendFileSync(log + '.jsonl', JSON.stringify(datos) + '\n', 'utf8'); } catch (e) {}
 }
 
 function leerStdin() {
@@ -42,12 +83,30 @@ const streaming = args.indexOf('stream-json') !== -1;
 
 async function main() {
   const stdin = await leerStdin();
-  anotar({ stdinLen: stdin.length, stdin: stdin.slice(0, 200) });
+  // El prompt de usuario por argumento va pegado a `-p` (el proveedor lo mete
+  // en la posición 1); todo lo demás son flags o valores de flag.
+  const posicional = (args[0] === '-p' && args[1] && args[1].charAt(0) !== '-') ? args[1] : null;
+  anotar({
+    stdinLen: stdin.length,
+    stdin: stdin.slice(0, 200),
+    stdinCompleto: stdin,
+    promptPosicional: posicional,
+  });
 
   if (modo === 'viejo' && streaming) {
     // Exactamente lo que contesta un CLI que no conoce el flag (verificado).
     process.stderr.write("error: unknown option '--include-partial-messages'\n");
     process.exit(1);
+  }
+
+  // Un CLI anterior a `--append-system-prompt-file` (el flag existe desde
+  // claude 2.1.x). La máquina del editor puede tener una versión más vieja, y
+  // ahí el motor tiene que volver al método de antes en vez de dejarlo sin
+  // generar. La frase es la que escribe commander de verdad.
+  if (modo === 'sin-sysfile' && args.indexOf('--append-system-prompt-file') !== -1) {
+    process.stderr.write("error: unknown option '--append-system-prompt-file'\n");
+    process.exitCode = 1;
+    return;
   }
 
   // ── Cerrar mal: el motivo va a STDOUT y stderr queda vacío ──────────
@@ -109,7 +168,7 @@ async function main() {
     return;
   }
 
-  if (modo === 'viejo') {
+  if (modo === 'viejo' || modo === 'sin-sysfile') {
     process.stdout.write(JSON.stringify({
       type: 'result', subtype: 'success', is_error: false,
       result: '<html>viejo</html>',

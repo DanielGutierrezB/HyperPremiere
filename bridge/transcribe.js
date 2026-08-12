@@ -722,6 +722,10 @@ async function whisperStatus() {
 
 module.exports = {
   transcribeMedia, detectWhisper, cancelTranscription, whisperStatus,
+  // Lo usa también el motor antes de colocar un clip en Premiere: el host
+  // necesita saber si el archivo trae sonido para no agregar pistas de audio
+  // de más. Es la misma pregunta que acá, así que se responde en un solo lugar.
+  hasAudioStream,
   stripRepetitionLoops, trailingSilenceStart,
   // El instalador necesita el catálogo (estilo/flags de cada herramienta) y el
   // modelo elegido para la prueba final. Son el mismo contrato: si acá se

@@ -35,7 +35,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { stripHtmlFence, parseImageDataUrl, makeUsage,
-  imageFileName, imagesAsFilesNote } = require('./index');
+  imageFileName, imagesAsFilesNote, contractReminder } = require('./index');
 const { run } = require('../exec');
 const agentStream = require('./agent-stream');
 const cliErrors = require('./cli-errors');
@@ -119,15 +119,47 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
 
   const ws = makeWorkspace(images);
 
-  // Sin --append-system-prompt: el system prompt encabeza el prompt de usuario.
+  // Cómo se arma el mensaje, que acá es TODO lo que hay.
+  //
+  // `cursor-agent` no tiene canal de system prompt (su --help no ofrece
+  // ninguno), así que las instrucciones del sistema tienen que viajar adentro
+  // del mensaje de usuario. Eso no se puede evitar; lo que sí se puede es
+  // ordenarlo para que el contrato pese:
+  //
+  //   1. El system prompt, con un título que diga qué es. Antes lo separaba un
+  //      `---` pelado, que en markdown es una línea decorativa: no marcaba que
+  //      ahí terminaba el manual y empezaba el laburo.
+  //      El título DESCRIBE el contenido; no reclama autoridad. La primera
+  //      versión decía "INSTRUCCIONES DEL SISTEMA (mandan sobre todo lo demás)"
+  //      y el modelo se plantó: contestó que "el mensaje incluye un bloque que
+  //      se presenta como instrucciones del sistema dentro del propio pedido
+  //      del usuario" y que no iba a darle prioridad sobre su configuración
+  //      real. Tiene razón — un mensaje de usuario que se declara sistema es
+  //      exactamente la forma de una inyección, y los modelos están entrenados
+  //      para desconfiar de eso. Se perdió la generación entera.
+  //   2. El pedido concreto del editor.
+  //   3. Dónde están las imágenes.
+  //   4. ÚLTIMO, y solo si se pide: el andamiaje repetido corto y tajante (ver
+  //      contractReminder). Va apagado por defecto porque se midió y no cambia
+  //      nada; el detalle de la medición está en ese comentario.
+  //
   // Las imágenes se nombran por RUTA ABSOLUTA aunque estén en el directorio de
   // trabajo: las herramientas de búsqueda del agente no indexan este temporal
   // (un glob de "imagen-1.png" vuelve vacío), así que con el nombre suelto se
   // pone a buscar, a veces se rinde y contesta que no encuentra la imagen en vez
   // de componer. Con la ruta entera abre y listo.
-  const prompt = (systemPrompt
-    ? (String(systemPrompt).trim() + '\n\n---\n\n' + userPrompt)
-    : userPrompt) + imagesAsFilesNote(ws.names.map((n) => path.join(ws.dir, n)));
+  const system = String(systemPrompt || '').trim();
+  const prompt = (system
+      ? '# CÓMO SE COMPONE EN ESTE PROYECTO\n\n' + system +
+        '\n\n---\n\n# EL PEDIDO\n\n'
+      : '') +
+    userPrompt +
+    imagesAsFilesNote(ws.names.map((n) => path.join(ws.dir, n))) +
+    // Apagado salvo que se pida: no mejora nada y cuesta. Se prende con
+    // `contractTail: true` para volver a medirlo cuando cambie el modelo por
+    // defecto o cuando engine.js empiece a agregar secciones mucho más largas
+    // después del contrato (test/manual/cursor-contrato.js).
+    (cfg.contractTail ? contractReminder() : '');
 
   // En Windows el prompt NO puede ir como argumento: con shell (que el shim
   // .cmd exige) la línea pasa por cmd.exe, que la corta a los 8191 caracteres,

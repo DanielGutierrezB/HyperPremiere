@@ -385,12 +385,32 @@ function hp_findSequenceByName(name) {
     return null;
 }
 
+// ¿Alguna pista de AUDIO de la secuencia está libre en [start, end)? Solo se
+// pregunta cuando el clip TRAE sonido: si hay lugar, el audio entra sin agregar
+// pistas; si no, habría que pisarle el audio al editor y preferimos una nueva.
+function hp_hasFreeAudioTrack(seq, start, end) {
+    try {
+        var aTracks = seq.audioTracks;
+        if (!aTracks || aTracks.numTracks === 0) return false;
+        for (var i = 0; i < aTracks.numTracks; i++) {
+            if (hp_trackIsFree(aTracks[i], start, end)) return true;
+        }
+        return false;
+    } catch (e) {
+        return false;
+    }
+}
+
 // Coloca el .mov en una secuencia ESPECÍFICA (por nombre), aunque no sea la
 // activa — necesario para la cola: un trabajo de la secuencia A puede terminar
 // mientras el editor está en la secuencia B. Devuelve "ok" o "error: ...".
 // Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
 // 11 = Magenta, 14 = Marrón (café). Ver hp_recolorClipAt / colorLabel.
-function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorLabel) {
+// `hasAudio` (1/0): si el ARCHIVO trae pista de audio. Lo resuelve el motor con
+// ffprobe antes de llamar (ver mediaHasAudio en bridge/engine.js): acá adentro
+// no hay con qué mirar el contenido de un .mov. Solo decide si RESERVAMOS una
+// pista de audio; nunca descarta el sonido del clip.
+function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorLabel, hasAudio) {
     try {
         var active = app.project.activeSequence;
         var isActive = active && active.name === seqName;
@@ -435,12 +455,32 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
         if (!vTracks || vTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";
         var target = vTracks[vTracks.numTracks - 1];
 
-        if (!hp_trackIsFree(target, start, end) && isActive) {
-            // Solo podemos agregar pista vía QE en la secuencia ACTIVA.
+        // Video: hace falta una pista nueva solo si la de arriba está ocupada
+        // en este rango. Audio: SOLO si el clip trae sonido y no queda ninguna
+        // pista de audio libre donde meterlo. Nuestras animaciones con alpha son
+        // mudas, así que en la práctica esto siempre da 0 y la secuencia del
+        // editor conserva exactamente las pistas de audio que tenía.
+        var needVideo = !hp_trackIsFree(target, start, end);
+        var needAudio = (String(hasAudio) === "1" || hasAudio === true) &&
+            !hp_hasFreeAudioTrack(seq, start, end);
+
+        if ((needVideo || needAudio) && isActive) {
+            // Solo podemos agregar pistas vía QE en la secuencia ACTIVA.
             try {
                 app.enableQE();
                 var qeSeq = qe.project.getActiveSequence();
-                qeSeq.addTracks(1, vTracks.numTracks);
+                // Firma de QE: addTracks(numVideo, videoIndex, numAudio,
+                // audioChannelType, audioIndex). Los argumentos de audio hay que
+                // pasarlos SIEMPRE: si se omiten, QE usa su default numAudio = 1
+                // y agrega una pista de audio vacía por su cuenta. Ese era el
+                // "Audio N" que aparecía al final y le corría las pistas al
+                // editor cada vez que colocábamos una animación muda.
+                var aIndex = 0;
+                try { aIndex = seq.audioTracks.numTracks; } catch (eA) {}
+                // La de audio va al FINAL (audioIndex = las que ya hay) para que
+                // A1, A2… sigan siendo las mismas: insertarla arriba renumeraría
+                // el trabajo del editor.
+                qeSeq.addTracks(needVideo ? 1 : 0, vTracks.numTracks, needAudio ? 1 : 0, 1, aIndex);
                 vTracks = seq.videoTracks;
                 target = vTracks[vTracks.numTracks - 1];
             } catch (qerr) {
@@ -448,6 +488,9 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
             }
         }
 
+        // overwriteClip se lleva el clip ENTERO: si el .mov trae audio, Premiere
+        // lo baja solo a las pistas de audio (por eso "video + audio" sigue
+        // funcionando sin código aparte); si es mudo, no toca el audio de nadie.
         target.overwriteClip(item, start);
         // Color de etiqueta (café=borrador / magenta=HQ) sobre el projectItem.
         try {

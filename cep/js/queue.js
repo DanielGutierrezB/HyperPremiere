@@ -253,9 +253,26 @@
       HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, resolve);
     });
   }
+  // ¿El .mov que vamos a colocar trae audio? La pregunta la contesta el motor
+  // con ffprobe: adentro de Premiere no hay con qué abrir el archivo. El host lo
+  // necesita para NO agregar una pista de audio vacía con cada animación muda
+  // (que son todas las de hoy) — eso le corría las pistas al editor. Si no se
+  // puede saber, se asume mudo: es lo que deja la secuencia como está, y el
+  // sonido del clip, si lo hubiera, Premiere lo baja igual.
+  function movHasAudio(movPath) {
+    return HPEngine.call("mediaHasAudio", { path: movPath }).then(function (r) {
+      if (r && r.ok === false) hpLog("No pude saber si el video trae audio (¿ffprobe?): lo coloco como mudo.", "WARN");
+      return !!(r && r.hasAudio);
+    }).catch(function (e) {
+      hpLog("mediaHasAudio falló: " + ((e && e.message) || e) + " — coloco el clip como mudo.", "WARN");
+      return false;
+    });
+  }
   function hostPlace(job, movPath, color) {
-    return new Promise(function (resolve) {
-      HPHost.placeClip(movPath, job.seqName, job.markerStart, job.markerDuration, color, resolve);
+    return movHasAudio(movPath).then(function (hasAudio) {
+      return new Promise(function (resolve) {
+        HPHost.placeClip(movPath, job.seqName, job.markerStart, job.markerDuration, color, hasAudio, resolve);
+      });
     });
   }
 
