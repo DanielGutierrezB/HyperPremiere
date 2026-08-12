@@ -99,20 +99,62 @@ function hp_seekToTime(seconds) {
     }
 }
 
+// ¿Son la misma secuencia? Se compara por sequenceID, que es su identidad real:
+// dos secuencias del mismo proyecto pueden llamarse igual.
+function hp_sameSequence(a, b) {
+    if (!a || !b) return false;
+    var ida = "", idb = "";
+    try { ida = String(a.sequenceID || ""); } catch (e1) {}
+    try { idb = String(b.sequenceID || ""); } catch (e2) {}
+    if (ida && idb) return ida === idb;
+    return String(a.name) === String(b.name);
+}
+
+// Pasa `seq` al frente del timeline y NADA MÁS: no mueve el playhead ni toca la
+// selección. Es para lo que Premiere solo permite en la secuencia ACTIVA
+// (agregar pistas con QE, exportar el audio); el que la llama es responsable de
+// devolver al editor a la secuencia que estaba mirando. Devuelve "ok" o "error: ...".
+function hp_makeSequenceActive(seq) {
+    try {
+        if (!seq) return "error: no hay secuencia que abrir";
+        if (hp_sameSequence(app.project.activeSequence, seq)) return "ok";
+        // openSequence(sequenceID) la abre en el timeline y la hace activa.
+        app.project.openSequence(seq.sequenceID);
+        // Cambiar de timeline puede tardar un instante. Se le da un momento
+        // antes de rendirse, porque rendirse acá significa no colocar el clip.
+        for (var i = 0; i < 3 && !hp_sameSequence(app.project.activeSequence, seq); i++) {
+            try { $.sleep(150); } catch (eSleep) {}
+        }
+        if (!hp_sameSequence(app.project.activeSequence, seq)) {
+            return "error: Premiere no pasó a \"" + seq.name + "\"";
+        }
+        return "ok";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
+// Igual pero por nombre. Devuelve "ok" o "error: ...".
+function hp_activateSequence(seqName) {
+    var active = app.project.activeSequence;
+    // Si la que está al frente ya se llama así, es ésa: buscar por nombre podría
+    // devolver una tocaya y hacerle cambiar de timeline al editor al vacío.
+    if (active && active.name === seqName) return "ok";
+    var seq = hp_findSequenceByName(seqName);
+    if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\"";
+    return hp_makeSequenceActive(seq);
+}
+
 // Abre/activa una secuencia por nombre y mueve el playhead a `seconds`.
 // Sirve para revisar un marcador recién terminado desde la Cola aunque el
 // editor esté en otra secuencia. Devuelve "ok" o "error: ...".
+// Mueve el playhead A PROPÓSITO: para solo activar (sin tocarle nada al editor)
+// está hp_activateSequence.
 function hp_openSequenceAndSeek(seqName, seconds) {
     try {
-        var seq = hp_findSequenceByName(seqName);
-        if (!seq) return "error: no se encontró la secuencia '" + seqName + "'";
-        var active = app.project.activeSequence;
-        if (!active || active.name !== seqName) {
-            // openSequence(sequenceID) la abre en el timeline y la hace activa.
-            try { app.project.openSequence(seq.sequenceID); } catch (e1) {}
-        }
-        var tgt = (app.project.activeSequence && app.project.activeSequence.name === seqName)
-            ? app.project.activeSequence : seq;
+        var act = hp_activateSequence(seqName);
+        if (act !== "ok") return act;
+        var tgt = app.project.activeSequence;
         var TICKS_PER_SECOND = 254016000000;
         var ticks = Math.round(Number(seconds) * TICKS_PER_SECOND);
         tgt.setPlayerPosition(String(ticks));
@@ -251,6 +293,46 @@ function hp_trackIsFree(track, start, end) {
         return true;
     } catch (e) {
         return false; // ante la duda, no usar esta pista
+    }
+}
+
+// La pista de video de MÁS ARRIBA, que es donde va siempre la animación, o null
+// si la secuencia no tiene pistas de video. Devolver null es seguro: para
+// hp_trackIsFree "ante la duda" significa ocupada, así que nada se coloca.
+function hp_topVideoTrack(seq) {
+    try {
+        var vt = seq.videoTracks;
+        if (!vt || vt.numTracks === 0) return null;
+        return vt[vt.numTracks - 1];
+    } catch (e) {
+        return null;
+    }
+}
+
+// Segundos → "m:ss", que es como el editor lee su timeline. Solo para mensajes.
+function hp_fmtTime(sec) {
+    var s = Math.max(0, Math.round(Number(sec) || 0));
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ":" + (r < 10 ? "0" + r : String(r));
+}
+
+// ¿Este ítem del proyecto apunta a ESTE archivo? La ruta de medio es la
+// identidad real de un clip: el nombre se repite entre versiones y entre
+// marcadores, y con dos renders terminando juntos buscar por nombre colocaba (o
+// recoloreaba) el video de OTRO marcador.
+function hp_mediaPathIs(item, wantPath) {
+    if (!item || !wantPath) return false;
+    try {
+        if (!item.getMediaPath) return false;
+        var mp = String(item.getMediaPath() || "");
+        if (!mp) return false;
+        if (mp === wantPath) return true;
+        // Windows no distingue mayúsculas en las rutas; Premiere puede devolver
+        // la unidad en otra caja que la que nos dio el motor.
+        return mp.toLowerCase() === String(wantPath).toLowerCase();
+    } catch (e) {
+        return false;
     }
 }
 
@@ -401,9 +483,106 @@ function hp_hasFreeAudioTrack(seq, start, end) {
     }
 }
 
+// ── Conseguir lugar sin pisarle nada al editor ───────────────────────
+//
+// LA REGLA DE ORO: overwriteClip pisa lo que encuentre, así que se llama
+// ÚNICAMENTE sobre un tramo de pista que se acaba de verificar libre. Si no hay
+// lugar y no se puede crear la pista, la colocación FALLA con un mensaje que
+// dice qué hacer. Un marcador sin colocar se resuelve apretando un botón; un
+// clip borrado del timeline del editor, no.
+
+// Agrega pistas a `seq` con QE. Premiere solo deja agregarlas en la secuencia
+// ACTIVA, así que si el editor está en otra: se pasa a la de destino un
+// instante, se agrega, y se lo devuelve a la suya. No se le mueve el playhead ni
+// la selección (ver hp_makeSequenceActive) y solo pasa cuando de verdad hace
+// falta una pista nueva, que es una vez por secuencia y no en cada marcador.
+//
+// Se evaluó agregarlas SIN activar: QE expone getSequenceAt(i) para llegar a
+// cualquier secuencia del proyecto. Se descartó a propósito — es API interna
+// cuyas propias definiciones dicen que addTracks agrega "a la secuencia
+// actual". Si eso es literal, le estaríamos insertando una pista vacía EN MEDIO
+// de las del editor (justo lo que arreglamos en la 1.4.30) y no hay forma de
+// comprobar cuál de las dos cosas hace sin Premiere delante. El DOM público no
+// ofrece nada: videoTracks/audioTracks son de solo lectura, no hay addTrack en
+// ninguna versión (tampoco en la 2026), y la API nueva (UXP) no se alcanza
+// desde un panel CEP/ExtendScript.
+//
+// Devuelve "ok" (QE aceptó el pedido) o el motivo. Ojo: "ok" NO garantiza que la
+// pista exista — quien llama tiene que verificarlo.
+function hp_addTracks(seq, numVideo, videoIndex, numAudio, audioIndex) {
+    var volverA = null;
+    try {
+        var antes = app.project.activeSequence;
+        if (antes && !hp_sameSequence(antes, seq)) volverA = antes;
+    } catch (e0) {}
+    try {
+        var act = hp_makeSequenceActive(seq);
+        if (act !== "ok") return "no pude abrirla para agregarle la pista (" + act + ")";
+        app.enableQE();
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq) return "QE no me dio la secuencia activa";
+        // Firma de QE: addTracks(numVideo, videoIndex, numAudio,
+        // audioChannelType, audioIndex). Los CINCO argumentos van SIEMPRE: si se
+        // omiten los de audio, QE usa su default numAudio = 1 y agrega una pista
+        // de audio vacía por su cuenta, que era lo que le corría las pistas al
+        // editor con cada animación muda (1.4.30).
+        qeSeq.addTracks(numVideo, videoIndex, numAudio, 1, audioIndex);
+        return "ok";
+    } catch (e) {
+        return "QE falló al agregar la pista: " + e.toString();
+    } finally {
+        // Volver SIEMPRE, haya salido bien o mal: el editor tiene que quedar en
+        // la secuencia que estaba mirando.
+        if (volverA) { try { hp_makeSequenceActive(volverA); } catch (e2) {} }
+    }
+}
+
+// Deja lugar para el clip en `seq`: la pista de video de ARRIBA libre en
+// [start, end) —donde va siempre la animación— y, si el clip trae sonido, alguna
+// pista de audio libre. Agrega pistas si hace falta y COMPRUEBA que el lugar
+// exista de verdad antes de decir que sí. Devuelve "ok" o el motivo (texto para
+// el editor, sin el prefijo "error:").
+function hp_makeRoom(seq, start, end, wantAudio) {
+    var cuando = " entre " + hp_fmtTime(start) + " y " + hp_fmtTime(end);
+    var faltaVideo = !hp_trackIsFree(hp_topVideoTrack(seq), start, end);
+    // Audio: solo si el clip TRAE sonido y no queda ninguna pista de audio libre
+    // donde meterlo. Nuestras animaciones con alpha son mudas, así que en la
+    // práctica esto siempre da 0 y la secuencia conserva sus pistas de audio.
+    var faltaAudio = wantAudio && !hp_hasFreeAudioTrack(seq, start, end);
+    if (!faltaVideo && !faltaAudio) return "ok";
+
+    var aIndex = 0;
+    try { aIndex = seq.audioTracks.numTracks; } catch (eA) {}
+    // La de video va ARRIBA de todo (videoIndex = las que ya hay), que es donde
+    // va a caer el clip. La de audio va al FINAL para que A1, A2… sigan siendo
+    // las mismas: insertarla arriba le renumeraría el trabajo al editor.
+    var pedido = hp_addTracks(seq, faltaVideo ? 1 : 0, seq.videoTracks.numTracks, faltaAudio ? 1 : 0, aIndex);
+    var detalle = (pedido === "ok")
+        ? ": Premiere aceptó el pedido pero la pista no apareció"
+        : ": " + pedido;
+
+    if (!hp_trackIsFree(hp_topVideoTrack(seq), start, end)) {
+        return "la pista de video de arriba tiene material" + cuando +
+            " y no pude agregar una pista nueva encima" + detalle;
+    }
+    if (faltaAudio && !hp_hasFreeAudioTrack(seq, start, end)) {
+        return "el video trae sonido, todas las pistas de audio tienen material" + cuando +
+            " y no pude agregar una pista nueva" + detalle;
+    }
+    return "ok";
+}
+
+// El mensaje de "no coloqué nada". Dice qué pasó, que no se tocó nada, y cómo
+// resolverlo a mano sin volver a renderizar (el video ya está en el proyecto).
+function hp_noPlaceMsg(seqName, motivo) {
+    return "error: NO coloqué la animación para no pisar tu material: en \"" + seqName + "\" " + motivo +
+        ". No se tocó ningún clip tuyo. El video ya está importado en el bin HyperPremiere › " + seqName +
+        ": hacé lugar en ese tramo (o agregá una pista de video vacía arriba) y arrastralo, o volvé a colocarlo desde la Cola.";
+}
+
 // Coloca el .mov en una secuencia ESPECÍFICA (por nombre), aunque no sea la
-// activa — necesario para la cola: un trabajo de la secuencia A puede terminar
-// mientras el editor está en la secuencia B. Devuelve "ok" o "error: ...".
+// activa — es el caso NORMAL, no la excepción: mientras se renderiza, el editor
+// se va a trabajar a otra secuencia. Devuelve "ok" o "error: ...".
 // Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
 // 11 = Magenta, 14 = Marrón (café). Ver hp_recolorClipAt / colorLabel.
 // `hasAudio` (1/0): si el ARCHIVO trae pista de audio. Lo resuelve el motor con
@@ -413,8 +592,8 @@ function hp_hasFreeAudioTrack(seq, start, end) {
 function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorLabel, hasAudio) {
     try {
         var active = app.project.activeSequence;
-        var isActive = active && active.name === seqName;
-        var seq = isActive ? active : hp_findSequenceByName(seqName);
+        // Si la que está al frente ya se llama así, es ésa (puede haber tocayas).
+        var seq = (active && active.name === seqName) ? active : hp_findSequenceByName(seqName);
         if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\" (¿la cerraste?)";
 
         var f = new File(movPath);
@@ -443,49 +622,35 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
         for (var i = count - 1; i >= 0; i--) {
             var ch = root.children[i];
             if (!ch) continue;
-            var mp = "";
-            try { if (ch.getMediaPath) mp = String(ch.getMediaPath() || ""); } catch (eMp) {}
-            if (mp && mp === wantPath) { item = ch; break; }
+            if (hp_mediaPathIs(ch, wantPath)) { item = ch; break; }
             if (!byName && ch.name && ch.name.indexOf(baseName) === 0) byName = ch;
         }
         if (!item) item = byName;
         if (!item) return "error: Premiere importó el video pero no lo encuentro en el bin (" + f.name + "); reintentá el render.";
 
-        var vTracks = seq.videoTracks;
-        if (!vTracks || vTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";
-        var target = vTracks[vTracks.numTracks - 1];
+        if (!seq.videoTracks || seq.videoTracks.numTracks === 0) return "error: la secuencia no tiene pistas de video";
 
-        // Video: hace falta una pista nueva solo si la de arriba está ocupada
-        // en este rango. Audio: SOLO si el clip trae sonido y no queda ninguna
-        // pista de audio libre donde meterlo. Nuestras animaciones con alpha son
-        // mudas, así que en la práctica esto siempre da 0 y la secuencia del
-        // editor conserva exactamente las pistas de audio que tenía.
-        var needVideo = !hp_trackIsFree(target, start, end);
-        var needAudio = (String(hasAudio) === "1" || hasAudio === true) &&
-            !hp_hasFreeAudioTrack(seq, start, end);
+        // Conseguir el lugar ANTES de colocar: la pista de video de arriba libre
+        // en este tramo (agregando una encima si está ocupada, incluso si el
+        // editor está mirando otra secuencia). Si no se pudo, no se coloca nada.
+        // `hasAudio` (1/0) lo resuelve el motor con ffprobe antes de llamar (ver
+        // mediaHasAudio en bridge/engine.js): acá adentro no hay con qué mirar el
+        // contenido de un .mov.
+        var room = hp_makeRoom(seq, start, end, (String(hasAudio) === "1" || hasAudio === true));
+        if (room !== "ok") return hp_noPlaceMsg(seqName, room);
 
-        if ((needVideo || needAudio) && isActive) {
-            // Solo podemos agregar pistas vía QE en la secuencia ACTIVA.
-            try {
-                app.enableQE();
-                var qeSeq = qe.project.getActiveSequence();
-                // Firma de QE: addTracks(numVideo, videoIndex, numAudio,
-                // audioChannelType, audioIndex). Los argumentos de audio hay que
-                // pasarlos SIEMPRE: si se omiten, QE usa su default numAudio = 1
-                // y agrega una pista de audio vacía por su cuenta. Ese era el
-                // "Audio N" que aparecía al final y le corría las pistas al
-                // editor cada vez que colocábamos una animación muda.
-                var aIndex = 0;
-                try { aIndex = seq.audioTracks.numTracks; } catch (eA) {}
-                // La de audio va al FINAL (audioIndex = las que ya hay) para que
-                // A1, A2… sigan siendo las mismas: insertarla arriba renumeraría
-                // el trabajo del editor.
-                qeSeq.addTracks(needVideo ? 1 : 0, vTracks.numTracks, needAudio ? 1 : 0, 1, aIndex);
-                vTracks = seq.videoTracks;
-                target = vTracks[vTracks.numTracks - 1];
-            } catch (qerr) {
-                target = vTracks[vTracks.numTracks - 1];
-            }
+        var target = hp_topVideoTrack(seq);
+
+        // ── RED DE SEGURIDAD: la última comprobación antes de escribir ────
+        // overwriteClip PISA lo que encuentre, así que se llama únicamente sobre
+        // un tramo que ACÁ MISMO se verificó libre. Sí, hp_makeRoom ya dijo "ok":
+        // esto está igual a propósito, para que si esa lógica se equivoca (hoy o
+        // el día que alguien la cambie) el editor pierda una colocación y no su
+        // trabajo. Fue exactamente este agujero el que le borraba clips cuando la
+        // secuencia de destino no era la activa.
+        if (!hp_trackIsFree(target, start, end)) {
+            return hp_noPlaceMsg(seqName, "la pista de video de arriba tiene material entre " +
+                hp_fmtTime(start) + " y " + hp_fmtTime(end) + " (no debería haber llegado hasta acá)");
         }
 
         // overwriteClip se lleva el clip ENTERO: si el .mov trae audio, Premiere
@@ -568,17 +733,26 @@ function hp_purgeClipsByName(namesJoined) {
     }
 }
 
-// Recolorea el clip de HyperPremiere que está en `atSeconds` (busca en las pistas
-// de video, de arriba hacia abajo, el clip cuyo inicio coincide). Sirve para
-// marcar como HQ (magenta) tras reemplazar el archivo, sin colocar un clip nuevo.
-// Devuelve "ok" o "error: ...".
-function hp_recolorClipAt(seqName, atSeconds, colorLabel) {
+// Recolorea NUESTRO clip que está en `atSeconds` (busca en las pistas de video,
+// de arriba hacia abajo, el clip que arranca ahí Y apunta a `mediaPath`). Sirve
+// para marcar como HQ (magenta) tras reemplazar el archivo, sin colocar un clip
+// nuevo. Devuelve "ok" o "error: ...".
+//
+// `mediaPath` es obligatorio y es la misma regla de identidad que al colocar: sin
+// ella alcanzaba con que un clip del EDITOR arrancara en ese mismo segundo (en
+// una pista más alta que la nuestra, por ejemplo) para llevarse la etiqueta de
+// color. No es destructivo, pero es su proyecto y no lo tocamos. Si no aparece,
+// esto falla y el panel dice "recoloreá a mano": una etiqueta es cosmética.
+function hp_recolorClipAt(seqName, atSeconds, colorLabel, mediaPath) {
     try {
         var seq = (app.project.activeSequence && app.project.activeSequence.name === seqName)
             ? app.project.activeSequence : hp_findSequenceByName(seqName);
         if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\"";
         var cl = Number(colorLabel);
         if (isNaN(cl) || cl < 0) return "error: color inválido";
+        var want = String(mediaPath || "");
+        if (!want) return "error: me falta la ruta del video: sin ella no sé cuál clip es el mío";
+        try { want = String(new File(want).fsName); } catch (eF) {}
         var start = Number(atSeconds) || 0;
         var tol = 0.25; // tolerancia en segundos para ubicar el clip
         var vTracks = seq.videoTracks;
@@ -586,13 +760,14 @@ function hp_recolorClipAt(seqName, atSeconds, colorLabel) {
             var track = vTracks[t];
             for (var i = 0; i < track.clips.numItems; i++) {
                 var c = track.clips[i];
-                if (Math.abs(c.start.seconds - start) <= tol && c.projectItem && c.projectItem.setColorLabel) {
-                    c.projectItem.setColorLabel(cl);
-                    return "ok";
-                }
+                if (Math.abs(c.start.seconds - start) > tol) continue;
+                if (!c.projectItem || !c.projectItem.setColorLabel) continue;
+                if (!hp_mediaPathIs(c.projectItem, want)) continue;
+                c.projectItem.setColorLabel(cl);
+                return "ok";
             }
         }
-        return "error: no se encontró un clip en " + start + "s";
+        return "error: no encontré nuestro clip (" + want.replace(/^.*[\/\\]/, "") + ") en " + start + "s";
     } catch (e) {
         return "error: " + e.toString();
     }

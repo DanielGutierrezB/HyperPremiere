@@ -673,7 +673,10 @@
         var prev = String(before || "");
         if (prev === seqName) { resolve(""); return; }
         hpLog("En Premiere está activa “" + prev + "”: abro “" + seqName + "” para exportar SU audio.");
-        HPHost.openSequenceAndSeek(seqName, 0, function (res) {
+        // activateSequence, NO openSequenceAndSeek: la abrimos por necesidad
+        // nuestra, así que no le movemos el playhead a nadie (se exporta la
+        // secuencia completa, el cursor da igual).
+        HPHost.activateSequence(seqName, function (res) {
           if (String(res || "").indexOf("ok") !== 0) {
             reject(new Error("No pude abrir la secuencia “" + seqName + "” en Premiere: " + (res || "sin respuesta") +
               "\nQué hacer: abrila a mano en el timeline y volvé a intentar."));
@@ -754,12 +757,14 @@
     function next() { return transcribeSequence(projectPath, seqName); }
 
     // Volver a la secuencia que el editor tenía abierta: le movimos el timeline
-    // para exportar el audio, no se lo dejamos cambiado.
+    // para exportar el audio, no se lo dejamos cambiado. Y volver es SOLO volver:
+    // antes se hacía con openSequenceAndSeek(…, 0) y eso le dejaba el cursor de
+    // reproducción en el segundo 0 de su secuencia, que no se lo tocó nadie.
     function restoreSequence() {
       if (!returnTo || returnTo === seqName) return Promise.resolve();
       return new Promise(function (resolve) {
         hpLog("Vuelvo a la secuencia “" + returnTo + "”, que era la que tenías abierta.");
-        HPHost.openSequenceAndSeek(returnTo, 0, function () { resolve(); });
+        HPHost.activateSequence(returnTo, function () { resolve(); });
       });
     }
   }

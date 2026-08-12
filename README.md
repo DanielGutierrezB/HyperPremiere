@@ -166,14 +166,33 @@ extra, solo cuando lo usás.
   Sin eso, dos colocaciones simultáneas podían dejar el video de un marcador en otro,
   sin ningún error: Premiere no siempre materializa el import de inmediato. Por lo mismo
   el clip importado se busca por su **ruta de media** y no por nombre ni por posición.
-- **Colocar no te reacomoda la secuencia.** El panel solo agrega la pista de video que
-  necesita cuando la de arriba está ocupada; pista de **audio** agrega únicamente si el
-  archivo que está colocando trae sonido, y la pone al final para que A1, A2… sigan
+- **Colocar NUNCA sobrescribe tu material.** La animación va siempre a la pista de video
+  de más arriba, y el clip solo se escribe sobre un tramo de pista que el panel **acaba
+  de verificar libre**. Si esa pista tiene algo ahí, se agrega una nueva encima —y si por
+  lo que sea no se pudiera agregar, **el panel no coloca nada**: te lo dice en la fila del
+  marcador y en el ⬇ Log, con el tramo exacto y qué hacer. Un marcador sin colocar se
+  arregla en dos clics (el video ya quedó importado en el bin **HyperPremiere › tu
+  secuencia**: lo arrastrás y listo); un clip borrado del timeline, no.
+  Esto **funciona igual si estás parado en otra secuencia**, que es lo normal mientras se
+  renderiza. Las pistas solo se pueden agregar en la secuencia que está al frente, así que
+  el panel pasa un instante a la de destino, agrega la pista y **te devuelve a la tuya**,
+  sin tocarte el cursor de reproducción ni la selección. Y solo lo hace cuando de verdad
+  falta la pista: en cuanto existe, los marcadores que siguen caen ahí sin que la vista
+  se mueva. (Hasta la v1.4.30 este era el bug grave del panel: con la secuencia de destino
+  inactiva, la pista no se agregaba y el clip se colocaba **encima**, borrando el que estaba.)
+- **Colocar tampoco te reacomoda la secuencia.** Pista de **audio** se agrega únicamente si
+  el archivo que está colocando trae sonido, y va al final para que A1, A2… sigan
   siendo las mismas. Antes aparecía un "Audio N" vacío en cada colocación: el comando de
   Premiere que agrega pistas suma **una de audio por defecto** si no le decís que no.
   Si el archivo tiene audio (una animación con música o voz), Premiere baja el clip
-  entero, video y audio. Quién trae audio y quién no lo mira el motor con `ffprobe`
-  antes de llamar: adentro de Premiere no hay con qué abrir el archivo.
+  entero, video y audio, y si no hay ninguna pista de audio libre donde caiga tampoco se
+  coloca: pisarte el sonido es tan grave como pisarte el video. Quién trae audio y quién
+  no lo mira el motor con `ffprobe` antes de llamar: adentro de Premiere no hay con qué
+  abrir el archivo.
+- **El panel solo toca clips que son suyos.** Al marcar un marcador como HQ (magenta) el
+  clip se busca por su **ruta de media**, igual que al colocarlo. Antes alcanzaba con que
+  un clip tuyo arrancara en ese mismo segundo para llevarse la etiqueta de color; ahora,
+  si el nuestro no aparece, el panel te dice "recoloreá a mano" y no toca nada.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
 - **Qué está haciendo, en vivo, y cuánto lleva.** La barra ya no dice una sola frase
   durante tres minutos. Debajo de la etapa va una línea que se refresca sola con lo
@@ -249,8 +268,9 @@ extra, solo cuando lo usás.
   `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
   marcadores + wiring). `css/style.css`.
 - **ExtendScript** (`cep/jsx/host.jsx`) — lee marcadores, mueve el playhead, importa y
-  coloca/recolorea el clip (buscándolo por su ruta de media) sin agregar pistas de más,
-  exporta el frame del programa, purga clips al limpiar.
+  coloca/recolorea el clip (buscándolo por su ruta de media) sin agregar pistas de más y
+  **sin escribir nunca sobre un tramo ocupado**, exporta el frame del programa, purga
+  clips al limpiar.
 - **Motor Node in-process** (`bridge/`) — corre **dentro del panel** vía `require` (sin
   proceso externo ni servidor):
   - `bridge/engine.js` — orquestación en 2 etapas (`prepareGenerate`/`prepareFeedback` =
@@ -652,7 +672,22 @@ del código. `dist/` está gitignoreado (forzar `git add -f dist/HyperPremiere.z
 node test/run.js          # sin dependencias, sin red, sin tokens
 ```
 
-Cubren sobre todo el **estado en vivo**: el traductor de la salida de los CLI —con
+Lo primero que cubren es **la regla de oro**: que el panel no te borre material. Con la
+secuencia de destino **inactiva** y la pista de arriba **ocupada** —el caso exacto del bug—
+se fija que `overwriteClip` **no se llame nunca** sobre un tramo con clips: que la pista
+nueva se le pida a la secuencia de destino y no a la que estás mirando; que si no se puede
+agregar (QE que acepta y no hace nada, QE que explota, Premiere que no deja abrir la
+secuencia) la colocación **falle sin tocar nada** y con un mensaje que diga qué hacer; que
+la vista vuelva **siempre** a tu secuencia, también cuando algo falla; que no se te mueva
+el cursor de reproducción; y que si arriba hay lugar **no se cambie de secuencia en
+absoluto** (si no, con varios renders terminando seguidos la vista estaría saltando todo el
+tiempo). El Premiere de mentira respeta la limitación que originó el bug: QE solo alcanza
+la secuencia que está al frente, así que un intento de agregar pistas sin activarla no hace
+nada, igual que en el Premiere de verdad. Y hay un test para la **red de seguridad sola**,
+con una pista nueva que viene ocupada (imposible en la vida real): la última comprobación
+antes de escribir tiene que frenar el clip igual.
+
+Cubren también el **estado en vivo**: el traductor de la salida de los CLI —con
 salidas **reales** capturadas de `claude` y `cursor-agent`, que están en
 `test/fixtures/`—, que el diseño no se pierda si el stream se corta antes del
 final, que el prompt por stdin (el camino de Windows) y el stream **convivan**, y

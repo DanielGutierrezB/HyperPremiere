@@ -248,9 +248,9 @@
   // Las llamadas al host son callback-style (CEP): acá se vuelven promesas para
   // que colocar-y-cerrar sea una sola cadena y el carril se libere en un solo
   // lugar (ver startRender). Nunca rechazan: el host contesta "ok" o "error: …".
-  function hostRecolorHQ(job) {
+  function hostRecolorHQ(job, movPath) {
     return new Promise(function (resolve) {
-      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, resolve);
+      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, movPath, resolve);
     });
   }
   // ¿El .mov que vamos a colocar trae audio? La pregunta la contesta el motor
@@ -323,7 +323,9 @@
     // NO colocamos clip nuevo, solo recoloreamos el clip existente a MAGENTA.
     if (res.replaced || job.kind === "renderVersionHQ") {
       job.pct = 98; job.msg = "Marcando como HQ (magenta)…"; emit();
-      return hostRecolorHQ(job).then(function (r) {
+      // El archivo es el mismo que ya está en el timeline (se sobrescribió en su
+      // lugar): su ruta es lo que identifica NUESTRO clip entre los del editor.
+      return hostRecolorHQ(job, res.movPath).then(function (r) {
         markDone(job, r === "ok" ? "✓ HQ reemplazado (magenta)" : "HQ hecho; recoloreá a mano: " + r);
       });
     }
@@ -333,7 +335,12 @@
     var color = isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA;
     job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
     return hostPlace(job, res.movPath, color).then(function (place) {
-      markDone(job, place === "ok" ? "✓ Listo y colocado" : "Render OK; colocá a mano: " + place);
+      if (place === "ok") { markDone(job, "✓ Listo y colocado"); return; }
+      // El host NUNCA pisa material del editor: si no había lugar seguro, no
+      // colocó nada y explicó por qué. Va al log como ERROR además de a la fila,
+      // porque es lo único que queda por hacer a mano en un job que salió bien.
+      hpLog("Job SIN COLOCAR [" + job.label + "] · el render salió bien pero el clip no entró: " + place, "ERROR");
+      markDone(job, "⚠ Render OK pero NO lo coloqué (no se tocó tu timeline): " + place);
     });
   }
 

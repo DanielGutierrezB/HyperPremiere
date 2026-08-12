@@ -53,6 +53,15 @@
     openSequenceAndSeek: function (seqName, seconds, cb) {
       call("hp_openSequenceAndSeek(" + JSON.stringify(seqName) + ", " + Number(seconds) + ")", cb);
     },
+    /**
+     * Abre una secuencia en el timeline y NADA MÁS: no le mueve el playhead ni
+     * la selección al editor. Es lo que hay que usar cuando la abrimos por
+     * necesidad nuestra (exportar su audio, agregarle una pista) y no porque el
+     * editor pidió ir a un lugar. Devuelve "ok" o "error: …".
+     */
+    activateSequence: function (seqName, cb) {
+      call("hp_activateSequence(" + JSON.stringify(seqName) + ")", cb);
+    },
     /** Exporta el frame del monitor de programa. Devuelve "ok|<ruta>" o "error: …". */
     captureProgramFrame: function (tmpPath, cb) {
       call("hp_captureProgramFrame(" + JSON.stringify(tmpPath) + ")", cb);
@@ -96,9 +105,14 @@
         Number(startSec) + ", " + Number(durationSec) + ", " + Number(colorLabel) + ", " +
         (hasAudio ? 1 : 0) + ")", cb);
     },
-    /** Recolorea el clip que arranca en startSec (marca "procesado en HQ"). */
-    recolorClip: function (seqName, startSec, colorLabel, cb) {
-      callMutating("hp_recolorClipAt(" + JSON.stringify(seqName) + ", " + Number(startSec) + ", " + Number(colorLabel) + ")", cb);
+    /**
+     * Recolorea el clip que arranca en startSec (marca "procesado en HQ").
+     * `movPath` identifica cuál clip es NUESTRO: sin él, un clip del editor que
+     * arranque en el mismo segundo se llevaría la etiqueta (ver hp_recolorClipAt).
+     */
+    recolorClip: function (seqName, startSec, colorLabel, movPath, cb) {
+      callMutating("hp_recolorClipAt(" + JSON.stringify(seqName) + ", " + Number(startSec) + ", " +
+        Number(colorLabel) + ", " + JSON.stringify(movPath || "") + ")", cb);
     },
     /**
      * Saca clips/ítems del proyecto por nombre de archivo ANTES de borrarlos
