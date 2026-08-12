@@ -65,6 +65,37 @@ async function main() {
     process.stdout.write(lineas.join('\n') + '\n');
     return;
   }
+  if (modo === 'final-vacio') {
+    // El evento final LLEGA, con sus tokens, pero sin texto. Visto una vez en
+    // pruebas reales: el agente dio una segunda vuelta y esa terminó sin
+    // respuesta, con la composición ya escrita en la vuelta anterior. Es
+    // distinto de 'sin-final' (ahí no hay evento) y hay que rescatar igual,
+    // pero SIN perder el conteo de tokens, que en este caso sí vino.
+    const lineas = real.split('\n').filter(Boolean)
+      .filter((l) => l.indexOf('"type":"result"') === -1);
+    process.stdout.write(lineas.join('\n') + '\n');
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false,
+      result: '',
+      usage: { input_tokens: 33, output_tokens: 44 },
+      total_cost_usd: 0.05,
+    }) + '\n');
+    return;
+  }
+  if (modo === 'mudo') {
+    // Ni resultado ni mensajes: el modelo no dejó una sola línea. Acá no hay
+    // nada que rescatar y el motor tiene que DECIRLO, no quedarse callado.
+    const lineas = real.split('\n').filter(Boolean)
+      .filter((l) => l.indexOf('"type":"result"') === -1 && l.indexOf('"type":"assistant"') === -1);
+    process.stdout.write(lineas.join('\n') + '\n');
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false,
+      result: '',
+      usage: { input_tokens: 33, output_tokens: 0 },
+      total_cost_usd: 0.01,
+    }) + '\n');
+    return;
+  }
   if (modo === 'stdin') {
     // Devuelve por dónde entró el prompt, para poder afirmarlo desde el test.
     process.stdout.write(real.split('\n').filter(Boolean).slice(0, -1).join('\n') + '\n');

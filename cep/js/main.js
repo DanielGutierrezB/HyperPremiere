@@ -1866,53 +1866,114 @@
   }
 
   // ── Indicador de Whisper local (junto al botón 🎙) ──────────────────
+  // Tres estados: instalado y rápido (verde), instalado pero lento (ámbar), o
+  // ausente. Cuando falta, el badge NO es un cartel muerto: lleva al botón que
+  // lo instala (que vive con "Preparar motor", arriba de todo).
   function checkWhisperStatus() {
     var badge = document.getElementById("whisper-badge");
-    if (!badge) return;
     hpCall("whisperStatus").then(function (st) {
       if (!st || !st.ok) return;
+      applyWhisperStatus(st);
+      hpLog("Whisper local: " + (st.available
+        ? (st.tool + " @ " + (st.path || "?") + " · " + st.model + (st.fast ? " (rápido)" : " (lento)") +
+           (st.managed ? " · instalado por el panel" : ""))
+        : "NO detectado" + (st.canInstall ? " · se puede instalar desde el panel (" + st.installLabel + ")" : " · sin instalación automática")) +
+        (st.recommend ? " · " + st.recommend : ""));
+    }).catch(function () { if (badge) badge.setAttribute("data-hidden", "true"); });
+  }
+
+  function applyWhisperStatus(st) {
+    var badge = document.getElementById("whisper-badge");
+    if (badge) {
       badge.setAttribute("data-hidden", "false");
       if (st.available && st.fast) {
         badge.className = "whisper-badge";
         badge.textContent = "✓ " + st.tool + " · " + st.model;
         badge.title = "Whisper local rápido: “" + st.tool + "” con el modelo " + st.model +
-          " (se cambia con HYPERPREMIERE_WHISPER_MODEL). 🎙 transcribe sin nube y sin tokens.";
+          (st.managed ? " (lo instaló el panel, no depende del PATH)" : "") +
+          ". 🎙 transcribe sin nube y sin tokens. El modelo se cambia con HYPERPREMIERE_WHISPER_MODEL.";
       } else if (st.available) {
-        // Backend lento (openai whisper en CPU): avisar y recomendar el rápido.
         badge.className = "whisper-badge is-slow";
         badge.textContent = "⚠ " + st.tool + " (lento)";
         badge.title = "Detectado “" + st.tool + "” (CPU, lento con " + st.model + "). " + (st.recommend || "") +
           " Igual funciona; se cambia con HYPERPREMIERE_WHISPER_MODEL / HYPERPREMIERE_WHISPER_BIN.";
       } else {
         badge.className = "whisper-badge is-missing";
-        badge.textContent = "sin whisper local";
-        badge.title = (st.recommend || "No encontré whisper local.") + " Sin él, usá “Cargar transcript (JSON)”.";
+        badge.textContent = st.canInstall ? "sin whisper local · instalar" : "sin whisper local";
+        badge.title = st.canInstall
+          ? "No tenés Whisper local. Tocá acá y el panel lo instala solo (" + (st.installLabel || "") +
+            ", ~" + (st.installMB || "?") + " MB): te avisa cuánto pesa antes de bajar nada." +
+            " Mientras tanto podés usar “Cargar JSON” con un transcript ya hecho."
+          : "No tenés Whisper local y en este equipo no puedo instalarlo solo. " +
+            (st.installReason || "") + " " + (st.manual || st.recommend || "") +
+            " Mientras tanto, usá “Cargar JSON” con un transcript ya hecho.";
       }
-      hpLog("Whisper local: " + (st.available ? (st.tool + " @ " + (st.path || "?") + " · " + st.model + (st.fast ? " (rápido)" : " (lento)")) : "NO detectado") +
-        (st.recommend ? " · " + st.recommend : ""));
-    }).catch(function () {});
+    }
+    whisperMissing = !st.available;
+    lastWhisperStatus = st;
+    renderWhisperRow(st);
   }
 
   // ── Preparación del motor (autocontenido, 1ª corrida) ───────────────
-  // Si el código del motor cargó pero faltan sus dependencias (instalación
-  // limpia del ZXP), mostramos el banner para instalarlas una sola vez.
+  // Un solo cartel arriba de todo con lo que falta preparar UNA vez: las
+  // dependencias del motor y el Whisper local. Cada fila aparece sola según lo
+  // que falte, y el cartel se muestra si hay al menos una.
   var epBanner = document.getElementById("engine-prep");
+  var epRowDeps = document.getElementById("ep-row-deps");
   var epMsg = document.getElementById("ep-msg");
   var epProg = document.getElementById("ep-progress");
   var epFill = document.getElementById("ep-fill");
   var btnPrepare = document.getElementById("btn-prepare-engine");
-  function showEnginePrep(show) { if (epBanner) epBanner.setAttribute("data-hidden", show ? "false" : "true"); }
+  var epRowWhisper = document.getElementById("ep-row-whisper");
+  var ewText = document.getElementById("ew-text");
+  var ewMsg = document.getElementById("ew-msg");
+  var ewProg = document.getElementById("ew-progress");
+  var ewFill = document.getElementById("ew-fill");
+  var ewManual = document.getElementById("ew-manual");
+  var btnInstallWhisper = document.getElementById("btn-install-whisper");
+  var depsMissing = false;
+  var whisperMissing = false;
+  var whisperInstalling = false;
+  var lastWhisperStatus = null;
+
+  function showRow(el, show) { if (el) el.setAttribute("data-hidden", show ? "false" : "true"); }
+  function syncPrepBanner() {
+    showRow(epRowDeps, depsMissing);
+    showRow(epRowWhisper, whisperMissing);
+    if (epBanner) epBanner.setAttribute("data-hidden", (depsMissing || whisperMissing) ? "false" : "true");
+  }
+
+  // Qué dice la fila de Whisper: o el botón para instalarlo, o —cuando acá no
+  // se puede— el motivo y las instrucciones a mano, que es mejor que nada.
+  function renderWhisperRow(st) {
+    if (!epRowWhisper) return;
+    if (st.available) { whisperInstalling = false; syncPrepBanner(); return; }
+    var puede = !!st.canInstall;
+    if (ewText) {
+      ewText.textContent = puede
+        ? "Falta el Whisper local (transcribe la secuencia sin nube ni tokens). Lo instalo yo: " +
+          (st.installLabel || "") + ", ~" + (st.installMB || "?") + " MB de descarga."
+        : "Falta el Whisper local y en este equipo no lo puedo instalar solo. " + (st.installReason || "");
+    }
+    if (btnInstallWhisper) btnInstallWhisper.style.display = puede ? "" : "none";
+    if (ewManual) {
+      var manual = st.manual || st.recommend || "";
+      ewManual.textContent = puede ? "" : (manual + "\nMientras tanto podés usar “Cargar JSON” con un transcript ya hecho.");
+      ewManual.setAttribute("data-hidden", puede ? "true" : "false");
+    }
+    syncPrepBanner();
+  }
+
   // Lo que el panel hace con la respuesta de engineStatus: mostrar u ocultar
   // "Preparar motor" y configurar los carriles de render de la cola.
   function applyEngineStatus(st) {
     if (!st) return;
-    if (st.ok && st.depsReady === false) {
+    depsMissing = !!(st.ok && st.depsReady === false);
+    if (depsMissing) {
       hpLog("Motor SIN dependencias (instalación limpia) — mostrando 'Preparar motor'.", "WARN");
-      showEnginePrep(true);
       setHeaderStatus("preparar motor", "warn");
-    } else {
-      showEnginePrep(false);
     }
+    syncPrepBanner();
     // Cuántos renders aguanta ESTA máquina en paralelo: lo perfila el motor
     // (RAM/cores) y la cola lo usa como techo de su carril de render.
     if (st.renderLanes) {
@@ -1939,7 +2000,7 @@
           if (epMsg) epMsg.textContent = "✓ Motor listo.";
           hpLog("Motor preparado OK.");
           setHeaderStatus("motor OK", "ok");
-          setTimeout(function () { showEnginePrep(false); }, 1500);
+          setTimeout(function () { depsMissing = false; syncPrepBanner(); }, 1500);
         } else {
           throw new Error((res && res.error) || "falló la preparación");
         }
@@ -1950,4 +2011,111 @@
       });
     });
   }
+
+  // ── Instalar Whisper desde el panel ─────────────────────────────────
+  // Son cientos de MB (en Windows, más de un giga): primero se le muestra al
+  // editor QUÉ se va a bajar y CUÁNTO pesa, y recién si acepta arranca.
+  function askAndInstallWhisper() {
+    if (whisperInstalling) return;
+    if (btnInstallWhisper) btnInstallWhisper.disabled = true;
+    if (ewMsg) ewMsg.textContent = "Averiguando qué versión hay que bajar…";
+    hpCall("whisperInstallPlan").then(function (plan) {
+      if (btnInstallWhisper) btnInstallWhisper.disabled = false;
+      if (!plan) throw new Error("no pude armar el plan de instalación");
+      if (plan.alreadyInstalled) {
+        if (ewMsg) ewMsg.textContent = "Ya tenías " + plan.tool + " instalado.";
+        checkWhisperStatus();
+        return;
+      }
+      if (!plan.supported) {
+        if (ewMsg) ewMsg.textContent = plan.reason || "Acá no puedo instalarlo solo.";
+        renderWhisperRow({ available: false, canInstall: false, installReason: plan.reason, manual: plan.manual });
+        return;
+      }
+      HPWidgets.confirmOverlay("Instalar Whisper local", function (body) {
+        var p1 = document.createElement("p");
+        p1.appendChild(document.createTextNode("Voy a instalar "));
+        var b = document.createElement("strong"); b.textContent = plan.label || plan.bin;
+        p1.appendChild(b);
+        p1.appendChild(document.createTextNode(" en una carpeta del panel (" + plan.targetDir + "). " + (plan.why || "")));
+        body.appendChild(p1);
+        var p2 = document.createElement("p");
+        var mb = document.createElement("strong");
+        mb.textContent = "Se van a bajar " + (plan.exact ? "" : "aproximadamente ") + (plan.downloadMB || "?") + " MB.";
+        p2.appendChild(mb);
+        p2.appendChild(document.createTextNode(" Podés seguir usando el panel mientras baja; si se corta, volvés a apretar el botón y retoma desde donde iba." +
+          " La primera transcripción real baja además el modelo (unos GB) una sola vez."));
+        body.appendChild(p2);
+        var p3 = document.createElement("p"); p3.className = "muted";
+        p3.textContent = "No hace falta esperar a que termine para trabajar: si ya tenés el transcript hecho, “Cargar JSON” sigue disponible.";
+        body.appendChild(p3);
+      }, "Bajar e instalar", function () { runWhisperInstall(plan); });
+    }).catch(function (e) {
+      if (btnInstallWhisper) btnInstallWhisper.disabled = false;
+      if (ewMsg) ewMsg.textContent = "Error: " + ((e && e.message) || e);
+      hpLog("whisperInstallPlan falló: " + ((e && e.message) || e), "ERROR");
+    });
+  }
+
+  function runWhisperInstall(plan) {
+    whisperInstalling = true;
+    // Durante la instalación el mismo botón CANCELA: un giga de descarga sin
+    // forma de frenarlo es peor que no tener el botón.
+    if (btnInstallWhisper) { btnInstallWhisper.textContent = "✕ Cancelar"; btnInstallWhisper.disabled = false; }
+    if (ewProg) ewProg.setAttribute("data-hidden", "false");
+    if (ewFill) ewFill.style.width = "0%";
+    if (ewMsg) ewMsg.textContent = "Arrancando…";
+    hpLog("Instalando Whisper: " + (plan.label || plan.bin) + " · " + (plan.downloadMB || "?") + " MB · destino " + plan.targetDir);
+    HPEngine.callProg("installWhisper", { plan: plan }, function (p) {
+      if (!p) return;
+      if (typeof p.pct === "number" && ewFill) ewFill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+      if (p.msg && ewMsg) ewMsg.textContent = p.msg;
+      if (p.note) hpLog(p.note, p.level || "INFO");
+    }).then(function (res) {
+      whisperInstalling = false;
+      if (btnInstallWhisper) { btnInstallWhisper.textContent = "Instalar Whisper"; btnInstallWhisper.disabled = false; }
+      if (res && res.ok) {
+        if (ewFill) ewFill.style.width = "100%";
+        if (ewMsg) ewMsg.textContent = "✓ " + res.tool + " listo (probado con " + (res.verified || "su ejecución") + "). Ya podés usar 🎙.";
+        hpLog("Whisper instalado: " + res.tool + " @ " + res.path + " · verificado con " + res.verified);
+        checkWhisperStatus();
+        return;
+      }
+      if (res && res.cancelled) {
+        if (ewMsg) ewMsg.textContent = "Instalación cancelada. Lo que ya se bajó queda guardado: si volvés a apretar, retoma desde ahí.";
+        hpLog("Instalación de Whisper cancelada por el usuario.", "WARN");
+        return;
+      }
+      throw new Error((res && res.error) || "no se pudo instalar");
+    }).catch(function (e) {
+      whisperInstalling = false;
+      if (btnInstallWhisper) { btnInstallWhisper.textContent = "Reintentar instalación"; btnInstallWhisper.disabled = false; }
+      var msg = (e && e.message) || String(e);
+      if (ewMsg) ewMsg.textContent = "No se pudo instalar: " + msg;
+      if (ewManual) {
+        ewManual.textContent = (plan.manual || "") + "\nTambién podés usar “Cargar JSON” con un transcript ya hecho.";
+        ewManual.setAttribute("data-hidden", "false");
+      }
+      hpLog("installWhisper falló: " + msg, "ERROR");
+    });
+  }
+
+  if (btnInstallWhisper) {
+    btnInstallWhisper.addEventListener("click", function () {
+      if (!whisperInstalling) return askAndInstallWhisper();
+      if (ewMsg) ewMsg.textContent = "Cancelando…";
+      hpCall("cancelWhisperInstall").catch(function () {});
+    });
+  }
+  (function wireBadge() {
+    var badge = document.getElementById("whisper-badge");
+    if (!badge) return;
+    badge.addEventListener("click", function () {
+      if (!lastWhisperStatus || lastWhisperStatus.available || !lastWhisperStatus.canInstall) return;
+      // El botón vive arriba, en el cartel de preparación: traerlo a la vista
+      // es la diferencia entre "lo instala" y "no encontró dónde".
+      if (epBanner && epBanner.scrollIntoView) epBanner.scrollIntoView({ block: "center" });
+      askAndInstallWhisper();
+    });
+  })();
 })();

@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.23</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.24</span>
       </button>
     </div>
   </header>
@@ -83,14 +83,22 @@
       <span>Agregar listos a la cola</span>
     </button>
   </div>
-  <!-- Preparación del motor (1ª corrida en instalación limpia): instala deps -->
+  <!-- Preparación del motor (1ª corrida en instalación limpia): instala deps y,
+       en el mismo lugar, el Whisper local para transcribir sin nube. -->
   <div id="engine-prep" class="engine-prep" data-hidden="true">
-    <div class="ep-row">
+    <div id="ep-row-deps" class="ep-row" data-hidden="true">
       <span class="ep-text">El motor necesita prepararse una vez (instala sus dependencias). Requiere conexión y puede tardar varios minutos.</span>
       <button id="btn-prepare-engine" type="button" class="btn-primary" title="Instala las dependencias del motor una sola vez">Preparar motor</button>
     </div>
     <div id="ep-progress" class="hp-bar" data-hidden="true"><div id="ep-fill" class="hp-bar-fill"></div></div>
     <div id="ep-msg" class="ep-msg muted"></div>
+    <div id="ep-row-whisper" class="ep-row" data-hidden="true">
+      <span id="ew-text" class="ep-text">Falta el Whisper local: sin él, 🎙 no puede transcribir la secuencia.</span>
+      <button id="btn-install-whisper" type="button" class="btn-primary" title="Baja e instala el Whisper local en una carpeta del panel. Te dice cuánto pesa antes de empezar.">Instalar Whisper</button>
+    </div>
+    <div id="ew-progress" class="hp-bar" data-hidden="true"><div id="ew-fill" class="hp-bar-fill"></div></div>
+    <div id="ew-msg" class="ep-msg muted"></div>
+    <div id="ew-manual" class="ep-manual muted" data-hidden="true"></div>
   </div>
 
   <div id="batch-status" class="muted"></div>
@@ -126,8 +134,8 @@
         <label class="field-label" for="objective">Objetivo de la clase</label>
         <textarea id="objective" rows="3" placeholder="Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."></textarea>
         <div class="transcript-row">
-          <button id="btn-transcribe-seq" type="button" class="btn-primary" title="Transcribe el video de esta secuencia con tu Whisper local (large-v3, detecta el idioma solo — sirve para clases que mezclan español e inglés) y lo alinea automáticamente al timeline. Sin nube, sin tokens. Requiere `whisper` o `mlx_whisper` instalado.">🎙 Transcribir esta secuencia</button>
-          <span id="whisper-badge" class="whisper-badge" data-hidden="true"></span>
+          <button id="btn-transcribe-seq" type="button" class="btn-primary" title="Transcribe el video de esta secuencia con tu Whisper local (large-v3, detecta el idioma solo — sirve para clases que mezclan español e inglés) y lo alinea automáticamente al timeline. Sin nube, sin tokens. Si no tenés Whisper instalado, el panel te ofrece instalarlo solo con el botón “Instalar Whisper” (arriba, junto a “Preparar motor”).">🎙 Transcribir esta secuencia</button>
+          <button id="whisper-badge" type="button" class="whisper-badge" data-hidden="true"></button>
           <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar JSON</button>
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
           <span id="transcript-status" class="muted">Sin transcript</span>
@@ -192,6 +200,7 @@
         <div id="row-login" class="cfg-row">
           <div class="config-actions">
             <button id="btn-login-claude" type="button" title="Abre el navegador de Claude para autorizar. Autorizás, copiás el código que te muestra la página y lo pegás acá.">Iniciar sesión en Claude</button>
+            <button id="btn-login-doctor" type="button" title="Dice si esta máquina tiene el CLI de Claude, en qué ruta y qué versión. Sirve para mandar una captura cuando algo falla.">Diagnóstico</button>
             <span id="login-status" class="muted"></span>
           </div>
           <!-- Fase 2: se muestra cuando ya se abrió el navegador. -->
@@ -206,6 +215,7 @@
           <!-- Camino universal: pegar el token directamente. -->
           <details id="login-manual" class="login-manual">
             <summary class="muted">…o pegá el token directamente</summary>
+            <p class="muted login-manual-how">Abrí una terminal (en Windows: <b>PowerShell</b> o <b>CMD</b>; en Mac: <b>Terminal</b>) y corré <code>claude setup-token</code>. Autorizá en el navegador, copiá el token que te devuelve (empieza con <code>sk-ant-oat…</code>) y pegalo acá. Este camino funciona siempre, aunque el botón de arriba falle.</p>
             <div class="config-actions">
               <input type="password" id="login-token" placeholder="sk-ant-oat…">
               <button id="btn-login-token" type="button" title="Guardá un token que ya tengas (corré `claude setup-token` en tu terminal y pegá el resultado)">Guardar token</button>

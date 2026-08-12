@@ -107,6 +107,10 @@ async function composeAnimation(a) {
     });
     // La etapa terminó: lo último que dijo el modelo ya no es lo que pasa.
     onActivity(null);
+    // El proveedor pudo haber tenido que rescatar la respuesta de un cierre raro
+    // del CLI. Salió bien, pero tiene que quedar por escrito: si después el
+    // recurso o el conteo de tokens sale distinto, esta línea lo explica.
+    if (gen.warning) report({ note: gen.warning, level: 'WARN' });
     addUsage(gen.usage);
     const seen = inspectComposition(stripHtmlFence(gen.text), {
       durationSec: a.durationSec, markerSlug: a.markerSlug,

@@ -239,7 +239,14 @@
     hpCall("listClaudeModels")
       .then(function (r) {
         if (!r || !r.ok || !r.models || !r.models.length) {
-          if (modelsHint) modelsHint.textContent = "lista de respaldo (no pude consultar los modelos de tu cuenta)";
+          // El motivo, no solo "no pude": esta lista se consulta con la sesión
+          // guardada, así que casi siempre el motivo es que todavía no hay
+          // sesión — y eso ya se está diciendo dos renglones más abajo. Sin el
+          // detalle, parecía una segunda falla misteriosa.
+          if (modelsHint) {
+            modelsHint.textContent = "lista de respaldo — " +
+              ((r && r.error) ? r.error : "no pude consultar los modelos de tu cuenta");
+          }
           return;
         }
         var list = r.models.map(function (m) { return { v: m.id, t: m.name || m.id }; });
@@ -437,10 +444,11 @@
       autoSave();
       verifyProvider();
     }
-    function loginErr(msg, isCliMissing) {
-      loginStatus.textContent = (isCliMissing
-        ? "No encontré el CLI de Claude. Instalalo (claude.ai/download) o pegá el token directamente abajo. "
-        : "Error: ") + (msg || "login falló");
+    // El motor ya devuelve un diagnóstico completo y en renglones (qué falló,
+    // dónde está el CLI, qué versión, qué hacer): se muestra TAL CUAL. Antes se
+    // le anteponía un cartel fijo que muchas veces contradecía al mensaje real.
+    function loginErr(msg) {
+      loginStatus.textContent = msg || "El login falló y el motor no dijo por qué.";
       loginStatus.className = "muted login-err";
       // Cualquiera sea la falla del CLI, pegar el token a mano sigue andando:
       // dejamos ese camino a la vista en vez de que quede escondido.
@@ -455,7 +463,7 @@
         loginStatus.className = "muted";
         hpCall("loginClaudeStart")
           .then(function (data) {
-            if (!data || !data.ok) { loginErr(data && data.error, data && data.needCli); return; }
+            if (!data || !data.ok) { loginErr(data && data.error); return; }
             if (data.provider) { onLoginSuccess(); return; } // ya estaba logueado
             // Fase 2: abrir la URL y pedir el código.
             loginUrl = data.url || "";
@@ -469,6 +477,23 @@
           .then(function () { btnLoginClaude.disabled = false; });
       });
     }
+    // Diagnóstico a pedido: la misma ficha que viaja en los errores, pero sin
+    // tener que fallar primero. Es lo que le pedimos al editor por captura
+    // cuando el login no anda en su máquina y no la tenemos adelante.
+    var btnLoginDoctor = document.getElementById("btn-login-doctor");
+    if (btnLoginDoctor) btnLoginDoctor.addEventListener("click", function () {
+      btnLoginDoctor.disabled = true;
+      loginStatus.textContent = "Revisando el CLI de Claude…";
+      loginStatus.className = "muted";
+      hpCall("claudeCliStatus")
+        .then(function (r) {
+          loginStatus.textContent = (r && r.report) || "No pude armar el diagnóstico.";
+          loginStatus.className = "muted " + (r && r.ok ? "login-ok" : "login-err");
+        })
+        .catch(function (e) { loginErr("No pude correr el diagnóstico: " + ((e && e.message) || "")); })
+        .then(function () { btnLoginDoctor.disabled = false; });
+    });
+
     if (loginUrlLink) loginUrlLink.addEventListener("click", function (e) {
       e.preventDefault(); if (loginUrl) openInBrowser(loginUrl);
     });

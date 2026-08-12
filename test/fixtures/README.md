@@ -26,7 +26,9 @@ cursor-agent -p "<algo que lo haga leer un archivo>" --output-format stream-json
   > cursor-tools-partial.jsonl
 ```
 
-`fake-cli/fake-claude.js` es otra cosa: un CLI de mentira para probar sin red ni
-tokens los caminos que casi nunca pasan (un CLI viejo que rechaza los flags, un
-stream que se corta antes del final, el prompt entrando por stdin como en
-Windows).
+`fake-cli/fake-claude.js` y `fake-cli/fake-cursor.js` son otra cosa: CLI de
+mentira para probar sin red ni tokens los caminos que casi nunca pasan (un CLI
+viejo que rechaza los flags, un stream que se corta antes del final, un cierre
+con el resultado en blanco, el prompt entrando por stdin como en Windows). La
+salida que devuelven sale igual de los `.jsonl` de arriba, retocada para cada
+caso: lo que se prueba sigue siendo formato real.

@@ -208,6 +208,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       // el último es ese mismo objeto (.result y .usage). Un solo camino de acá
       // para abajo.
       let parsed = streaming ? agentStream.finalResult(r.out) : null;
+      let warning = '';
       if (!parsed) {
         try {
           parsed = JSON.parse(r.out);
@@ -217,6 +218,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
           const salvado = streaming ? agentStream.assistantText(r.out) : '';
           if (!salvado) throw new Error('cursor-cli: la salida no era JSON válido: ' + r.out.slice(0, 300));
           parsed = { result: salvado, usage: null };
+          warning = agentStream.rescueWarning(false);
         }
       }
 
@@ -230,7 +232,13 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         throw new Error('cursor-cli: el agente devolvió error: ' + detail);
       }
 
-      const text = typeof parsed.result === 'string' ? parsed.result : '';
+      let text = typeof parsed.result === 'string' ? parsed.result : '';
+      // Misma red que en claude-cli: si el resultado viene vacío pero el agente
+      // sí contestó, se rescata de sus mensajes antes de perder la generación.
+      if (!text.trim() && streaming) {
+        text = agentStream.assistantText(r.out);
+        if (text.trim()) warning = agentStream.rescueWarning(!!parsed.usage);
+      }
       const u = (parsed && parsed.usage) ? parsed.usage : {};
       const usage = makeUsage('cursor-cli', useModel, {
         inputTokens: u.inputTokens,
@@ -245,7 +253,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         if (attempt < MAX_ATTEMPTS) { lastErr = 'respuesta vacía'; await sleep(RETRY_DELAY_MS); continue; }
         throw new Error('cursor-cli: la respuesta vino vacía');
       }
-      return { text: html, usage };
+      return { text: html, usage, warning };
     }
 
     throw new Error('cursor-cli: falló tras ' + MAX_ATTEMPTS + ' intentos. Último error: ' + lastErr.slice(0, 300));

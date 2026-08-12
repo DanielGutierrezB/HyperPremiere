@@ -22,8 +22,12 @@ const { hpFetch } = require('./providers/http');
 const { run } = require('./exec');
 // Transcripción local de la secuencia con Whisper (sin nube, sin tokens).
 const { transcribeMedia, cancelTranscription, whisperStatus } = require('./transcribe');
+// Instalar Whisper desde el panel (parte del mismo flujo de "preparar motor").
+const { whisperInstallPlan, installWhisper, cancelWhisperInstall } = require('./whisper-install');
 // Login de Claude en dos fases (URL + código) o token pegado directo.
 const claudeLogin = require('./claude-login');
+// Dónde está el CLI de Claude y qué versión es (diagnóstico para el editor).
+const claudeDoctor = require('./claude-doctor');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition, renderLanes } = require('./render/hyperframes');
@@ -67,6 +71,10 @@ function windowsExtraPaths() {
   const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
   const out = [
+    // El instalador nativo de Claude Code (el recomendado hoy: `irm
+    // https://claude.ai/install.ps1 | iex`) deja claude.exe ACÁ, no en npm.
+    // Faltaba, y es justo el binario del que depende el login.
+    path.join(home, '.local', 'bin'),
     path.join(appData, 'npm'),                              // binarios globales de npm (claude.cmd)
     path.join(programFiles, 'nodejs'),
     path.join(programFiles, 'Git', 'cmd'),
@@ -939,6 +947,12 @@ function loginClaudeCancel() {
   return claudeLogin.cancel();
 }
 
+// Ficha del CLI de Claude en ESTA máquina (ruta, versión, dónde se buscó), para
+// que el editor pueda mandárnosla por captura sin tener que fallar primero.
+function claudeCliStatus() {
+  return claudeDoctor.diagnose();
+}
+
 const REPO_ROOT = path.join(__dirname, '..');
 
 // Números de marcador que el editor nombró en su instrucción ("seguí el estilo
@@ -1483,6 +1497,29 @@ function dirSizeBytes(dir) {
   return total;
 }
 
+// Lo que el panel necesita saber de Whisper de una sola vez: qué hay instalado
+// (transcribe.js) y si el botón "Instalar Whisper" aplica en esta máquina
+// (whisper-install.js). Son módulos separados a propósito —uno detecta, el otro
+// instala— y el que junta las dos mitades para la UI es el motor.
+// `offline`: el arranque del panel no sale a la red por esto; el número exacto
+// de la descarga se pide recién cuando el editor aprieta el botón.
+async function whisperStatusForPanel() {
+  const st = await whisperStatus();
+  if (st.available) return st;
+  try {
+    const plan = await whisperInstallPlan({ offline: true });
+    st.canInstall = !!plan.supported;
+    st.installLabel = plan.label || '';
+    st.installMB = plan.downloadMB || 0;
+    st.installReason = plan.reason || '';
+    st.manual = plan.manual || st.recommend;
+  } catch (e) {
+    st.canInstall = false;
+    st.manual = st.recommend;
+  }
+  return st;
+}
+
 async function prepareEngine(_arg, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   if (engineDepsReady()) return { ok: true, alreadyReady: true };
@@ -1565,7 +1602,10 @@ module.exports = {
   readMarkerHtml,
   transcribeMedia,
   cancelTranscription,
-  whisperStatus,
+  whisperStatus: whisperStatusForPanel,
+  whisperInstallPlan,
+  installWhisper,
+  cancelWhisperInstall,
   deriveObjective,
   getConfig,
   setConfig: saveConfig,
@@ -1581,6 +1621,7 @@ module.exports = {
   loginClaudeCode,
   loginClaudeToken,
   loginClaudeCancel,
+  claudeCliStatus,
   getVersion,
   checkUpdate,
   selfUpdate,

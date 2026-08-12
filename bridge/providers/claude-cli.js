@@ -190,6 +190,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
 
     let text = '';
     let usage = null;
+    let warning = '';
     if (parsed) {
       if (parsed.is_error) {
         throw new Error('claude-cli: is_error en la respuesta: ' + String(parsed.result || parsed.error || '').slice(0, 300));
@@ -203,19 +204,28 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         cacheCreationTokens: u.cache_creation_input_tokens,
         costUsd: typeof parsed.total_cost_usd === 'number' ? parsed.total_cost_usd : null,
       });
-    } else if (streaming) {
-      // Salió por stream pero no llegó el evento final. Antes de tirar una
-      // generación que ya se pagó, se rearma la respuesta con los mensajes del
-      // asistente; lo que se pierde es el conteo de tokens, no el diseño.
-      text = agentStream.assistantText(stdout);
-      if (!text) throw new Error('claude-cli: la salida en stream no trajo ni resultado ni respuesta');
-    } else {
+    } else if (!streaming) {
       text = stdout; // CLI viejo sin --output-format json
+    }
+
+    // Red de abajo, que SOLO existe con el stream: el CLI puede cerrar con el
+    // resultado vacío cuando la corrida dio más de una vuelta y la última
+    // terminó sin texto (visto una vez en pruebas, con la composición ya
+    // escrita en una vuelta anterior). Con `--output-format json` eso perdía
+    // una generación entera ya pagada, porque no quedaba nada que mirar; acá
+    // los mensajes del asistente están todos y se puede rescatar el diseño.
+    if (!text.trim() && streaming) {
+      text = agentStream.assistantText(stdout);
+      if (!text.trim()) throw new Error('claude-cli: el CLI terminó sin ninguna respuesta del modelo');
+      // Con `usage` cargado el cierre SÍ llegó (vino vacío, pero con sus
+      // tokens): no es lo mismo que quedarse sin ningún cierre, y el aviso lo
+      // distingue para que el conteo del recurso no quede bajo sospecha.
+      warning = agentStream.rescueWarning(!!usage);
     }
 
     const html = stripHtmlFence(text);
     if (!html) throw new Error('claude-cli: la respuesta del CLI vino vacia');
-    return { text: html, usage };
+    return { text: html, usage, warning };
   } finally {
     cleanup();
   }

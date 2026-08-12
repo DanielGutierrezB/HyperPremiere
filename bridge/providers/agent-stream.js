@@ -387,6 +387,26 @@ function assistantText(stdout) {
 }
 
 /**
+ * El aviso que queda escrito en el log cuando la composición hubo que
+ * rescatarla. Vive acá, al lado de `assistantText`, porque los dos proveedores
+ * rescatan igual y el editor no tiene por qué leer dos redacciones de lo mismo.
+ *
+ * La diferencia que importa es si el CLI alcanzó a mandar su evento de cierre:
+ * cuando cierra con el resultado VACÍO, el cierre igual trae el conteo de
+ * tokens y no falta nada más que el texto; cuando no cierra, esa llamada queda
+ * contada en cero y el total del recurso sale corto.
+ *
+ * @param {boolean} conTokens ¿El cierre trajo el conteo de tokens?
+ */
+function rescueWarning(conTokens) {
+  return 'El CLI cerró sin el resultado final: la composición se rescató de los mensajes del ' +
+    'modelo, así que el diseño está completo. ' +
+    (conTokens
+      ? 'El conteo de tokens de esta llamada llegó igual, así que tampoco falta eso.'
+      : 'Lo que se pierde es el conteo de tokens de esta llamada: el total del recurso sale corto.');
+}
+
+/**
  * Interruptores por variable de entorno.
  *
  * El estado en vivo es una mejora de la INTERFAZ: no puede ser la razón por la
@@ -411,6 +431,7 @@ function isUnsupportedFlag(text) {
 }
 
 module.exports = {
-  createActivityReader, finalResult, assistantText, isUnsupportedFlag, envDisabled, describe,
+  createActivityReader, finalResult, assistantText, rescueWarning,
+  isUnsupportedFlag, envDisabled, describe,
   normalizeToolName, tail, nf, MIN_INTERVAL_MS,
 };

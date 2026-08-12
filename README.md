@@ -27,8 +27,10 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    Si la secuencia termina con una cola sin narración (overlays, cierre), se recorta
    antes de transcribir: ahí Whisper alucina y entra en **bucle** repitiendo la última
    frase. Por si igual aparece, las repeticiones se colapsan al guardar y al importar.
-   Requiere un Whisper local en el PATH (ver **Requisitos**: `mlx_whisper` en Mac,
-   Faster-Whisper-XXL en Windows); el modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
+   Requiere un Whisper local, y si no lo tenés **el panel lo instala solo**: el
+   cartel de arriba (el mismo de "Preparar motor") muestra **Instalar Whisper**,
+   te dice qué va a bajar y cuánto pesa, y recién ahí arranca (ver **Instalar
+   Whisper desde el panel**). El modelo se cambia con `HYPERPREMIERE_WHISPER_MODEL`.
    También podés **cargar un transcript JSON**: si viene del video original y editaste
    el timeline, corregí el corrimiento con **Desfase (s)** o **Detectar del timeline**
    (los fragmentos se actualizan en vivo; se guarda por secuencia).
@@ -177,6 +179,15 @@ extra, solo cuando lo usás.
   (solo el texto del razonamiento). Apagado, vuelve el comportamiento viejo; el
   estado en vivo **nunca** puede voltear una generación: si el CLI no entiende los
   flags, el motor reintenta sin ellos antes de gastar un token.
+- **Una generación ya pagada no se tira por un cierre raro del CLI.** Pasa cuando el
+  agente da más de una vuelta y la última termina sin texto: el CLI cierra con el
+  resultado **en blanco** aunque la composición ya estaba escrita en la vuelta anterior.
+  Antes eso perdía la generación entera —minutos de razonamiento cobrados— y volvía como
+  "respuesta vacía". Ahora el motor la **rescata de los mensajes del modelo** y sigue
+  como si nada; en el ⬇ Log queda una advertencia diciendo que hubo rescate y si el
+  **conteo de tokens** de esa llamada llegó igual (cuando el CLI alcanzó a cerrar, sí) o
+  si ese total sale corto. Vale para los dos CLI, Claude y Cursor. Y si de verdad no hay
+  **nada** que rescatar, se dice con todas las letras en vez de devolver un vacío mudo.
 - **Cuánto tardó cada recurso.** Al terminar, el job cierra con el total y el
   desglose: `✓ Listo y colocado (v3) · 12.400↑ 6.100↓ · 4m 12s (IA 3m 05s · render
   1m 07s)`. Separado a propósito, porque son dos trabajos distintos: si el tiempo se
@@ -269,7 +280,10 @@ extra, solo cuando lo usás.
     agente (Claude y Cursor, dos dialectos distintos) al vocabulario que muestra el
     panel. Es **solo para el cartel**: el HTML y los tokens se siguen leyendo de la
     salida completa al terminar, así que un CLI que cambie el formato se lleva
-    puesto el estado en vivo, nunca la generación.
+    puesto el estado en vivo, nunca la generación. De paso es la red de abajo: como
+    guardó todos los mensajes del modelo, puede **rearmar la respuesta** cuando el
+    cierre del CLI no trae nada, y redacta el aviso que va al log (uno solo para los
+    dos proveedores, que aclara si el conteo de tokens se salvó o no).
   - `bridge/providers/` — un proveedor por backend, mismo contrato. Cada uno pone la
     mitad del prompt que le corresponde: **cómo llegan las imágenes**. Los de API las
     adjuntan al mensaje; los de línea de comandos (Claude Code, Cursor) no pueden, así
@@ -281,6 +295,20 @@ extra, solo cuando lo usás.
   - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`;
     `bridge/store/versions.js` — dueño único del esquema de nombres versionados
     (`<slug> vN [modelo].ext`): parse, formato, próxima versión y listados.
+  - `bridge/transcribe.js` **detecta** el Whisper que hay y `bridge/whisper-install.js`
+    lo **instala**; están separados a propósito y no se conocen entre sí. Lo que
+    comparten es `bridge/store/whisper-home.js`: la carpeta propia y el registro de qué
+    quedó instalado y en qué ruta. Ese registro se valida contra el disco cada vez que se
+    lee, así borrar la carpeta a mano vuelve a dar "falta Whisper" en vez de apuntar a un
+    ejecutable fantasma. La política de "qué se instala en esta máquina" es una función
+    pura (`_planFor`) que recibe plataforma, arquitectura y si hay Python: por eso se
+    puede probar un Mac Intel sin Python sin tener uno.
+  - `bridge/claude-login.js` hace el login de Claude en dos fases (URL → código) y
+    `bridge/claude-doctor.js` contesta **dónde está el CLI y qué versión es** en esta
+    máquina. Están separados porque el diagnóstico se pide **también sin fallar** (el
+    botón "Diagnóstico"), y porque así el login puede empezar sabiendo con qué binario
+    habla en vez de descubrirlo cuando ya perdió un minuto. El doctor **no toca nada**:
+    `which`/`where`, las rutas donde cada instalador deja el ejecutable, y `--version`.
 
 ## Distribución (autocontenido)
 
@@ -320,28 +348,97 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   copiás el **código** que te muestra la página y lo pegás en el panel. Requiere el CLI
   `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)
   en "…o pegá el token directamente" (corré `claude setup-token` en tu terminal y copialo).
-- **Transcripción local (🎙, opcional):** en **Mac (Apple Silicon)**, `pip install mlx-whisper`:
-  usa la GPU y es lo más rápido. En **Windows**, bajá
-  [Faster-Whisper-XXL](https://github.com/Purfview/whisper-standalone-win/releases),
-  descomprimilo y dejá esa carpeta en el PATH — es un **ejecutable suelto**: no hace falta
-  Python ni pelearse con CUDA (trae las librerías adentro, detecta la placa NVIDIA solo y
-  baja el modelo solo). Alternativa por pip en cualquier sistema:
-  `pip install whisper-ctranslate2`. El CLI clásico `pip install openai-whisper` funciona
-  pero es lento en CPU. La herramienta elige el más rápido que encuentre; forzá uno con
-  `HYPERPREMIERE_WHISPER_BIN` y el modelo con `HYPERPREMIERE_WHISPER_MODEL`.
+  **Cuando no anda, ahora dice por qué** (ver **Cuando el login de Claude falla**).
+- **Transcripción local (🎙, opcional):** lo más cómodo es el botón **Instalar Whisper**
+  del panel (ver la sección siguiente). A mano: en **Mac (Apple Silicon)**,
+  `pip install mlx-whisper` (usa la GPU, es lo más rápido); en **Windows**, bajá
+  [Faster-Whisper-XXL](https://github.com/Purfview/whisper-standalone-win/releases)
+  y descomprimilo — es un **ejecutable suelto**: no hace falta Python ni pelearse con
+  CUDA (trae las librerías adentro, detecta la placa NVIDIA solo y baja el modelo solo).
+  Alternativa por pip en cualquier sistema: `pip install whisper-ctranslate2`. El CLI
+  clásico `pip install openai-whisper` funciona pero es lento en CPU. La herramienta usa
+  primero el que instaló el panel (por ruta absoluta) y si no, el más rápido que
+  encuentre en el PATH; forzá uno con `HYPERPREMIERE_WHISPER_BIN` y el modelo con
+  `HYPERPREMIERE_WHISPER_MODEL`.
   El modelo por defecto **depende del sistema**: `large-v3` en Mac (la GPU de Apple lo
   banca sin despeinarse) y `large-v3-turbo` fuera de Mac, que es ~4× más rápido con
   prácticamente la misma calidad — sin eso, una clase de una hora en una notebook sin
   placa dedicada tarda demasiado.
+
+## Instalar Whisper desde el panel
+
+Cuando falta el Whisper local, el badge junto a 🎙 dice **"sin whisper local · instalar"**
+y arriba, en el mismo cartel de **Preparar motor**, aparece **Instalar Whisper**. Antes de
+bajar un solo byte te muestra **qué** se instala, **cuánto pesa** y **dónde** va, y pide
+confirmación. Se instala en una carpeta del propio panel
+(`~/.hyperpremiere/whisper`, o `%USERPROFILE%\.hyperpremiere\whisper`) y se guarda la
+**ruta absoluta** del ejecutable: **no depende del PATH**, que dentro de Premiere no es el
+tuyo (ver la sección **Windows**).
+
+- **Mac (Apple Silicon):** arma un entorno de Python propio e instala `mlx-whisper`
+  (~260 MB). No toca tu Python ni tus paquetes.
+- **Mac Intel / Linux:** el mismo entorno propio con `whisper-ctranslate2` (~220 MB),
+  porque mlx solo corre en Apple Silicon.
+- **Windows:** baja **Faster-Whisper-XXL** del release de GitHub (**~1,36 GB**) y lo
+  descomprime. Es un ejecutable suelto: sin Python y sin instalar CUDA.
+
+Qué hace para no dejarte a mitad de camino:
+
+- **Solo HTTPS y solo hosts de GitHub**, verificado en cada redirección; se compara el
+  **tamaño exacto** que publica el release y la **firma sha256** si la hay. Si algo no
+  cuadra, aborta y no deja el archivo.
+- **Se reanuda.** Si se corta la descarga, volvés a apretar el botón y sigue desde donde
+  iba en vez de bajar todo de nuevo. Un pedazo de otra versión no se reusa.
+- **Se verifica que CORRA**, no que el archivo exista: primero su `--help`, después una
+  **transcripción real de un audio de prueba de 1 segundo** con el modelo más chico. Recién
+  ahí queda anotado como instalado. Si falla algo, el panel vuelve a decir "falta Whisper"
+  y el botón se puede apretar de nuevo.
+- **Si acá no se puede** (un sistema raro, un Mac sin Python 3), muestra el motivo y las
+  **instrucciones a mano**. Y **Cargar JSON** —un transcript ya hecho— sigue a la vista
+  como alternativa en todos los casos.
+
+El modelo grande (varios GB) **no** se baja acá: lo baja Whisper solo la primera vez que
+transcribís de verdad.
+
+## Cuando el login de Claude falla
+
+Antes, cualquier problema terminaba en el mismo cartel después de esperar un minuto:
+*"Timeout esperando la URL (60s)"*. Con eso no se podía saber nada, y menos a distancia:
+el panel corre dentro de Premiere, **en tu máquina**, y lo único que llega acá es una
+captura de pantalla.
+
+Ahora el panel **pregunta primero** dónde está el CLI y qué versión es (dos comandos de
+lectura, menos de un segundo) y recién después arranca el login. Con eso, cada falla tiene
+nombre propio y el paso siguiente escrito:
+
+- **No está instalado** → se dice al instante, con la línea exacta para instalarlo y la
+  lista de los lugares donde se buscó (ya no hay que esperar el minuto).
+- **Está pero no contesta** → se muestra lo que llegó a escribir; casi siempre es que
+  `claude setup-token` quiere una terminal de verdad y desde el panel no la tiene.
+- **Cerró con error** → se cita su salida y el código con el que cerró.
+- **Es una versión vieja** que no conoce `setup-token` → manda a `claude update`.
+
+En **todos** los mensajes viaja la **ficha del binario**: ruta, de dónde salió (PATH o una
+ruta conocida), versión y sistema. Y el botón **Diagnóstico**, al lado de "Iniciar sesión",
+muestra esa misma ficha **sin tener que fallar antes**: es la captura que conviene mandar
+cuando algo no anda. Todas las salidas terminan recordando el camino que siempre funciona:
+`claude setup-token` en tu terminal y pegar el token en el panel.
+
+Dos arreglos concretos que salieron de ahí: en Windows faltaba
+`%USERPROFILE%\.local\bin` en las rutas que el panel agrega, que es **justo** donde el
+instalador nativo de Claude deja el ejecutable (estaba instalado y el panel no lo veía); y
+la URL de autorización ahora se reconoce por ser **de Claude**, porque algunos errores del
+CLI traen un link adentro y el panel abría esa página ajena a pedir un código que no
+existía.
 
 ## Windows
 
 El panel corre en Windows, pero **el sistema operativo cambia cosas que se notan**. Lo que
 hay que saber, y lo que la herramienta ya resuelve sola:
 
-- **Instalar las herramientas externas.** Node 18+, ffmpeg y el Whisper de arriba. Lo más
-  cómodo es `winget install OpenJS.NodeJS.LTS` y `winget install Gyan.FFmpeg`, o bajar
-  ffmpeg a mano y dejarlo en `C:\ffmpeg\bin`.
+- **Instalar las herramientas externas.** Node 18+ y ffmpeg. Lo más cómodo es
+  `winget install OpenJS.NodeJS.LTS` y `winget install Gyan.FFmpeg`, o bajar ffmpeg a mano
+  y dejarlo en `C:\ffmpeg\bin`. **Whisper no**: ese lo instala el panel solo (ver arriba).
 - **El PATH que ve el panel no es el tuyo.** Premiere arranca desde el Explorador y le pasa
   al panel un entorno recortado: aunque en tu consola `ffmpeg` funcione, adentro del panel
   puede "no existir". Por eso, en Windows el motor **agrega solo** los lugares donde esas
@@ -404,6 +501,24 @@ salidas **reales** capturadas de `claude` y `cursor-agent`, que están en
 final, que el prompt por stdin (el camino de Windows) y el stream **convivan**, y
 que dos marcadores generándose a la vez no se mezclen el estado.
 
+También el **rescate de la composición**, que es donde se juega una generación ya
+pagada: que con el resultado en blanco vuelva exactamente lo mismo que habría venido por
+el camino normal, que el **conteo de tokens** que el CLI sí mandó **no se pierda** (a
+diferencia del stream cortado, donde sí se pierde y el aviso lo dice), que el aviso llegue
+al log como **advertencia** sin frenar nada, que Cursor tenga la misma red, y que cuando
+no hay nada que rescatar el error se entienda.
+
+Y el **login de Claude**: que sin CLI se falle al instante en vez de esperar el minuto,
+que el timeout cuente qué encontró, que una versión vieja mande a actualizar, que un link
+ajeno dentro de un error no se confunda con la autorización y que una ruta con espacios no
+rompa nada.
+
+También el **instalador de Whisper**, con un servidor local que hace de GitHub (no se
+baja un giga en un test): que se detecte bien cuándo falta, que lo instalado por el panel
+gane sobre el PATH, que un archivo incompleto o con la firma cambiada se **rechace** sin
+dejar restos, que reintentar después de un corte **retome** donde iba, y que en una
+plataforma donde no se puede instalar quede el camino a mano.
+
 Aparte, `node test/manual/live-providers.js` habla con los CLI de verdad (gasta
 tokens y tarda): es lo que hay que correr cuando un CLI se actualiza, para ver si
 sigue hablando el mismo idioma.
@@ -412,6 +527,9 @@ sigue hablando el mismo idioma.
 
 - Botón **⬇ Log** en el header: baja `Hyperpremiere_log_<fecha>.md` a Descargas con todo
   (carga del motor, cola, errores) — útil para depurar cualquier falla.
+- Botón **Diagnóstico** en ⚙, al lado de "Iniciar sesión": la ficha del CLI de Claude en
+  esta máquina (ruta, versión, sistema y dónde se buscó), sin tener que provocar un error
+  antes. Ver **Cuando el login de Claude falla**.
 
 ## Notas
 

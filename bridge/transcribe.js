@@ -24,6 +24,9 @@ const path = require('path');
 
 const { run, killTree } = require('./exec');
 const { ensureOutputDir } = require('./store/project-fs');
+// Registro del Whisper que instaló el propio panel (carpeta propia, ruta
+// absoluta): se prefiere al PATH, que dentro de Premiere es un entorno mínimo.
+const { readInstalled } = require('./store/whisper-home');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -114,6 +117,19 @@ async function which(bin) {
   return null;
 }
 
+// El que instaló el panel en su propia carpeta, si sigue estando. Va PRIMERO
+// (antes que el PATH) porque es el único del que sabemos la ruta exacta: el
+// PATH del proceso de Premiere no es el del editor. `managed` lo marca para
+// poder decirlo en el panel ("instalado por HyperPremiere").
+function managedWhisper() {
+  const rec = readInstalled();
+  if (!rec) return null;
+  const known = TOOLS.filter((t) => t.bin === rec.bin)[0];
+  return Object.assign({ style: 'openai', fast: false }, known || {}, {
+    bin: rec.bin, path: rec.path, managed: true,
+  });
+}
+
 // Detecta qué Whisper hay instalado (el más rápido disponible), respetando el
 // override HYPERPREMIERE_WHISPER_BIN. Devuelve { bin, style, fast, path } o
 // null. `path` = ruta absoluta a ejecutar (puede diferir de `bin`).
@@ -121,10 +137,14 @@ async function detectWhisper() {
   const forced = (process.env.HYPERPREMIERE_WHISPER_BIN || '').trim();
   if (forced) {
     const known = TOOLS.filter((t) => t.bin === forced)[0];
+    const mine = managedWhisper();
+    if (mine && mine.bin === forced) return mine;
     const p = await which(forced);
     if (p) return Object.assign({ style: 'openai', fast: false }, known || {}, { bin: forced, path: p });
     return null;
   }
+  const mine = managedWhisper();
+  if (mine) return mine;
   for (const t of TOOLS) {
     const p = await which(t.bin);
     if (p) return Object.assign({}, t, { path: p });
@@ -352,11 +372,11 @@ async function transcribeMedia(body, onProgress) {
   if (!tool) {
     return {
       ok: false,
-      error: 'No encontré Whisper en el PATH. ' + (process.platform === 'darwin'
-        ? 'En Apple Silicon: `pip install mlx-whisper` (rápido) o `pip install openai-whisper`.'
-        : 'Bajá Faster-Whisper-XXL de ' + FWXXL_URL + ', descomprimilo y dejá esa carpeta en el PATH ' +
-          '(es un ejecutable suelto: no hace falta Python). Alternativa: `pip install whisper-ctranslate2`.') +
-        ' Después reintentá.',
+      error: 'No tenés Whisper instalado. Usá el botón “Instalar Whisper” del panel (lo baja e instala solo),' +
+        ' o cargá el transcript con “Cargar JSON”.\nA mano: ' + (process.platform === 'darwin'
+          ? '`pip install mlx-whisper` (Apple Silicon) o `pip install whisper-ctranslate2`.'
+          : 'bajá Faster-Whisper-XXL de ' + FWXXL_URL + ' y descomprimilo (es un ejecutable suelto,' +
+            ' no hace falta Python). Alternativa: `pip install whisper-ctranslate2`.'),
     };
   }
 
@@ -613,15 +633,23 @@ async function transcribeMedia(body, onProgress) {
  */
 async function whisperStatus() {
   const tool = await detectWhisper();
-  const out = { ok: true, available: !!tool, tool: tool ? tool.bin : '', path: tool ? (tool.path || '') : '', model: WHISPER_MODEL, fast: !!(tool && tool.fast), recommend: '' };
+  const out = {
+    ok: true, available: !!tool, tool: tool ? tool.bin : '', path: tool ? (tool.path || '') : '',
+    model: WHISPER_MODEL, fast: !!(tool && tool.fast),
+    // Lo instaló el propio panel en su carpeta (no depende del PATH del equipo).
+    managed: !!(tool && tool.managed),
+    recommend: '',
+  };
   if (tool && !tool.fast) {
     out.recommend = (process.platform === 'darwin')
       ? 'Tenés el whisper de openai (CPU, lento). En Apple Silicon, `pip install mlx-whisper` es varias veces más rápido con la misma calidad.'
       : 'Tenés el whisper de openai (CPU, lento). Bajá Faster-Whisper-XXL (' + FWXXL_URL + '): es un ejecutable, no necesita Python, usa la GPU si hay NVIDIA y va varias veces más rápido con la misma calidad.';
   } else if (!tool) {
+    // Este texto es el camino A MANO: el panel lo muestra cuando la instalación
+    // automática no aplica (o falla). Con el botón disponible, gana el botón.
     out.recommend = (process.platform === 'darwin')
-      ? 'Instalá uno local: `pip install mlx-whisper` (rápido en Apple Silicon) o `pip install openai-whisper`.'
-      : 'Bajá Faster-Whisper-XXL (' + FWXXL_URL + '), descomprimilo y dejá la carpeta en el PATH: es un ejecutable suelto, sin Python. Alternativa por pip: `pip install whisper-ctranslate2`.';
+      ? 'A mano: `pip install mlx-whisper` (rápido en Apple Silicon) o `pip install whisper-ctranslate2`.'
+      : 'A mano: bajá Faster-Whisper-XXL (' + FWXXL_URL + ') y descomprimilo — es un ejecutable suelto, sin Python. Alternativa por pip: `pip install whisper-ctranslate2`.';
   }
   return out;
 }
@@ -629,6 +657,10 @@ async function whisperStatus() {
 module.exports = {
   transcribeMedia, detectWhisper, cancelTranscription, whisperStatus,
   stripRepetitionLoops, trailingSilenceStart,
+  // El instalador necesita el catálogo (estilo/flags de cada herramienta) y el
+  // modelo elegido para la prueba final. Son el mismo contrato: si acá se
+  // agrega una herramienta, el instalador la puede dejar lista sin copiar nada.
+  TOOLS, FWXXL_URL,
   // Expuestos para el test de Windows (qué modelo y qué flags según plataforma).
   _whisperArgs: whisperArgs,
   _model: () => WHISPER_MODEL,
