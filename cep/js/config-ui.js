@@ -442,6 +442,10 @@
         ? "No encontré el CLI de Claude. Instalalo (claude.ai/download) o pegá el token directamente abajo. "
         : "Error: ") + (msg || "login falló");
       loginStatus.className = "muted login-err";
+      // Cualquiera sea la falla del CLI, pegar el token a mano sigue andando:
+      // dejamos ese camino a la vista en vez de que quede escondido.
+      var manual = document.getElementById("login-manual");
+      if (manual) manual.open = true;
     }
 
     if (btnLoginClaude) {

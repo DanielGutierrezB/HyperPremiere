@@ -385,6 +385,23 @@ textarea:focus {
 .login-ok { color: #4ade80 !important; }
 .login-err { color: #fbbf24 !important; }
 
+/* El estado del login ocupa su propia línea y envuelve. Estos mensajes son
+   instrucciones ("pegá el código…") o errores largos que hay que leer enteros;
+   con el nowrap+elipsis de .muted el span no encoge, aplasta al botón hasta
+   dejarlo sin ancho y la etiqueta se desborda encima. */
+#row-login > .config-actions { flex-wrap: wrap; }
+#btn-login-claude { flex: 0 0 auto; }
+#login-status {
+  flex: 1 1 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+#login-status:empty { display: none; }
+
 /* Indicador de Whisper local detectado (junto al botón 🎙). */
 .whisper-badge {
   flex: none;
