@@ -284,6 +284,30 @@ function antiLoopArgs(tool) {
     : ['--condition_on_previous_text', 'False'];
 }
 
+// Con qué precisión corre el modelo. Es el flag más delicado de todos.
+//
+// int8 es lo más rápido en CPU, y por eso lo pedíamos siempre. El problema es
+// que estas herramientas eligen la GPU SOLAS si encuentran una, y las placas
+// Blackwell (RTX 50xx) no saben multiplicar en int8: cuBLAS aborta con
+// CUBLAS_STATUS_NOT_SUPPORTED apenas arranca a detectar el idioma, después de
+// haber exportado el audio y cargado el modelo. O sea que un flag pensado para
+// CPU hacía explotar justo a las máquinas más potentes.
+//
+// float16 anda en toda GPU con CUDA de hoy; en las viejas int8 rendía un poco
+// más, pero acá pesa más que no se caiga. Sin placa seguimos con int8, que en
+// CPU es varias veces más rápido que float32.
+function precisionArgs(opts) {
+  if (opts && opts.cpuOnly) return ['--device', 'cpu', '--compute_type', 'int8'];
+  if (opts && opts.gpu) return ['--compute_type', 'float16'];
+  return ['--compute_type', 'int8'];
+}
+
+// Las dos variantes que corren sobre faster-whisper eligen dispositivo y
+// precisión; las otras no tienen esos flags y se les caería la corrida.
+function usaPrecision(tool) {
+  return tool && (tool.style === 'fwxxl' || tool.style === 'ct2');
+}
+
 function whisperArgs(tool, inputPath, outDir, opts) {
   const extra = (opts && opts.noAntiLoop) ? [] : antiLoopArgs(tool);
   if (tool.style === 'mlx') {
@@ -300,14 +324,19 @@ function whisperArgs(tool, inputPath, outDir, opts) {
     // Y va SIN --verbose: esta variante aborta con "--print_progress doesn't
     // work with --verbose=True". Los segmentos y el idioma salen del JSON, así
     // que la salida verbose acá no hace falta (solo es respaldo si no hay JSON).
-    return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
-      '--compute_type', 'int8', '--print_progress', '--beep_off'].concat(extra);
+    return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json']
+      .concat(precisionArgs(opts))
+      .concat(['--print_progress', '--beep_off'])
+      .concat(extra);
   }
   if (tool.style === 'ct2') {
-    // whisper-ctranslate2 (faster-whisper): flags estilo openai + int8 en CPU
-    // (rápido y buena calidad). Detecta idioma solo si no se pasa --language.
-    return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
-      '--compute_type', 'int8', '--verbose', 'True'].concat(extra);
+    // whisper-ctranslate2: mismo motor que fwxxl (faster-whisper) con flags
+    // estilo openai, así que arrastra la misma trampa de la precisión.
+    // Detecta idioma solo si no se pasa --language.
+    return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json']
+      .concat(precisionArgs(opts))
+      .concat(['--verbose', 'True'])
+      .concat(extra);
   }
   // openai-whisper (flags con guion bajo).
   return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
@@ -318,6 +347,25 @@ function whisperArgs(tool, inputPath, outDir, opts) {
 // conviene reintentar sin ellos antes que perder la transcripción entera.
 function isUnknownFlagError(out) {
   return /unrecognized arguments|no such option|unknown option|invalid choice/i.test(String(out || ''));
+}
+
+// ¿Se cayó por la GPU? Entran acá tanto la precisión que la placa no soporta
+// como CUDA/cuDNN mal instalado o sin memoria. Todos esos casos tienen la misma
+// salida: rehacerlo en CPU, que tarda más pero termina.
+function isCudaError(out) {
+  return /cublas|cudnn|cuda failed|cuda error|no kernel image/i.test(String(out || ''));
+}
+
+// ¿Hay una GPU NVIDIA en esta máquina? Define con qué precisión arrancamos, y
+// se pregunta una sola vez por sesión (una placa no aparece a mitad de camino).
+let nvidiaProbe = null;
+async function hasNvidiaGpu() {
+  if (nvidiaProbe === null) {
+    // Si nvidia-smi no está, run() devuelve código -1 en lugar de tirar error.
+    const r = await run('nvidia-smi', ['-L'], { timeoutMs: 15_000, shell: IS_WIN });
+    nvidiaProbe = r.code === 0 && /GPU \d+:/i.test(r.out || '');
+  }
+  return nvidiaProbe;
 }
 
 // La limpieza de bucles vive en el módulo de transcripts porque la necesitan los
@@ -505,13 +553,25 @@ async function transcribeMedia(body, onProgress) {
         }
       },
     };
-    let argOpts = {};
+    // A la placa se le pregunta solo si esta herramienta sabe usarla; con las
+    // demás la respuesta no cambiaría ningún flag.
+    let argOpts = { gpu: usaPrecision(tool) ? await hasNvidiaGpu() : false };
+    if (argOpts.gpu) report({ pct: 10, msg: 'Hay GPU NVIDIA: transcribo en la placa (float16).' });
     let r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase, argOpts), runOpts);
     // Si esta variante del CLI no conoce el flag anti-bucle, mejor reintentar sin
     // él que tirar a la basura la transcripción de una clase entera.
     if (!cancelled && r.code !== 0 && isUnknownFlagError(r.err + '\n' + r.out)) {
       report({ pct: 10, msg: 'Tu variante de ' + tool.bin + ' no acepta el flag anti-repetición — reintento sin él…' });
-      argOpts = { noAntiLoop: true };
+      argOpts = Object.assign({}, argOpts, { noAntiLoop: true });
+      lastOutputAt = Date.now();
+      r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase, argOpts), runOpts);
+    }
+    // La GPU no pudo con esto (precisión que la placa no soporta, CUDA a medio
+    // instalar, memoria). Rehacerlo en CPU tarda más, pero es eso o volver con
+    // las manos vacías después de haber exportado el audio y cargado el modelo.
+    if (!cancelled && r.code !== 0 && usaPrecision(tool) && isCudaError(r.err + '\n' + r.out)) {
+      report({ pct: 10, msg: 'La GPU rechazó la transcripción — la rehago en CPU. Va a tardar bastante más, pero la calidad es la misma.' });
+      argOpts = Object.assign({}, argOpts, { cpuOnly: true });
       lastOutputAt = Date.now();
       r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase, argOpts), runOpts);
     }
@@ -670,4 +730,5 @@ module.exports = {
   // Expuestos para el test de Windows (qué modelo y qué flags según plataforma).
   _whisperArgs: whisperArgs,
   _model: () => WHISPER_MODEL,
+  _isCudaError: isCudaError,
 };

@@ -365,6 +365,8 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   banca sin despeinarse) y `large-v3-turbo` fuera de Mac, que es ~4× más rápido con
   prácticamente la misma calidad — sin eso, una clase de una hora en una notebook sin
   placa dedicada tarda demasiado.
+  **Con placa NVIDIA se transcribe en la placa**, y si la placa no puede, se **rehace
+  en CPU** sin que tengas que hacer nada (ver **Cuando la GPU no puede transcribir**).
 
 ## Instalar Whisper desde el panel
 
@@ -400,6 +402,29 @@ Qué hace para no dejarte a mitad de camino:
 
 El modelo grande (varios GB) **no** se baja acá: lo baja Whisper solo la primera vez que
 transcribís de verdad.
+
+## Cuando la GPU no puede transcribir
+
+Faster-Whisper-XXL (y `whisper-ctranslate2`, que usa el mismo motor) agarran la placa
+NVIDIA **solos** si la encuentran. Lo que hay que elegirles es la **precisión**, y ahí
+había una trampa: `int8` es lo más rápido en CPU, pero las placas **RTX 50xx (Blackwell)
+no saben multiplicar en int8**. Como nosotros pedíamos `int8` fijo —pensando en CPU—, en
+esas máquinas la transcripción moría con `cuBLAS failed with status
+CUBLAS_STATUS_NOT_SUPPORTED` recién al detectar el idioma, o sea después de exportar el
+audio y cargar el modelo. La máquina más potente era la única que no podía transcribir.
+
+Ahora la precisión se elige según lo que haya:
+
+- **Con placa NVIDIA** (se pregunta una vez por sesión con `nvidia-smi`): `float16`, que
+  anda en toda GPU con CUDA de hoy, Blackwell incluida.
+- **Sin placa:** `int8`, que en CPU es varias veces más rápido que `float32`.
+- **Si la GPU falla igual** —CUDA a medio instalar, cuDNN que no carga, memoria— la
+  corrida se **rehace en CPU** forzando `--device cpu`. Tarda bastante más, pero la
+  calidad es la misma y el editor termina con su transcript en vez de con un error. El
+  panel lo avisa mientras pasa.
+
+Solo se reintenta **una vez**: si en CPU también falla, el problema no era la placa y el
+mensaje lo dice.
 
 ## Cuando el login de Claude falla
 
@@ -579,6 +604,15 @@ baja un giga en un test): que se detecte bien cuándo falta, que lo instalado po
 gane sobre el PATH, que un archivo incompleto o con la firma cambiada se **rechace** sin
 dejar restos, que reintentar después de un corte **retome** donde iba, y que en una
 plataforma donde no se puede instalar quede el camino a mano.
+
+Y la **transcripción cuando la GPU no puede**, simulando la máquina entera (whisper,
+ffmpeg, ffprobe y `nvidia-smi` son todos de mentira, porque todo lo externo pasa por un
+solo lugar): que con el traceback real de la RTX 50xx la corrida se **rehaga en CPU** y el
+editor igual termine con su transcript, que se pruebe **primero** la placa y no al revés,
+que sin placa no se reintente nada, que si en CPU también falla se **corte ahí** con el
+motivo, y que a la placa se le pregunte **una vez por sesión** y no en cada clase de la
+cola. Los flags de cada variante se fijan aparte, porque no se deducen leyendo el código:
+se aprenden cuando fallan.
 
 Y el **chequeo de versión** del botón ⟳, también contra un GitHub local de mentira: que una
 versión nueva se detecte, que la fuente cacheada y atrasada **no** haga perder la
