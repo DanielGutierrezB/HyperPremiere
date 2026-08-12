@@ -228,7 +228,8 @@ extra, solo cuando lo usás.
   Node embebido (`--enable-nodejs --mixed-context`), en módulos vanilla (sin bundler,
   cargados en orden por `index.html`): `js/util.js` (helpers puros), `js/log.js` (log de
   diagnóstico), `js/engine-client.js` (`HPEngine`, carga/llamadas al motor Node),
-  `js/host-client.js` (`HPHost`, frontera única con ExtendScript), `js/store.js`
+  `js/host-client.js` (`HPHost`, frontera única con ExtendScript), `js/seq-watch.js`
+  (`HPSeqWatch`, se entera de que cambiaste de secuencia en Premiere), `js/store.js`
   (`HPStore`, persiste por proyecto+secuencia), `js/transcript.js`, `js/widgets.js`
   (select propio, editor de código, tooltips — CEF no dibuja los `title` nativos),
   `js/stills.js` (control de imágenes/recursos por marcador), `js/queue.js` (cola
@@ -479,6 +480,15 @@ hay que saber, y lo que la herramienta ya resuelve sola:
   que invocarlos a través de `cmd.exe` (son `.cmd`), y ahí la línea de comandos **se corta a
   los 8191 caracteres**: un prompt con transcript y contexto los pasa de largo. Mandarlo por
   stdin evita el límite y de paso cualquier problema de comillas.
+- **El panel acoplado no gana ni pierde el foco.** En Mac cada panel CEP es una vista
+  propia, así que al volver de la línea de tiempo llega un `focus` y ahí el panel comprueba
+  si cambiaste de secuencia. En Windows el panel va **adentro** de la ventana de Premiere:
+  moverse entre paneles es la misma ventana nativa y ese evento **nunca llega**. El panel se
+  quedaba creyendo que seguías en la secuencia anterior para siempre y no aparecía el aviso
+  de "estás en otra secuencia". Ahora la detección no depende de un evento: hay un **sondeo
+  cada 2,5 s** (`js/seq-watch.js`) que le pregunta a Premiere cuál es la secuencia activa —
+  se saltea el turno si la consulta anterior no volvió (mientras Premiere exporta el audio
+  para transcribir, ExtendScript queda bloqueado) y no pregunta nada con el panel oculto.
 - **Render:** la aceleración por GPU del H.264 es de Mac (VideoToolbox), así que en Windows
   el MP4 se codifica por software. El **ProRes con alpha**, que es el que se usa para llevar
   a Premiere, no cambia: sale idéntico en las dos plataformas.
@@ -545,6 +555,11 @@ Y los **mensajes de error del proveedor**, que es lo único que le queda al edit
 algo se cae en su máquina: que un motivo que vino por `stdout` con `stderr` vacío llegue al
 cartel, que la falta de sesión se reconozca como tal y traiga el comando a correr, y que el
 JSON del CLI se muestre **legible** y no como un bloque crudo.
+
+Y el **vigilante de la secuencia activa** (el caso Windows): que el cambio se detecte
+**sin** que llegue nunca un `focus`, que dos sondeos no se encimen si el primero no volvió,
+que con el panel oculto no se le pregunte nada a Premiere, que el aviso se limpie solo al
+volver a la secuencia del panel y que una consulta perdida no deje el vigilante muerto.
 
 También el **instalador de Whisper**, con un servidor local que hace de GitHub (no se
 baja un giga en un test): que se detecte bien cuándo falta, que lo instalado por el panel

@@ -10,6 +10,7 @@
  *   HPLog (js/log.js)                log de diagnóstico + descarga
  *   HPEngine (js/engine-client.js)   carga y llamadas al motor Node
  *   HPHost (js/host-client.js)       llamadas a ExtendScript (host.jsx)
+ *   HPSeqWatch (js/seq-watch.js)     vigila si cambiaste de secuencia en Premiere
  *   HPStore (js/store.js)            persistencia por proyecto+secuencia
  *   HPTranscript (js/transcript.js)  parser del transcript
  *   HPWidgets (js/widgets.js)        select propio, editor de código, tooltips
@@ -257,8 +258,14 @@
   // transcript de la anterior. NO se cambia el contexto solo: las tarjetas ya
   // renderizadas escribirían en el namespace equivocado. Se avisa y decidís vos.
   var seqNotice = document.getElementById("seq-notice");
+  var seqNoticeFor = ""; // qué secuencia está anunciando el cartel ahora mismo
   function showSeqNotice(otherSequence) {
     if (!seqNotice) return;
+    // El sondeo pregunta cada pocos segundos y casi siempre da lo mismo:
+    // redibujar el cartel (y su botón) en cada vuelta lo haría parpadear y
+    // perdería el clic si justo estabas apretándolo.
+    if (String(otherSequence || "") === seqNoticeFor) return;
+    seqNoticeFor = String(otherSequence || "");
     if (!otherSequence) {
       seqNotice.setAttribute("data-hidden", "true");
       seqNotice.textContent = "";
@@ -279,18 +286,29 @@
     seqNotice.setAttribute("data-hidden", "false");
   }
 
-  function checkActiveSequenceChanged() {
-    if (!HPHost || !HPHost.getActiveSequenceName) return;
-    HPHost.getActiveSequenceName(function (name) {
-      var live = String(name || "");
-      if (!live || live.indexOf("Error:") === 0 || live.indexOf("(sin secuencia") === 0) return;
-      showSeqNotice(live !== currentSequenceName ? live : "");
-    });
-  }
+  // Quién se entera del cambio (y por qué no alcanza con el foco): ver
+  // js/seq-watch.js. Acá solo se le dice qué preguntar y a quién avisarle.
+  var seqWatch = HPSeqWatch.create({
+    ask: function (cb) {
+      if (!HPHost || !HPHost.getActiveSequenceName) return;
+      HPHost.getActiveSequenceName(cb);
+    },
+    panelSequence: function () { return currentSequenceName; },
+    // Con "" el cartel se va solo: volviste a la secuencia del panel y ya no
+    // hay nada que avisar, sin que tengas que cerrar nada.
+    onResult: showSeqNotice,
+    hidden: function () { return !!document.hidden; }
+  });
+  seqWatch.start();
 
-  // Al volver el foco al panel es el momento exacto en que pudo haber cambiado la
-  // secuencia (fuiste a Premiere y volviste). Más barato que sondear en bucle.
-  window.addEventListener("focus", checkActiveSequenceChanged);
+  // El foco sigue siendo el atajo (en Mac llega en el instante exacto en que
+  // volvés de la línea de tiempo) y `visibilitychange` es su equivalente
+  // confiable en Windows: el panel acoplado no cambia de foco, pero sí pasa a
+  // visible cuando lo traés al frente de su grupo de pestañas.
+  window.addEventListener("focus", function () { seqWatch.check(); });
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) seqWatch.check();
+  });
 
   // Resumen del header de "Contexto de la clase" (visible cuando está colapsado):
   // muestra de un vistazo si hay objetivo y transcript.
