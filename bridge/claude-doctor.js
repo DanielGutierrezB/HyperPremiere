@@ -146,6 +146,20 @@ function ficha(found, ver) {
   return out.join('\n');
 }
 
+/**
+ * El camino que SIEMPRE funciona: sacar el token a mano y pegarlo en el panel.
+ * Vive acá porque lo necesitan los dos lados —el login, cuando el botón falla, y
+ * el proveedor, cuando una generación se cae por falta de sesión— y tiene que
+ * decir exactamente lo mismo en los dos.
+ * @param {string} intro - cómo se encabeza la frase ("Qué hacer:", "Una vez instalado,"…)
+ */
+function tokenAMano(intro) {
+  return intro + ' abrí una terminal (en Windows, PowerShell o CMD), corré\n' +
+    '    claude setup-token\n' +
+    'autorizá en el navegador y pegá el token (empieza con sk-ant-oat…) en el panel, en\n' +
+    '"…o pegá el token directamente".';
+}
+
 /** Dónde buscamos cuando no aparece: para que el editor pueda mirar ahí. */
 function dondeBusque() {
   return (IS_WIN ? 'where claude' : 'which claude') + ' y estas rutas:\n  ' +
@@ -176,7 +190,7 @@ async function diagnose() {
 }
 
 module.exports = {
-  locate, version, ficha, dondeBusque, diagnose, knownClaudePaths,
+  locate, version, ficha, dondeBusque, diagnose, knownClaudePaths, tokenAMano,
   // Expuesto para el test de Windows (que corre en mac: es lógica pura).
   _elegirEnWindows: elegirEnWindows,
 };

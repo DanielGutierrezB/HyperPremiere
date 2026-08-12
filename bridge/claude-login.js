@@ -44,14 +44,12 @@ const UNKNOWN_CMD_RE = /unknown command|unknown option|no such command|invalid c
 const NOT_RECOGNIZED_RE = /is not recognized as an internal or external command|no se reconoce como un comando/i;
 
 // El camino de escape que SIEMPRE funciona, dicho igual en todos los errores.
+// El texto lo pone claude-doctor: también lo usa el proveedor cuando una
+// generación se cae por falta de sesión, y no pueden decir dos cosas distintas.
 // `yaLoTiene` false = todavía hay que instalar el CLI, así que no es un
 // "mientras tanto": es el paso siguiente.
 function salidaManual(yaLoTiene) {
-  return (yaLoTiene ? 'Mientras tanto podés entrar igual: abrí' : 'Una vez instalado, abrí') +
-    ' una terminal (en Windows, PowerShell o CMD), corré\n' +
-    '    claude setup-token\n' +
-    'autorizá en el navegador y pegá el token (empieza con sk-ant-oat…) acá abajo, en\n' +
-    '"…o pegá el token directamente".';
+  return doctor.tokenAMano(yaLoTiene ? 'Mientras tanto podés entrar igual:' : 'Una vez instalado,');
 }
 const SALIDA_MANUAL = salidaManual(true);
 

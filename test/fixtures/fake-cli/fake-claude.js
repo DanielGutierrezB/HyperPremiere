@@ -6,6 +6,10 @@
 // no conoce los flags nuevos, un stream que se corta antes del final, y el
 // prompt entrando por stdin (lo que se usa en Windows).
 //
+// Y los caminos que aparecen SIEMPRE en la máquina de otro: cerrar con código 1
+// dejando stderr vacío y el motivo en stdout, como hace el CLI de verdad cuando
+// corre con --output-format json. Esos modos empiezan con "falla-".
+//
 // Qué hace lo elige FAKE_MODE; en FAKE_LOG deja lo que recibió, para poder
 // afirmar que el prompt viajó por donde tenía que viajar.
 
@@ -44,6 +48,65 @@ async function main() {
     // Exactamente lo que contesta un CLI que no conoce el flag (verificado).
     process.stderr.write("error: unknown option '--include-partial-messages'\n");
     process.exit(1);
+  }
+
+  // ── Cerrar mal: el motivo va a STDOUT y stderr queda vacío ──────────
+  // Es lo que hace el CLI de verdad con --output-format json, y es el caso que
+  // dejaba al editor con "salió con código 1. stderr: (vacío)".
+  function cierraMal(objeto, code) {
+    process.stdout.write(JSON.stringify(objeto) + '\n');
+    // exitCode y no exit(): con exit() la escritura a un pipe se puede cortar.
+    process.exitCode = code === undefined ? 1 : code;
+  }
+
+  if (modo === 'falla-sin-sesion' || modo === 'falla-sin-sesion-code0') {
+    // Máquina sin login terminado: el CLI arranca, no tiene con qué
+    // autenticarse y cierra en el acto. A veces con código 1 y a veces con 0 y
+    // el error adentro del JSON.
+    cierraMal({
+      type: 'result', subtype: 'error_during_execution', is_error: true,
+      result: 'Invalid API key · Please run /login',
+      session_id: 'sesion-de-mentira', duration_ms: 120,
+    }, modo === 'falla-sin-sesion-code0' ? 0 : 1);
+    return;
+  }
+  if (modo === 'falla-cuota') {
+    cierraMal({
+      type: 'result', subtype: 'error_during_execution', is_error: true,
+      result: 'Claude AI usage limit reached|1799999999',
+    });
+    return;
+  }
+  if (modo === 'falla-modelo') {
+    // Forma en que viaja un error de la API: anidado bajo `error`.
+    cierraMal({ type: 'error', error: { type: 'not_found_error', message: 'model: claude-que-no-existe' } });
+    return;
+  }
+  if (modo === 'falla-ruido') {
+    // Con el estado en vivo, TODO lo que escribió el modelo sale por el mismo
+    // stdout. Acá la composición habla de permisos y de límites de uso, y el
+    // fallo real es otro: la causa no se puede adivinar leyendo esa prosa.
+    process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'x' }) + '\n');
+    process.stdout.write(JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: '<p>permission denied · usage limit reached</p>' }] },
+    }) + '\n');
+    cierraMal({
+      type: 'result', subtype: 'error_during_execution', is_error: true,
+      result: 'se cortó la conexión con el servidor',
+    });
+    return;
+  }
+  if (modo === 'falla-permisos') {
+    // Este sí escribe por stderr: el arreglo no puede romper lo que ya andaba.
+    process.stderr.write('Error: EACCES: permission denied, open /usr/local/lib/claude\n');
+    process.exitCode = 1;
+    return;
+  }
+  if (modo === 'falla-muda') {
+    // Ni una letra por ningún lado: el motor tiene que DECIR que no dijo nada.
+    process.exitCode = 1;
+    return;
   }
 
   if (modo === 'viejo') {

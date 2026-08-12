@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { run, killTree } = require('./exec');
+const { run, killTree, salidaDe } = require('./exec');
 const { ensureOutputDir } = require('./store/project-fs');
 // Registro del Whisper que instaló el propio panel (carpeta propia, ruta
 // absoluta): se prefiere al PATH, que dentro de Premiere es un entorno mínimo.
@@ -526,7 +526,10 @@ async function transcribeMedia(body, onProgress) {
       };
     }
     if (r.code !== 0) {
-      return { ok: false, error: tool.bin + ' terminó con código ' + r.code + '.\nComando: ' + cmdLine + '\nSalida: ' + (r.err || r.out).slice(-500) };
+      // `r.err || r.out` se quedaba con stderr aunque trajera apenas un salto de
+      // línea, y ahí el motivo (que algunas variantes escriben en stdout) se perdía.
+      return { ok: false, error: tool.bin + ' terminó con código ' + r.code + '.\nComando: ' + cmdLine +
+        '\nSalida: ' + salidaDe(r, '(no escribió nada)').slice(-500) };
     }
 
     // 3) Leer el JSON que escribió Whisper (un .json en el dir de salida). Si la

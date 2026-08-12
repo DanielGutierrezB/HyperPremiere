@@ -19,7 +19,7 @@ const { getProvider } = require('./providers');
 // fetch respaldado por el https nativo de Node (no el Chromium del panel CEP).
 const { hpFetch } = require('./providers/http');
 // Spawn de procesos externos (git, claude, npm, unzip): nunca lanza.
-const { run } = require('./exec');
+const { run, salidaDe } = require('./exec');
 // Transcripción local de la secuencia con Whisper (sin nube, sin tokens).
 const { transcribeMedia, cancelTranscription, whisperStatus } = require('./transcribe');
 // Instalar Whisper desde el panel (parte del mismo flujo de "preparar motor").
@@ -1132,7 +1132,8 @@ async function extractZip(zipFile, destDir) {
     ? await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
         `Expand-Archive -LiteralPath '${zipFile}' -DestinationPath '${destDir}' -Force`])
     : await run('unzip', ['-o', '-q', zipFile, '-d', destDir]);
-  if (r.code !== 0) throw new Error('no se pudo descomprimir: ' + (r.err.trim() || ('código ' + r.code)).slice(0, 200));
+  // unzip escribe sus quejas en stdout, así que solo con stderr esto no decía nada.
+  if (r.code !== 0) throw new Error('no se pudo descomprimir: ' + salidaDe(r, 'código ' + r.code).slice(0, 200));
 }
 
 // Filtro compartido: nunca copiamos node_modules, .git ni basura del SO.
@@ -1198,7 +1199,7 @@ async function checkUpdate() {
   const current = getVersion();
   if (isGitRepo()) {
     const f = await gitRun(['fetch', 'origin', 'main']);
-    if (f.code !== 0) return { ok: false, error: 'No se pudo consultar GitHub: ' + (f.err.trim() || 'fetch falló').slice(0, 200), current };
+    if (f.code !== 0) return { ok: false, error: 'No se pudo consultar GitHub: ' + salidaDe(f, 'fetch falló').slice(0, 200), current };
     const rv = await gitRun(['show', 'origin/main:version.json']);
     let remote = current;
     try { remote = JSON.parse(rv.out).version || remote; } catch (e) {}
@@ -1227,7 +1228,7 @@ async function selfUpdate() {
     if (!chk.ok) return { ok: false, error: chk.error };
     if (!chk.changed) return { ok: true, changed: false, version: before, remoteVersion: chk.remote };
     const r = await gitRun(['reset', '--hard', 'origin/main']);
-    if (r.code !== 0) return { ok: false, error: 'No se pudo aplicar la actualización: ' + (r.err.trim() || 'reset falló').slice(0, 200) };
+    if (r.code !== 0) return { ok: false, error: 'No se pudo aplicar la actualización: ' + salidaDe(r, 'reset falló').slice(0, 200) };
     return { ok: true, changed: true, version: getVersion(), previous: before, remoteVersion: chk.remote };
   }
 
@@ -1536,7 +1537,7 @@ async function prepareEngine(_arg, onProgress) {
     },
   });
   if (r.code === -1) {
-    return { ok: false, error: 'No se pudo ejecutar npm (¿Node instalado en el equipo?): ' + r.err };
+    return { ok: false, error: 'No se pudo ejecutar npm (¿Node instalado en el equipo?): ' + salidaDe(r, 'el sistema no dijo por qué') };
   }
   if (r.code !== 0 || !engineDepsReady()) {
     return { ok: false, error: 'npm install terminó con código ' + r.code + '.\n' + tail.slice(-400) };

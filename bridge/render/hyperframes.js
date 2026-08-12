@@ -339,9 +339,12 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
           // matarlo a él deja vivos el Node del CLI y sus Chromium.
           killTree(child);
           const idleSec = Math.round((Date.now() - lastOutputAt) / 1000);
+          // Los dos flujos: el CLI cuenta su avance por stdout, así que lo
+          // último que dijo antes de colgarse casi nunca está en stderr.
+          const dijo = (stderr + '\n' + stdout).trim().slice(-500);
           reject(Object.assign(new Error(
             `hyperframes: sin actividad por ${idleSec}s (watchdog ${IDLE_TIMEOUT_MS / 1000}s) — ` +
-            `parece colgado\n${stderr}`
+            `parece colgado\n${dijo || '(no llegó a escribir nada)'}`
           ), { code: 'IDLE' }));
         }, IDLE_TIMEOUT_MS);
       }

@@ -32,3 +32,7 @@ viejo que rechaza los flags, un stream que se corta antes del final, un cierre
 con el resultado en blanco, el prompt entrando por stdin como en Windows). La
 salida que devuelven sale igual de los `.jsonl` de arriba, retocada para cada
 caso: lo que se prueba sigue siendo formato real.
+
+Los modos `falla-*` de `fake-claude.js` son los que **sí** pasan seguido en la
+máquina de otro: cerrar con código 1 dejando `stderr` vacío y el motivo en
+`stdout`, que es como se porta el CLI de verdad con `--output-format json`.

@@ -38,6 +38,7 @@ const { stripHtmlFence, parseImageDataUrl, makeUsage,
   imageFileName, imagesAsFilesNote } = require('./index');
 const { run } = require('../exec');
 const agentStream = require('./agent-stream');
+const cliErrors = require('./cli-errors');
 
 const DEFAULT_TIMEOUT_MS = 900_000; // 900s: los modelos con thinking se toman su tiempo
 const DEFAULT_MODEL = 'claude-sonnet-5-thinking-high';
@@ -179,7 +180,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       });
 
       if (r.timedOut) throw new Error(`cursor-cli: timeout tras ${timeoutMs}ms`);
-      if (r.code === -1) throw new Error(setupHint(bin) + '\nDetalle: ' + r.err);
+      if (r.code === -1) throw new Error(setupHint(bin) + '\nDetalle: ' + cliErrors.deProceso(r));
 
       const combined = (r.err || '') + '\n' + (r.out || '');
       // Un CLI más viejo que stream-json lo rechaza al instante, sin gastar un
@@ -191,7 +192,9 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         continue;
       }
       if (r.code !== 0) {
-        lastErr = r.err.trim() || r.out.trim() || '(sin salida)';
+        // Mirar los dos flujos ya estaba bien; lo que faltaba era que, cuando lo
+        // que llega es el JSON del CLI, se cite la frase y no el bloque crudo.
+        lastErr = cliErrors.deProceso(r) || '(sin salida)';
         if (isTransient(combined) && attempt < MAX_ATTEMPTS) {
           await sleep(RETRY_DELAY_MS * attempt);
           continue;
@@ -328,7 +331,9 @@ async function listModels(config) {
     if (cfg.apiKey) childEnv.CURSOR_API_KEY = cfg.apiKey;
     // 60s y no 30: el listado normalmente tarda ~1s pero se lo vio irse a 30s.
     const r = await run(bin, ['--list-models'], { timeoutMs: 60_000, env: childEnv, shell: process.platform === 'win32' });
-    if (r.code !== 0) return { ok: false, error: (r.err || r.out || '').trim().slice(0, 300) };
+    // `r.err || r.out` se comía el stdout cuando stderr traía apenas un salto de
+    // línea (es "verdadero"): se miran los dos ya recortados.
+    if (r.code !== 0) return { ok: false, error: cliErrors.deProceso(r).slice(0, 300) };
 
     // Formato de cada línea: "<id> - <nombre para mostrar>".
     const models = [];

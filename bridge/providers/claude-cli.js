@@ -10,7 +10,10 @@
  * - spawn SIN shell y con args por array: el prompt y el system prompt pueden
  *   contener comillas, backticks, etc., y asi no hay riesgo de inyeccion.
  * - stdout completo es la respuesta del modelo.
- * - exit code != 0 => rechaza con Error que incluye stderr.
+ * - exit code != 0 => rechaza con un Error que dice POR QUÉ. El motivo puede
+ *   venir por stderr o por stdout: corriendo con --output-format json el CLI
+ *   escribe sus errores en stdout, adentro del JSON, y deja stderr vacío (ver
+ *   errorDeSalida más abajo).
  * - Si quien llama pasa `onActivity`, se usa `--output-format stream-json` para
  *   ir contando qué hace el modelo mientras trabaja. El resultado se sigue
  *   leyendo del stdout COMPLETO al terminar (el último evento es el mismo
@@ -31,6 +34,8 @@ const { stripHtmlFence, parseImageDataUrl, makeUsage,
   imageFileName, imagesAsFilesNote } = require('./index');
 const { run } = require('../exec');
 const agentStream = require('./agent-stream');
+const cliErrors = require('./cli-errors');
+const doctor = require('../claude-doctor');
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas y se demora)
 
@@ -65,6 +70,59 @@ function writeTempImages(images) {
   }
 
   return { paths, cleanup };
+}
+
+/**
+ * El mensaje que ve el editor cuando la corrida se cae.
+ *
+ * Antes decía "salio con codigo 1. stderr: (vacio)" y ahí terminaba: miraba
+ * SOLO stderr y descartaba stdout, que es justo donde el CLI escribe el motivo
+ * cuando corre con --output-format json. El motivo llegaba y lo tirábamos.
+ *
+ * Ahora se mira todo lo que escribió, se saca la frase de adentro del JSON (que
+ * el editor no puede leer crudo) y, si el modo de falla es de los conocidos, se
+ * dice con nombre propio y con el próximo paso.
+ *
+ * @param {string} generico - la cabecera para cuando no reconocemos la causa
+ * @param {{out?:string, err?:string}} r - lo que devolvió run()
+ * @param {string} bin
+ * @param {string} model
+ * @returns {string}
+ */
+function errorDeSalida(generico, r, bin, model) {
+  const detalle = cliErrors.deProceso(r);
+  const dijo = detalle
+    ? '\nLo que dijo el CLI: ' + detalle
+    : '\nEl CLI no escribió nada, ni por stdout ni por stderr.';
+  // Para ponerle nombre a la falla se miran stderr, la FRASE ya extraída y las
+  // etiquetas del CLI — no el stdout entero: con el estado en vivo ahí adentro
+  // está también todo lo que escribió el modelo, y una composición que hable de
+  // "permisos" no tiene por qué disfrazarse de un problema de permisos.
+  const pistas = String((r && r.err) || '') + '\n' + detalle +
+    '\n' + cliErrors.etiquetas((r && r.out) || '');
+
+  switch (cliErrors.causa(pistas)) {
+    case 'sesion':
+      // La hipótesis número uno cuando esto pasa en la máquina de otro: el CLI
+      // está y corre, pero nunca terminó de loguearse, así que falla en el acto.
+      return 'claude-cli: esta máquina no tiene sesión de Claude. El CLI arrancó, no encontró\n' +
+        'con qué autenticarse y cerró en el acto.\n' +
+        doctor.tokenAMano('Qué hacer:') + dijo;
+    case 'cuota':
+      return 'claude-cli: tu cuenta de Claude se quedó sin cupo (o te frenó el límite de uso).\n' +
+        'Qué hacer: esperá a que se renueve, o cambiá de proveedor en Configuración\n' +
+        '(Cursor, o la API de Anthropic) para seguir generando mientras tanto.' + dijo;
+    case 'modelo':
+      return 'claude-cli: el CLI no reconoce el modelo "' + (model || 'sin especificar') + '".\n' +
+        'Qué hacer: elegí otro modelo en Configuración — el nombre puede haber cambiado\n' +
+        'o no estar habilitado para tu cuenta.' + dijo;
+    case 'permisos':
+      return 'claude-cli: el sistema no lo dejó hacer lo que necesitaba (permisos).\n' +
+        'Qué hacer: revisá que "' + bin + '" tenga permiso de ejecución y que el antivirus\n' +
+        'no lo esté bloqueando.' + dijo;
+    default:
+      return generico + dijo;
+  }
 }
 
 /**
@@ -174,10 +232,11 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     }
     if (r.code === -1) {
       // Cubre binario inexistente / sin permisos.
-      throw new Error(`claude-cli: no se pudo ejecutar "${bin}": ${r.err}`);
+      throw new Error(`claude-cli: no se pudo ejecutar "${bin}": ` +
+        (cliErrors.deProceso(r) || 'el sistema no dijo por qué'));
     }
     if (r.code !== 0) {
-      throw new Error(`claude-cli: salio con codigo ${r.code}. stderr: ${r.err.trim() || '(vacio)'}`);
+      throw new Error(errorDeSalida(`claude-cli: salió con código ${r.code}.`, r, bin, model));
     }
     const stdout = r.out;
 
@@ -193,7 +252,11 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     let warning = '';
     if (parsed) {
       if (parsed.is_error) {
-        throw new Error('claude-cli: is_error en la respuesta: ' + String(parsed.result || parsed.error || '').slice(0, 300));
+        // El CLI también puede cerrar con código 0 y el error adentro del JSON.
+        // Para el editor es el mismo problema, así que lleva el mismo trato: la
+        // frase legible y, si la reconocemos, la causa con su próximo paso.
+        throw new Error(errorDeSalida('claude-cli: el CLI devolvió un error.',
+          { err: '', out: JSON.stringify(parsed) }, bin, model));
       }
       text = typeof parsed.result === 'string' ? parsed.result : '';
       const u = parsed.usage || {};

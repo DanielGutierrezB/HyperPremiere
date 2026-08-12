@@ -36,7 +36,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { URL } = require('url');
 
-const { run } = require('./exec');
+const { run, salidaDe } = require('./exec');
 const { hpFetch } = require('./providers/http');
 const { whisperHome, writeInstalled, forgetInstalled, wipeSub } = require('./store/whisper-home');
 const { detectWhisper, TOOLS, FWXXL_URL } = require('./transcribe');
@@ -466,7 +466,7 @@ async function installPip(plan, report) {
   abortIfCancelled();
   const py = path.join(venv, IS_WIN ? 'Scripts' : 'bin', IS_WIN ? 'python.exe' : 'python');
   if (mk.code !== 0 || !fs.existsSync(py)) {
-    throw new Error('No pude crear el entorno de Python: ' + ((mk.err || mk.out) || '').slice(-300));
+    throw new Error('No pude crear el entorno de Python: ' + salidaDe(mk, 'no dijo por qué').slice(-300));
   }
 
   report({ pct: 12, msg: 'Instalando ' + plan.pkg + ' (~' + plan.downloadMB + ' MB)…' });
@@ -502,7 +502,8 @@ async function installPip(plan, report) {
   currentChild = null;
   abortIfCancelled();
   if (r.code !== 0) {
-    throw new Error('pip no pudo instalar ' + plan.pkg + ':\n' + ((r.err || r.out) || '').slice(-400));
+    // pip manda casi todo a stdout, incluido el motivo de un fallo.
+    throw new Error('pip no pudo instalar ' + plan.pkg + ':\n' + salidaDe(r, 'no dijo por qué').slice(-400));
   }
   const bin = path.join(venv, IS_WIN ? 'Scripts' : 'bin', plan.bin + (IS_WIN ? '.exe' : ''));
   if (!fs.existsSync(bin)) {
@@ -532,7 +533,7 @@ async function extractArchive(archive, destDir) {
     });
     currentChild = null;
     if (r.code === 0 && fs.readdirSync(destDir).length) return a.cmd;
-    errores.push(a.cmd + ': ' + ((r.err || r.out) || 'código ' + r.code).trim().slice(-120));
+    errores.push(a.cmd + ': ' + salidaDe(r, 'código ' + r.code).slice(-120));
   }
   throw new Error('No pude descomprimir el archivo con ninguna herramienta del equipo (' + errores.join(' · ') + ').' +
     '\nEl archivo YA está bajado en: ' + archive +
@@ -605,7 +606,7 @@ async function verifyTool(binPath, bin, report) {
   currentChild = null;
   if (h.code !== 0) {
     throw new Error('Se instaló pero NO arranca: `' + bin + ' --help` terminó con código ' + h.code + '.\n' +
-      ((h.err || h.out) || '').slice(-300));
+      salidaDe(h, 'y no dijo por qué').slice(-300));
   }
   abortIfCancelled();
 

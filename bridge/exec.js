@@ -139,4 +139,21 @@ function run(cmd, args, opts) {
   });
 }
 
-module.exports = { run, killTree, quoteForShell };
+// Lo que dejó dicho un proceso que terminó mal.
+//
+// stderr primero, porque es donde va el error cuando el programa se porta bien;
+// stdout después, porque hay un montón que NO se portan bien y dejan ahí lo
+// único que explica el fallo (unzip, pip, y cualquier CLI que corra con
+// --output-format json). Mirar solo stderr es mostrarle al editor un "(vacío)"
+// con el motivo tirado a la basura al lado.
+//
+// El `.trim()` de cada lado tampoco es adorno: `r.err || r.out` se queda con
+// stderr aunque traiga apenas un salto de línea, que es "verdadero", y así tapa
+// el stdout que sí decía algo.
+function salidaDe(r, siNada) {
+  const err = String((r && r.err) || '').trim();
+  const out = String((r && r.out) || '').trim();
+  return err || out || (siNada || '');
+}
+
+module.exports = { run, killTree, quoteForShell, salidaDe };

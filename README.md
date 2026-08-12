@@ -431,6 +431,34 @@ la URL de autorización ahora se reconoce por ser **de Claude**, porque algunos 
 CLI traen un link adentro y el panel abría esa página ajena a pedir un código que no
 existía.
 
+## Cuando la generación se cae
+
+Un editor en Windows apretó Generar y recibió esto entero: *"Error: claude-cli: salio con
+codigo 1. stderr: (vacio)"*. El mensaje decía que algo falló y **escondía qué**, y encima
+no por falta de información: el motivo había llegado y lo tirábamos a la basura antes de
+mostrarlo. Los CLI de agente corren con `--output-format json`, y en ese modo escriben sus
+errores **en la salida estándar, adentro del JSON** — no en `stderr`, que es lo único que
+se miraba.
+
+Ahora se mira todo lo que escribió el CLI, se saca la **frase** de adentro del JSON (un
+bloque crudo no es un mensaje de error, es un volcado) y, cuando el modo de falla es de los
+conocidos, se dice con nombre propio y con el paso siguiente:
+
+- **La máquina no tiene sesión** → se dice que el CLI arrancó, no encontró con qué
+  autenticarse y cerró en el acto; y se manda a `claude setup-token` en una terminal
+  (en Windows, PowerShell o CMD) o a pegar el token en *"…o pegá el token directamente"*.
+  Es, de lejos, la causa más común de un código 1 en una máquina nueva.
+- **Se acabó el cupo** → esperar a que se renueve, o cambiar de proveedor en Configuración
+  (Cursor, o la API de Anthropic) para seguir generando mientras tanto.
+- **El modelo no existe** → se nombra cuál es el modelo del problema y dónde se cambia.
+- **Permisos** → qué ejecutable revisar, y el recordatorio del antivirus (que en Windows es
+  la causa buena la mitad de las veces).
+
+Y si el CLI de verdad no dijo nada, el mensaje **lo admite** en vez de simular un motivo.
+El mismo descuido —reportar `stderr` y olvidarse de `stdout`— estaba repetido en el
+descompresor de la actualización, en el instalador de Whisper, en la transcripción y en el
+watchdog del render: todos miran ahora los dos lados.
+
 ## Windows
 
 El panel corre en Windows, pero **el sistema operativo cambia cosas que se notan**. Lo que
@@ -512,6 +540,11 @@ Y el **login de Claude**: que sin CLI se falle al instante en vez de esperar el 
 que el timeout cuente qué encontró, que una versión vieja mande a actualizar, que un link
 ajeno dentro de un error no se confunda con la autorización y que una ruta con espacios no
 rompa nada.
+
+Y los **mensajes de error del proveedor**, que es lo único que le queda al editor cuando
+algo se cae en su máquina: que un motivo que vino por `stdout` con `stderr` vacío llegue al
+cartel, que la falta de sesión se reconozca como tal y traiga el comando a correr, y que el
+JSON del CLI se muestre **legible** y no como un bloque crudo.
 
 También el **instalador de Whisper**, con un servidor local que hace de GitHub (no se
 baja un giga en un test): que se detecte bien cuándo falta, que lo instalado por el panel
