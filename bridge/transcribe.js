@@ -297,8 +297,11 @@ function whisperArgs(tool, inputPath, outDir, opts) {
     //     la consola, no a stdout. Sin esto nuestro watchdog no ve salida y a
     //     los 15 minutos mata una transcripción que iba perfecta.
     //   --beep_off: al terminar hace sonar un beep. Adentro de Premiere, no.
+    // Y va SIN --verbose: esta variante aborta con "--print_progress doesn't
+    // work with --verbose=True". Los segmentos y el idioma salen del JSON, así
+    // que la salida verbose acá no hace falta (solo es respaldo si no hay JSON).
     return [inputPath, '--model', WHISPER_MODEL, '--output_dir', outDir, '--output_format', 'json',
-      '--compute_type', 'int8', '--verbose', 'True', '--print_progress', '--beep_off'].concat(extra);
+      '--compute_type', 'int8', '--print_progress', '--beep_off'].concat(extra);
   }
   if (tool.style === 'ct2') {
     // whisper-ctranslate2 (faster-whisper): flags estilo openai + int8 en CPU
