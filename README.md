@@ -135,6 +135,12 @@ extra, solo cuando lo usás.
 - **Refinar / Feedback** usa prompt *lean*: **no reenvía el transcript completo** de la
   clase (el modelo se apoya en el HTML previo + el fragmento del marcador). **Generar** y
   **Regenerar desde cero** sí mandan el contexto completo, porque no hay diseño previo.
+  El **fragmento del marcador viaja siempre**, en toda llamada y ronda de feedback: es lo
+  único que dice qué se está diciendo mientras el recurso está en pantalla y en qué
+  segundo de la animación pasa cada cosa (con los tiempos **relativos** al arranque del
+  clip). Si esa secuencia no está cargada en el panel —un job que quedó de otra sesión, o
+  una corrección de un corte que nunca abriste acá—, el transcript se **recupera de su
+  carpeta** antes de llamar al modelo.
 - **Las imágenes NO son un lugar donde ahorrar**: se reenvían siempre (ver arriba). En la
   caja de feedback de la Cola cada miniatura tiene su **📤** por si querés dejar alguna
   afuera a propósito; las marcadas **✓ usar** se **incrustan igual**, viajen o no.
@@ -267,9 +273,10 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
   Lo mismo con el resto del contexto: viaja **el encargo original** del recurso (lo que
   pediste cuando lo generaste, que la fila te muestra debajo del nombre) **además** de tu
   corrección, el **objetivo de la clase**, el **prompt general** y el **tramo del guion**
-  —si ese corte no está en este panel, el transcript se trae de su carpeta—. Es la
+  del corte donde nació (si no está en el panel, se recupera de su carpeta). Es la
   diferencia entre pedir "subí el título" sobre un gráfico que el modelo entiende y
-  pedírselo a ciegas.
+  pedírselo a ciegas. Y **no se transcribe nada** para corregir: el corte viejo puede ya
+  no existir en el proyecto, así que se usa lo que haya y la cola nunca se frena por eso.
 - **Ver y editar el HTML**: el de la versión que tengas elegida, **traído del disco** (la
   pestaña ya encontró los archivos, no te los pide). Sirve para ver qué tiene el recurso
   antes de escribir la corrección, para retocarlo a mano y renderizarlo **sin gastar IA**,

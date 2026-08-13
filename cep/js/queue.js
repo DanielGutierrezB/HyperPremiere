@@ -412,10 +412,57 @@
     } catch (e) { hpLog("rehydratePayload falló [" + job.label + "]: " + ((e && e.message) || e), "WARN"); }
   }
 
+  /**
+   * Deja en el panel el transcript de la secuencia de la que sale el material de
+   * este job. Es de donde se recorta el FRAGMENTO DEL MARCADOR: qué se está
+   * diciendo en su tramo, con los tiempos, y va en toda llamada al modelo
+   * (también al refinar, que es lo único que le dice cuándo tiene que pasar cada
+   * cosa). Puede no estar en el panel —un job restaurado de otra sesión, o una
+   * corrección de un corte que nunca se abrió en esta máquina— y estar en el
+   * disco, en la carpeta de esa secuencia. Nunca transcribe ni frena: recupera
+   * lo que haya y sigue.
+   */
+  function ensureTranscript(job) {
+    var seq = job.storeSeqName || job.seqName;
+    var hay = true;
+    try {
+      hay = !seq || HPStore.withContext(job.projectPath, seq, function () {
+        return (HPStore.getTranscript() || []).length > 0;
+      });
+    } catch (e) {}
+    if (hay) return Promise.resolve();
+    return HPEngine.call("loadTranscript", { projectPath: job.projectPath, sequenceName: seq })
+      .then(function (r) {
+        if (!r || !r.ok || !r.found || !r.segments || !r.segments.length) return;
+        HPStore.withContext(job.projectPath, seq, function () {
+          HPStore.setTranscript(r.segments);
+          HPStore.setTranscriptOffset(Number(r.offset) || 0);
+        });
+        hpLog("Job [" + job.label + "] · traje del disco el transcript de “" + seq + "” (" +
+          r.segments.length + " segmentos): es el guion del tramo que va al modelo.");
+      })
+      .catch(function (e) {
+        hpLog("Job [" + job.label + "] · no pude traer el transcript de “" + seq + "”: " +
+          ((e && e.message) || e), "WARN");
+      });
+  }
+
   function startModel(job) {
     modelRunning++; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
     job._modelStart = Date.now(); job._modelMs = 0; job.act = null; job._actSeen = false;
     job._modelLanes = modelRunning; // para calibrar en carril-segundos
+    emit();
+    ensureTranscript(job).then(function () { runModel(job); });
+  }
+
+  function runModel(job) {
+    // Cancelado mientras se buscaba el guion: el carril se suelta acá, porque la
+    // llamada que normalmente lo suelta no va a existir.
+    if (job._cancelled) {
+      modelRunning--;
+      hpLog("Job CANCELADO [" + job.label + "] antes del modelo — descartado.");
+      emit(); pump(); return;
+    }
     rehydratePayload(job); emit();
     var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
     hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?") + " · en paralelo=" + modelRunning);

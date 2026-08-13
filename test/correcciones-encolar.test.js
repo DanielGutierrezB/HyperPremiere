@@ -362,30 +362,6 @@ test('lo que SÍ está guardado en el corte viejo gana sobre lo del abierto', as
   eq(p.espia.encolados[0].payload.objective, 'el objetivo con el que se generó');
 });
 
-test('el transcript del corte viejo se trae del disco si el panel no lo tiene', async function () {
-  // De ahí sale el fragmento del marcador: qué se está diciendo en ese tramo.
-  // Sin él el modelo corrige sin el guion y la animación deja de acompañar.
-  const segs = [{ start: 128, end: 135, text: 'y acá vemos las ventas' }];
-  const { p } = await cargarCruzada(null, {
-    almacen: { 'Clase 14': { transcript: [{ start: 0, end: 1, text: 'otro corte' }] } },
-    transcriptEnDisco: { ok: true, found: true, segments: segs, offset: 2 },
-  });
-  await new Promise(function (r) { setTimeout(r, 0); });
-
-  eq(p.espia.transcriptsPedidos[0].sequenceName, 'Clase 14 v1', 'se pide el del corte de origen');
-  eq(p.almacen['Clase 14 v1'].transcript.length, 1, 'y queda guardado contra ESE corte');
-  eq(p.almacen['Clase 14 v1'].offset, 2, 'con su desfase, o los tiempos no cierran');
-  eq(p.almacen['Clase 14'].transcript.length, 1, 'sin pisar el del corte abierto');
-});
-
-test('si el panel ya tiene ese transcript, no se lee el disco de nuevo', async function () {
-  const { p } = await cargarCruzada(null, {
-    almacen: { 'Clase 14 v1': { transcript: [{ start: 0, end: 1, text: 'ya está' }] } },
-  });
-  await new Promise(function (r) { setTimeout(r, 0); });
-  eq(p.espia.transcriptsPedidos.length, 0);
-});
-
 test('el HTML previo viaja explícito, de la versión que se eligió', async function () {
   // El motor por defecto lee la versión ANTERIOR a la que va a escribir. Acá se
   // corrige la versión que el editor elija, así que si no se manda a mano, una
@@ -743,9 +719,18 @@ test('el tramo escrito a mano se guarda en la carpeta de origen, no en la abiert
 // ── Qué hace la cola con esa corrección ──────────────────────────────
 
 /** Monta la cola de verdad con un motor y un Premiere de mentira. */
-function montarCola() {
-  const espia = { colocados: [], recoloreados: [], guardado: null, preparados: [] };
+function montarCola(opts) {
+  opts = opts || {};
+  const espia = { colocados: [], recoloreados: [], guardado: null, preparados: [], transcriptsPedidos: [] };
   const almacen = {};
+  // El transcript es POR SECUENCIA, igual que en el panel: es lo que decide si
+  // una corrección de otro corte encuentra su guion o se queda sin él.
+  const porSecuencia = opts.porSecuencia || {};
+  let seqActual = null;
+  function espacio(seq) {
+    const k = seq || '';
+    return (porSecuencia[k] = porSecuencia[k] || {});
+  }
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
     Object: Object, Array: Array, isNaN: isNaN, parseInt: parseInt, parseFloat: parseFloat,
@@ -756,12 +741,22 @@ function montarCola() {
     },
     HPLog: { log: function () {} },
     HPConfigUI: { isLocalProvider: function () { return false; }, modelName: function () { return 'claude-sonnet-5'; } },
-    HPTranscript: { sliceForMarker: function () { return []; } },
+    HPTranscript: {
+      sliceForMarker: function (segs, desde, hasta) {
+        return (segs || []).filter(function (s) { return s.end > desde && s.start < hasta; });
+      },
+    },
     HPStore: {
       GENERAL_KEY: '__general__',
       getContext: function () { return { projectPath: '/p/Clases.prproj' }; },
-      withContext: function (a, b, fn) { return fn(); },
-      getTranscript: function () { return []; },
+      withContext: function (a, b, fn) {
+        const antes = seqActual;
+        seqActual = b;
+        try { return fn(); } finally { seqActual = antes; }
+      },
+      getTranscript: function () { return espacio(seqActual).transcript || []; },
+      setTranscript: function (segs) { espacio(seqActual).transcript = segs; },
+      setTranscriptOffset: function (n) { espacio(seqActual).offset = n; },
       getMarkerData: function () { return { stills: [], resources: [] }; },
       getMarkerAssets: function () { return []; },
       getTranscriptOffset: function () { return 0; },
@@ -781,8 +776,12 @@ function montarCola() {
       },
     },
     HPEngine: {
-      call: function (m) {
+      call: function (m, arg) {
         if (m === 'mediaHasAudio') return Promise.resolve({ ok: true, hasAudio: false });
+        if (m === 'loadTranscript') {
+          espia.transcriptsPedidos.push(arg);
+          return Promise.resolve(opts.transcriptEnDisco || { ok: true, found: false });
+        }
         return Promise.resolve({ ok: true });
       },
       callProg: function (metodo, arg) {
@@ -800,7 +799,7 @@ function montarCola() {
   for (const f of ['util.js', 'queue.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
-  return { ctx: ctx, espia: espia };
+  return { ctx: ctx, espia: espia, porSecuencia: porSecuencia };
 }
 
 /** Deja correr las promesas encadenadas de la cola. */
@@ -862,6 +861,82 @@ test('si el panel se reinicia a mitad, la corrección sigue siendo corrección',
   ok(c.espia.guardado, 'la cola se persistió');
   const j = c.espia.guardado.jobs.filter(function (x) { return x.markerKey === 'Marcador 3'; })[0];
   eq(j.correction, true, 'la marca sobrevive al archivo');
+});
+
+// ── El tramo del guion, en la corrección y en su feedback ────────────
+// Es lo único que le dice al modelo QUÉ se está diciendo mientras el recurso
+// está en pantalla, y CUÁNDO: sin eso la animación deja de acompañar. Viaja en
+// toda llamada, también al refinar (ahí el transcript completo de la clase no
+// va, pero el fragmento del marcador sí).
+
+/** Un guion de la clase, con una línea justo en el tramo del recurso. */
+const GUION = [
+  { start: 10, end: 20, text: 'esto es de otro momento' },
+  { start: 128, end: 135, text: 'y acá vemos las ventas por trimestre' },
+];
+
+test('la corrección manda el fragmento del guion de su tramo', async function () {
+  const c = montarCola({ porSecuencia: { 'Clase 14': { transcript: GUION } } });
+  c.ctx.HPQueue.add(jobBase({ correction: true }));
+  await dejarCorrer();
+
+  const frag = c.espia.preparados[0].markerTranscript;
+  eq(frag.length, 1, 'solo lo que se dice mientras el recurso está en pantalla');
+  eq(frag[0].text, 'y acá vemos las ventas por trimestre');
+});
+
+test('corrigiendo de otro corte, el guion sale del corte donde NACIÓ el recurso', async function () {
+  // El tramo (128.5s) es el del corte viejo: recortarlo del guion de la
+  // secuencia abierta daría un pedazo de otra parte de la clase.
+  const c = montarCola({ porSecuencia: {
+    'Clase 14': { transcript: [{ start: 128, end: 135, text: 'en el corte nuevo acá se habla de otra cosa' }] },
+    'Clase 14 v1': { transcript: GUION },
+  } });
+  c.ctx.HPQueue.add(jobBase({ correction: true, storeSeqName: 'Clase 14 v1' }));
+  await dejarCorrer();
+  eq(c.espia.preparados[0].markerTranscript[0].text, 'y acá vemos las ventas por trimestre');
+});
+
+test('si ese corte no está en el panel, el guion se trae de su carpeta', async function () {
+  // Pasa con un job restaurado en otra sesión, o corrigiendo un corte que nunca
+  // se abrió en esta máquina. Está en el disco: no hay por qué corregir a ciegas.
+  const c = montarCola({
+    porSecuencia: { 'Clase 14 v1': {} },
+    transcriptEnDisco: { ok: true, found: true, segments: GUION, offset: 0 },
+  });
+  c.ctx.HPQueue.add(jobBase({ correction: true, storeSeqName: 'Clase 14 v1' }));
+  await dejarCorrer();
+
+  eq(c.espia.transcriptsPedidos[0].sequenceName, 'Clase 14 v1', 'se pide el del corte de origen');
+  eq(c.espia.preparados[0].markerTranscript[0].text, 'y acá vemos las ventas por trimestre');
+  eq(c.porSecuencia['Clase 14 v1'].transcript.length, 2, 'y queda en el panel, contra ESE corte');
+});
+
+test('sin transcript en ningún lado, se genera igual: no se frena la corrección', async function () {
+  // Ese corte puede ya no existir en el proyecto. Corregir con el HTML previo y
+  // el encargo es peor que con el guion, pero muchísimo mejor que no poder.
+  const c = montarCola({ porSecuencia: { 'Clase 14 v1': {} } });
+  c.ctx.HPQueue.add(jobBase({ correction: true, storeSeqName: 'Clase 14 v1' }));
+  await dejarCorrer();
+  eq(c.espia.preparados.length, 1, 'se llamó al modelo igual');
+  eq(c.espia.colocados.length, 1, 'y el clip llegó al timeline');
+});
+
+test('el que ya tiene el guion no va al disco a buscarlo', async function () {
+  const c = montarCola({ porSecuencia: { 'Clase 14': { transcript: GUION } } });
+  c.ctx.HPQueue.add(jobBase());
+  await dejarCorrer();
+  eq(c.espia.transcriptsPedidos.length, 0);
+});
+
+test('la segunda ronda de feedback también lleva el fragmento', async function () {
+  const c = montarCola({ porSecuencia: { 'Clase 14': { transcript: GUION } } });
+  c.ctx.HPQueue.add(jobBase({ correction: true }));
+  await dejarCorrer();
+
+  c.ctx.HPQueue.regenerate(c.ctx.HPQueue.jobs()[0].id, 'ahora corré el subtítulo');
+  await dejarCorrer();
+  eq(c.espia.preparados[1].markerTranscript[0].text, 'y acá vemos las ventas por trimestre');
 });
 
 test('rehidratar completa, pero no vacía lo que el job ya traía', async function () {

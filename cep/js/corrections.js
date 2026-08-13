@@ -542,32 +542,6 @@
     }
   }
 
-  /**
-   * Deja en el panel el transcript del corte donde nació el recurso. De ahí sale
-   * el fragmento del marcador: qué se está diciendo en ese tramo, con los
-   * tiempos. Puede faltar —ese corte quizá nunca se abrió en esta máquina— y
-   * está en el disco, en su propia carpeta, así que se trae. Sin él el modelo
-   * corrige sin el guion y la animación deja de acompañar lo que se dice.
-   */
-  function traerTranscript(projectPath, seqName) {
-    var tiene = leerDe(seqName, function () { return (HPStore.getTranscript() || []).length; });
-    if (tiene) return;
-    HPEngine.call("loadTranscript", { projectPath: projectPath, sequenceName: seqName })
-      .then(function (r) {
-        if (!r || !r.ok || !r.found || !r.segments || !r.segments.length) return;
-        leerDe(seqName, function () {
-          HPStore.setTranscript(r.segments);
-          HPStore.setTranscriptOffset(Number(r.offset) || 0);
-        });
-        hpLog("Corrections: traje del disco el transcript de “" + seqName + "” (" +
-          r.segments.length + " segmentos): es el guion que va con estos recursos.");
-      })
-      .catch(function (e) {
-        hpLog("Corrections: no pude traer el transcript de “" + seqName + "”: " +
-          ((e && e.message) || e), "WARN");
-      });
-  }
-
   /** `folderSlug` fuerza una carpeta; sin él, el motor elige la que corresponde. */
   function load(folderSlug) {
     setStatus("Leyendo la carpeta de la secuencia…");
@@ -585,7 +559,6 @@
         res.sources = res.sources || [];
         destino = ctx.sequenceName;
         origen = { slug: res.folderSlug, sequenceName: res.sourceSequenceName || ctx.sequenceName };
-        if (origen.sequenceName) traerTranscript(ctx.projectPath, origen.sequenceName);
         renderPicker(res);
         render(res);
         var sinFicha = res.markers.filter(function (m) { return m.start == null; }).length;

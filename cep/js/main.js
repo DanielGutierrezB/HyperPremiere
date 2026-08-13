@@ -1139,6 +1139,15 @@
   HPQueue.setModelPreflight(function (job, dryRun) {
     var seqName = (job && job.seqName) || currentSequenceName;
     var projectPath = (job && job.projectPath) || currentProjectPath;
+    // Una corrección no fabrica contexto: lo recupera. Su guion es el del corte
+    // donde NACIÓ el recurso (de ahí sale el fragmento del marcador, con los
+    // tiempos), que puede ser otro que el abierto y hasta ya no existir en el
+    // proyecto. Así que se trae de su carpeta lo que haya y se sigue: preparar
+    // la secuencia abierta sería transcribir una clase entera que no entra en el
+    // prompt, y frenar la cola por un corte viejo sería no poder corregir nunca.
+    // (Lo que SÍ haya en su carpeta lo recupera la cola antes de llamar al
+    // modelo, para cualquier job; ver ensureTranscript en queue.js.)
+    if (job && job.correction) return true;
     if (contextIsReadyFor(projectPath, seqName)) return true;
     if (dryRun) return false;
     // Ya intentamos preparar el contexto y no se pudo: si volvés a arrancar la
