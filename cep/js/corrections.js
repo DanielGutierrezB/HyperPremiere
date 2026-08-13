@@ -120,6 +120,34 @@
     };
   }
 
+  /** Lee del namespace de una secuencia sin dejar el contexto cambiado. */
+  function leerDe(seqName, fn) {
+    return HPStore.withContext(deps.context().projectPath, seqName, fn);
+  }
+
+  /**
+   * El marco de la clase: objetivo e indicaciones generales. Están guardados
+   * contra la secuencia donde nació el recurso, y ahí pueden no estar —ese corte
+   * nunca se abrió en esta máquina—, así que lo que falte se toma de la secuencia
+   * abierta: es la misma clase con otro corte, y mandar "(sin objetivo
+   * declarado)" es pedirle al modelo que corrija sin saber de qué va la clase.
+   */
+  function marcoDeLaClase() {
+    function leer() {
+      return {
+        objective: HPStore.getObjective() || "",
+        general: (HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}).instruction || ""
+      };
+    }
+    var propio = leerDe(origen.sequenceName, leer);
+    if (!otroCorte() || (propio.objective && propio.general)) return propio;
+    var vecino = leerDe(destino, leer);
+    return {
+      objective: propio.objective || vecino.objective,
+      general: propio.general || vecino.general
+    };
+  }
+
   /**
    * Manda la corrección a la cola como un refinamiento normal, con dos
    * diferencias: el HTML previo viaja explícito (el motor por defecto lee la
@@ -138,6 +166,7 @@
     }).then(function (r) {
       if (!r || !r.ok || !r.html) throw new Error((r && r.error) || "no pude leer el HTML de la v" + version);
 
+      var marco = marcoDeLaClase();
       var job = jobBase(m);
       job.kind = "feedback";
       job.label = m.slug + " (corrección)";
@@ -145,7 +174,16 @@
         projectPath: ctx.projectPath, sequenceName: origen.sequenceName,
         marker: markerFromMeta(m),
         markerSlug: m.slug, mode: "adjust",
-        instruction: text, adjustment: text,
+        // `instruction` es el ENCARGO del recurso (lo que se pidió cuando se
+        // generó, guardado en la ficha) y `adjustment` es la corrección de ahora.
+        // Son dos secciones distintas del prompt: mandando la corrección en los
+        // dos lados, el modelo rediseñaba sin saber qué era ese gráfico —"subí el
+        // título" como TODO el encargo— y encima la ficha nueva se quedaba con
+        // eso, así que el encargo se perdía para siempre.
+        instruction: m.instruction || text,
+        adjustment: text,
+        objective: marco.objective,
+        generalInstruction: marco.general,
         previousHtml: r.html,
         // Qué imágenes del marcador viajan (el 📤 de cada miniatura). La cola las
         // resuelve contra la secuencia de origen justo antes de llamar al modelo.
@@ -177,6 +215,9 @@
     job.payload = {
       projectPath: ctx.projectPath, sequenceName: origen.sequenceName,
       marker: markerFromMeta(m),
+      // Con fondo o sin fondo decide el formato del video (mp4 opaco / mov con
+      // alpha). Sin esto, editar a mano un recurso opaco lo devolvía en mov.
+      background: !!m.background,
       markerSlug: m.slug, html: html, draft: deps.draft()
     };
     HPQueue.add(job);
@@ -214,6 +255,17 @@
       " · " + m.versions.length + (m.versions.length === 1 ? " versión" : " versiones");
     line.appendChild(name); line.appendChild(when); line.appendChild(meta);
     row.appendChild(line);
+
+    // El encargo con el que nació el recurso, tal como quedó en su ficha. Se
+    // muestra porque es lo que el modelo va a recibir junto con la corrección, y
+    // porque al mes uno ya no se acuerda de qué le pidió a ese gráfico.
+    if (m.instruction) {
+      var brief = document.createElement("div");
+      brief.className = "corr-brief";
+      brief.textContent = "Se pidió: " + m.instruction;
+      brief.title = m.instruction;
+      row.appendChild(brief);
+    }
 
     var state = document.createElement("div");
     state.className = "corr-state";
@@ -490,6 +542,32 @@
     }
   }
 
+  /**
+   * Deja en el panel el transcript del corte donde nació el recurso. De ahí sale
+   * el fragmento del marcador: qué se está diciendo en ese tramo, con los
+   * tiempos. Puede faltar —ese corte quizá nunca se abrió en esta máquina— y
+   * está en el disco, en su propia carpeta, así que se trae. Sin él el modelo
+   * corrige sin el guion y la animación deja de acompañar lo que se dice.
+   */
+  function traerTranscript(projectPath, seqName) {
+    var tiene = leerDe(seqName, function () { return (HPStore.getTranscript() || []).length; });
+    if (tiene) return;
+    HPEngine.call("loadTranscript", { projectPath: projectPath, sequenceName: seqName })
+      .then(function (r) {
+        if (!r || !r.ok || !r.found || !r.segments || !r.segments.length) return;
+        leerDe(seqName, function () {
+          HPStore.setTranscript(r.segments);
+          HPStore.setTranscriptOffset(Number(r.offset) || 0);
+        });
+        hpLog("Corrections: traje del disco el transcript de “" + seqName + "” (" +
+          r.segments.length + " segmentos): es el guion que va con estos recursos.");
+      })
+      .catch(function (e) {
+        hpLog("Corrections: no pude traer el transcript de “" + seqName + "”: " +
+          ((e && e.message) || e), "WARN");
+      });
+  }
+
   /** `folderSlug` fuerza una carpeta; sin él, el motor elige la que corresponde. */
   function load(folderSlug) {
     setStatus("Leyendo la carpeta de la secuencia…");
@@ -507,6 +585,7 @@
         res.sources = res.sources || [];
         destino = ctx.sequenceName;
         origen = { slug: res.folderSlug, sequenceName: res.sourceSequenceName || ctx.sequenceName };
+        if (origen.sequenceName) traerTranscript(ctx.projectPath, origen.sequenceName);
         renderPicker(res);
         render(res);
         var sinFicha = res.markers.filter(function (m) { return m.start == null; }).length;

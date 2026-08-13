@@ -264,10 +264,18 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
   con la misma duración.
   Las imágenes son las **del marcador en la secuencia donde nació**, incluso si estás
   parado en otro corte: es lo que hizo bueno al original y tiene que seguir viajando.
+  Lo mismo con el resto del contexto: viaja **el encargo original** del recurso (lo que
+  pediste cuando lo generaste, que la fila te muestra debajo del nombre) **además** de tu
+  corrección, el **objetivo de la clase**, el **prompt general** y el **tramo del guion**
+  —si ese corte no está en este panel, el transcript se trae de su carpeta—. Es la
+  diferencia entre pedir "subí el título" sobre un gráfico que el modelo entiende y
+  pedírselo a ciegas.
 - **Ver y editar el HTML**: el de la versión que tengas elegida, **traído del disco** (la
   pestaña ya encontró los archivos, no te los pide). Sirve para ver qué tiene el recurso
   antes de escribir la corrección, para retocarlo a mano y renderizarlo **sin gastar IA**,
-  o para pegar encima una versión que traigas de afuera.
+  o para pegar encima una versión que traigas de afuera. Sale en el **mismo formato** que
+  el original (opaco si llevaba fondo) y **no borra el encargo**: la corrección siguiente
+  sigue sabiendo qué era ese gráfico.
 - **Clic en el nombre** del marcador: te lleva a ese punto del timeline de la secuencia
   que tenés abierta, para ver qué hay ahí antes de escribir la corrección.
 - El clip corregido llega en **amarillo** y en una **pista nueva**, para verlo de un golpe

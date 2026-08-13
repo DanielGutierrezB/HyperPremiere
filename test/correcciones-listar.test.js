@@ -198,6 +198,27 @@ test('con fondo o sin fondo se conserva, para no cambiar de opaco a transparente
   eq(ms[1].background, false);
 });
 
+test('una ficha que no habla del fondo no dice "sin fondo": lo busca más atrás', function () {
+  // Los renders manuales viejos no anotaban el fondo. Leyendo eso como "sin
+  // fondo", corregir un recurso opaco lo devolvía transparente.
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 }, metaExtra: { background: true } });
+  p.version('Marcador 1', 2, { marker: { name: 'x', start: 1, duration: 3 } });
+
+  eq(p.listar().markers[0].background, true, 'sigue siendo el opaco que era');
+});
+
+test('el encargo del recurso sobrevive a un render manual', function () {
+  // "(edición manual)" es el sello de un render sin IA, no un encargo: si se
+  // toma como tal, la corrección siguiente le pide al modelo rediseñar algo
+  // cuyo propósito ya nadie sabe.
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 }, instruction: 'un gráfico de barras' });
+  p.version('Marcador 1', 2, { marker: { name: 'x', start: 1, duration: 3 }, instruction: '(edición manual)' });
+
+  eq(p.listar().markers[0].instruction, 'un gráfico de barras');
+});
+
 // ── La clase volvió re-cortada, con otro nombre ──────────────────────
 // Este es el caso que rompió en producción: el editor manda la clase, la vuelve
 // a cortar como "Clase 14_02" y al pedir las correcciones la pestaña miraba la

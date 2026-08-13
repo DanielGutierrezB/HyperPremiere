@@ -100,6 +100,10 @@
       p = {};
       for (var k in j.payload) if (Object.prototype.hasOwnProperty.call(j.payload, k)) p[k] = j.payload[k];
       delete p.stills; delete p.transcript; delete p.markerTranscript; delete p.resources;
+      // Los assets son las imágenes a incrustar EN BASE64: escribirlas en
+      // queue.json hacía un archivo de megas por un dato que se recalcula solo
+      // (rehydratePayload los vuelve a leer del marcador antes de correr).
+      delete p.assets;
     }
     return {
       id: j.id, status: normStatus(j.status), pct: (normStatus(j.status) === "done" ? 100 : 0),
@@ -374,9 +378,16 @@
         var segments = HPStore.getTranscript() || [];
         var md = HPStore.getMarkerData(job.markerKey) || {};
         var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}; // prompt general
-        job.payload.transcript = segments;
-        job.payload.markerTranscript = HPTranscript.sliceForMarker(
-          segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
+        // Si esa secuencia no tiene transcript acá, NO se pisa lo que el payload
+        // ya trajera: rehidratar existe para completar, no para vaciar. Pasa al
+        // corregir algo de otro corte en una máquina donde ese corte nunca se
+        // abrió, y quedarse sin el fragmento del marcador es perder el guion del
+        // tramo (el modelo deja de saber qué se está diciendo ahí).
+        if (segments.length || !job.payload.markerTranscript) {
+          job.payload.transcript = segments;
+          job.payload.markerTranscript = HPTranscript.sliceForMarker(
+            segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
+        }
         // Stills (visión) + assets (a incrustar) = marcador + generales.
         job.payload.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
         // Las imágenes viajan en TODA generación, también al refinar: el modelo no
@@ -750,6 +761,11 @@
         if (j.kind !== "generate" && j.kind !== "feedback") return; // solo IA
         var txt = (adjustmentText || "").trim();
         j.payload = j.payload || {};
+        // La base del rediseño vuelve a ser la ÚLTIMA versión en disco. Una
+        // corrección viene con el HTML de la versión que el editor eligió en su
+        // momento; dejarlo pegado al job hacía que la segunda ronda de feedback
+        // refinara aquella y tirara a la basura la que se acababa de ver.
+        delete j.payload.previousHtml;
         if (txt) {
           j.payload.adjustment = txt; j.payload.mode = "adjust"; j.kind = "feedback";
           // Índices (en los stills del marcador) que el editor dejó activos. Sin

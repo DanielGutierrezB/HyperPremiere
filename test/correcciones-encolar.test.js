@@ -76,8 +76,18 @@ function montarPestana(opts) {
   };
   const espia = {
     encolados: [], leidos: [], guardados: [], listados: [], saltos: [],
-    controles: [], fbAbiertos: [], fbCerrados: [],
+    controles: [], fbAbiertos: [], fbCerrados: [], transcriptsPedidos: [],
   };
+
+  // El estado del panel es POR SECUENCIA: el mismo marcador tiene un objetivo y
+  // un transcript distintos según de qué corte se lea. Es justo lo que decide si
+  // una corrección leída de otro corte sale con contexto o a ciegas.
+  const almacen = opts.almacen || {};
+  let seqActual = null;
+  function espacio(seq) {
+    const k = seq || '';
+    return (almacen[k] = almacen[k] || {});
+  }
 
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
@@ -125,6 +135,19 @@ function montarPestana(opts) {
       },
     },
     HPQueue: { add: function (job) { espia.encolados.push(job); } },
+    HPStore: {
+      GENERAL_KEY: '__general__',
+      withContext: function (projectPath, sequenceName, fn) {
+        const antes = seqActual;
+        seqActual = sequenceName;
+        try { return fn(); } finally { seqActual = antes; }
+      },
+      getObjective: function () { return espacio(seqActual).objective || ''; },
+      getTranscript: function () { return espacio(seqActual).transcript || []; },
+      setTranscript: function (segs) { espacio(seqActual).transcript = segs; },
+      setTranscriptOffset: function (n) { espacio(seqActual).offset = n; },
+      getMarkerData: function (key) { return espacio(seqActual)[key] || {}; },
+    },
     HPEngine: {
       call: function (metodo, arg) {
         if (metodo === 'listCorrections') {
@@ -140,6 +163,11 @@ function montarPestana(opts) {
         if (metodo === 'saveCorrectionPosition') {
           espia.guardados.push(arg);
           return Promise.resolve({ ok: true });
+        }
+        if (metodo === 'loadTranscript') {
+          espia.transcriptsPedidos.push(arg);
+          return Promise.resolve(opts.transcriptEnDisco ||
+            { ok: true, found: false });
         }
         return Promise.resolve({ ok: false, error: 'método inesperado: ' + metodo });
       },
@@ -162,7 +190,7 @@ function montarPestana(opts) {
     draft: function () { return !!opts.draft; },
   });
 
-  return { ctx: ctx, nodos: nodos, espia: espia };
+  return { ctx: ctx, nodos: nodos, espia: espia, almacen: almacen };
 }
 
 /** Una fila como la devuelve listCorrections. */
@@ -256,6 +284,106 @@ test('corregir encola un refinamiento con el tramo original', async function () 
   eq(j.payload.marker.guid, 'g-3');
   eq(j.payload.adjustment, 'el título tapa la cara, subilo');
   eq(j.correction, true, 'marcado como corrección: es lo que lo pinta de amarillo');
+});
+
+// ── El contexto que viaja con la corrección ──────────────────────────
+// Una corrección es la última llamada de una cadena, pero para el modelo es la
+// PRIMERA: no recuerda nada. Todo lo que no viaje en este job, no existe.
+
+test('el encargo original viaja junto a la corrección, no en su lugar', async function () {
+  // Son dos secciones distintas del prompt: "qué es este recurso" y "qué hay que
+  // cambiarle". Mandando la corrección en las dos, el modelo rediseñaba creyendo
+  // que el encargo entero era "subí el título" — y la ficha nueva se quedaba con
+  // eso, así que el encargo se perdía para la corrección siguiente.
+  const { p, fila } = await cargarFila(recurso({ instruction: 'un gráfico de barras con las ventas por trimestre' }));
+  fila.porTag('textarea')[0].value = 'el título tapa la cara, subilo';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const pl = p.espia.encolados[0].payload;
+  eq(pl.instruction, 'un gráfico de barras con las ventas por trimestre', 'el encargo con el que nació');
+  eq(pl.adjustment, 'el título tapa la cara, subilo', 'y la corrección, aparte');
+});
+
+test('sin encargo guardado, la corrección hace de encargo', async function () {
+  // Recursos viejos, de antes de que la ficha guardara la instrucción: es
+  // preferible un encargo pobre a mandar el hueco.
+  const { p, fila } = await cargarFila(recurso({ instruction: '' }));
+  fila.porTag('textarea')[0].value = 'poné el logo arriba';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados[0].payload.instruction, 'poné el logo arriba');
+});
+
+test('la fila muestra qué se le había pedido a ese recurso', async function () {
+  const { fila } = await cargarFila(recurso({ instruction: 'un gráfico de barras' }));
+  has(fila.buscar('corr-brief').textContent, 'un gráfico de barras',
+    'al mes nadie se acuerda del encargo, y es lo que el modelo va a recibir');
+});
+
+test('el objetivo de la clase y las indicaciones generales viajan', async function () {
+  const { p, fila } = await cargarFila(recurso(), { almacen: {
+    'Clase 14': { objective: 'enseñar deep research', __general__: { instruction: 'tipografía Inter, azul de marca' } },
+  } });
+  fila.porTag('textarea')[0].value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const pl = p.espia.encolados[0].payload;
+  eq(pl.objective, 'enseñar deep research');
+  eq(pl.generalInstruction, 'tipografía Inter, azul de marca');
+});
+
+test('leyendo de otro corte, el marco de la clase sale del corte ABIERTO si allá no está', async function () {
+  // El corte viejo puede no haberse abierto nunca en esta máquina: su objetivo y
+  // su prompt general no están guardados acá. Es la misma clase, así que se
+  // toman de la secuencia abierta antes que mandar "(sin objetivo declarado)".
+  const { p, fila } = await cargarCruzada(null, { almacen: {
+    'Clase 14': { objective: 'enseñar deep research', __general__: { instruction: 'azul de marca' } },
+    'Clase 14 v1': {},
+  } });
+  fila.porTag('textarea')[0].value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const pl = p.espia.encolados[0].payload;
+  eq(pl.objective, 'enseñar deep research');
+  eq(pl.generalInstruction, 'azul de marca');
+});
+
+test('lo que SÍ está guardado en el corte viejo gana sobre lo del abierto', async function () {
+  const { p, fila } = await cargarCruzada(null, { almacen: {
+    'Clase 14': { objective: 'objetivo del corte nuevo' },
+    'Clase 14 v1': { objective: 'el objetivo con el que se generó' },
+  } });
+  fila.porTag('textarea')[0].value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados[0].payload.objective, 'el objetivo con el que se generó');
+});
+
+test('el transcript del corte viejo se trae del disco si el panel no lo tiene', async function () {
+  // De ahí sale el fragmento del marcador: qué se está diciendo en ese tramo.
+  // Sin él el modelo corrige sin el guion y la animación deja de acompañar.
+  const segs = [{ start: 128, end: 135, text: 'y acá vemos las ventas' }];
+  const { p } = await cargarCruzada(null, {
+    almacen: { 'Clase 14': { transcript: [{ start: 0, end: 1, text: 'otro corte' }] } },
+    transcriptEnDisco: { ok: true, found: true, segments: segs, offset: 2 },
+  });
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.transcriptsPedidos[0].sequenceName, 'Clase 14 v1', 'se pide el del corte de origen');
+  eq(p.almacen['Clase 14 v1'].transcript.length, 1, 'y queda guardado contra ESE corte');
+  eq(p.almacen['Clase 14 v1'].offset, 2, 'con su desfase, o los tiempos no cierran');
+  eq(p.almacen['Clase 14'].transcript.length, 1, 'sin pisar el del corte abierto');
+});
+
+test('si el panel ya tiene ese transcript, no se lee el disco de nuevo', async function () {
+  const { p } = await cargarCruzada(null, {
+    almacen: { 'Clase 14 v1': { transcript: [{ start: 0, end: 1, text: 'ya está' }] } },
+  });
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.transcriptsPedidos.length, 0);
 });
 
 test('el HTML previo viaja explícito, de la versión que se eligió', async function () {
@@ -363,6 +491,15 @@ test('el HTML editado se renderiza en el mismo tramo, también como corrección'
   has(j.payload.html, 'v4', 'sale el HTML de la versión que se estaba viendo');
 });
 
+test('el HTML editado a mano respeta si el recurso llevaba fondo', async function () {
+  // El fondo decide el formato del video (mp4 opaco / mov con alpha). Sin este
+  // dato, retocar a mano un recurso opaco lo devolvía en otro formato.
+  const { p, fila } = await cargarFila(recurso({ background: true }));
+  await abrirHtml(fila);
+  fila.porTag('button').filter(function (b) { return b.textContent === 'Renderizar y colocar'; })[0].click();
+  eq(p.espia.encolados[0].payload.background, true);
+});
+
 test('si el HTML de esa versión no se puede leer, se dice al abrirlo', async function () {
   const { p, fila } = await cargarFila(recurso(), { htmlFalla: true });
   await abrirHtml(fila);
@@ -440,15 +577,15 @@ test('con carpetas disponibles, el vacío invita a elegir en vez de dar por cerr
 // había nada generado, y los recursos estaban en la carpeta de "Clase 14".
 
 /** Fila leída de otro corte: el editor está en `Clase 14`, los archivos en `Clase 14 v1`. */
-function cargarCruzada(extra) {
-  return cargarFila(recurso(extra), { listado: {
+function cargarCruzada(extra, opts) {
+  return cargarFila(recurso(extra), Object.assign({}, opts, { listado: {
     sourceSequenceName: 'Clase 14 v1', folderSlug: 'clase-14-v1', guessed: true,
     baseDir: '/p/HyperPremiere/clase-14-v1',
     sources: [
       { slug: 'clase-14-v1', sequenceName: 'Clase 14 v1', count: 5 },
       { slug: 'clase-14', sequenceName: 'Clase 14', count: 0 },
     ],
-  } });
+  } }));
 }
 
 test('leyendo de otro corte, se avisa de dónde salió y a dónde va', async function () {
@@ -607,7 +744,7 @@ test('el tramo escrito a mano se guarda en la carpeta de origen, no en la abiert
 
 /** Monta la cola de verdad con un motor y un Premiere de mentira. */
 function montarCola() {
-  const espia = { colocados: [], recoloreados: [], guardado: null };
+  const espia = { colocados: [], recoloreados: [], guardado: null, preparados: [] };
   const almacen = {};
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
@@ -651,6 +788,7 @@ function montarCola() {
       callProg: function (metodo, arg) {
         if (metodo === 'saveQueue') { espia.guardado = arg; return Promise.resolve({ ok: true }); }
         if (metodo === 'prepareFeedback' || metodo === 'prepareGenerate') {
+          espia.preparados.push(arg);
           return Promise.resolve({ ok: true, version: 5, usage: { inputTokens: 10, outputTokens: 20 } });
         }
         return Promise.resolve({ ok: true, version: 5, movPath: '/p/HyperPremiere/clase-14/Marcador 3 v5.mov' });
@@ -724,4 +862,53 @@ test('si el panel se reinicia a mitad, la corrección sigue siendo corrección',
   ok(c.espia.guardado, 'la cola se persistió');
   const j = c.espia.guardado.jobs.filter(function (x) { return x.markerKey === 'Marcador 3'; })[0];
   eq(j.correction, true, 'la marca sobrevive al archivo');
+});
+
+test('rehidratar completa, pero no vacía lo que el job ya traía', async function () {
+  // El corte donde nació el recurso puede no tener estado en este panel (nunca
+  // se abrió en esta máquina). Ahí el transcript sale de otro lado, y pisarlo
+  // con la lista vacía dejaba al modelo sin el guion del tramo.
+  const c = montarCola();
+  const tramo = [{ start: 128, end: 135, text: 'y acá vemos las ventas' }];
+  c.ctx.HPQueue.add(jobBase({ payload: {
+    projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14 v1', mode: 'adjust',
+    markerSlug: 'Marcador 3', markerTranscript: tramo,
+  } }));
+  await dejarCorrer();
+
+  eq(c.espia.preparados[0].markerTranscript.length, 1, 'el fragmento del marcador sigue viajando');
+});
+
+test('la segunda ronda de feedback refina la versión NUEVA, no la que se eligió al principio', async function () {
+  // Una corrección lleva pegado el HTML de la versión que el editor eligió. Si
+  // ese HTML se queda en el job, apretar Regenerar en la Cola vuelve a refinar
+  // aquella y tira la versión que se acaba de ver, sin decir nada.
+  const c = montarCola();
+  c.ctx.HPQueue.add(jobBase({ correction: true, payload: {
+    projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14', mode: 'adjust',
+    markerSlug: 'Marcador 3', previousHtml: '<div id="stage">v3</div>',
+  } }));
+  await dejarCorrer();
+  eq(c.espia.preparados[0].previousHtml, '<div id="stage">v3</div>', 'la primera sí va sobre la elegida');
+
+  c.ctx.HPQueue.regenerate(c.ctx.HPQueue.jobs()[0].id, 'ahora corré el subtítulo');
+  await dejarCorrer();
+
+  eq(c.espia.preparados[1].previousHtml, undefined, 'la segunda parte de la última en disco');
+  eq(c.espia.preparados[1].adjustment, 'ahora corré el subtítulo');
+});
+
+test('las imágenes a incrustar no se escriben en el archivo de la cola', async function () {
+  // Son base64: guardarlas hacía un queue.json de megas por un dato que se
+  // vuelve a leer del marcador antes de correr.
+  const c = montarCola();
+  c.ctx.HPQueue.add(jobBase({ payload: {
+    projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14', mode: 'adjust',
+    markerSlug: 'Marcador 3', assets: ['data:image/png;base64,AAAA'],
+  } }));
+  await dejarCorrer();
+  await new Promise(function (r) { setTimeout(r, 1200); });
+
+  const j = c.espia.guardado.jobs.filter(function (x) { return x.markerKey === 'Marcador 3'; })[0];
+  eq(j.payload.assets, undefined);
 });

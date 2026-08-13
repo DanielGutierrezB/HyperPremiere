@@ -883,6 +883,21 @@ function positionRecord(src) {
   };
 }
 
+/**
+ * El encargo del recurso según la versión anterior. Lo usa el render de un HTML
+ * editado a mano, que no trae instrucción propia: sin esto, la ficha nueva
+ * quedaba sin el encargo y la corrección siguiente salía sin él.
+ */
+function inheritedInstruction(baseDir, markerSlug, version) {
+  for (let v = version - 1; v >= 1; v--) {
+    const p = versionFile(baseDir, markerSlug, v, '.meta.json');
+    const meta = p ? readMeta(p) : null;
+    const txt = meta && typeof meta.instruction === 'string' ? meta.instruction.trim() : '';
+    if (txt && txt !== '(edición manual)') return txt;
+  }
+  return '';
+}
+
 // Historia acumulada de instrucciones: lee la meta de la versión anterior y
 // devuelve su history + su propia entrada. [] para v1 o si no hay meta previa.
 function buildHistory(baseDir, markerSlug, version) {
@@ -1436,27 +1451,34 @@ function listMarkerVersions(body) {
 function findMarkerPosition(baseDir, slug, versions, ctx) {
   const out = { start: null, duration: null, markerName: '', markerGuid: '', instruction: '', history: [], background: false, source: '' };
 
-  // 1) La ficha, empezando por la versión más nueva.
+  // 1) La ficha, empezando por la versión más nueva. Se recorren TODAS y no se
+  // corta en la primera que tiene el tramo: el encargo y el fondo pueden faltar
+  // justo en la más nueva (un render manual viejo no los escribía) y estar
+  // guardados en una anterior.
   let fondoLeido = false;
   for (let i = versions.length - 1; i >= 0; i--) {
     const metaPath = versionFile(baseDir, slug, versions[i].version, '.meta.json');
     const meta = metaPath ? readMeta(metaPath) : null;
     if (!meta) continue;
-    if (!out.instruction) out.instruction = meta.instruction || '';
+    // "(edición manual)" no es un encargo: es el sello de un render sin IA.
+    const encargo = String(meta.instruction || '').trim();
+    if (!out.instruction && encargo && encargo !== '(edición manual)') out.instruction = encargo;
     if (!out.history.length && Array.isArray(meta.history)) out.history = meta.history;
     // Con o sin fondo se decidió cuando se generó; la corrección tiene que
     // salir igual o cambiaría de opaco a transparente sin que nadie lo pida.
-    if (!fondoLeido) { out.background = meta.background === true; fondoLeido = true; }
+    // Una ficha que no lo declara no está diciendo "sin fondo": no sabe, y se
+    // sigue buscando en las anteriores.
+    if (!fondoLeido && typeof meta.background === 'boolean') { out.background = meta.background; fondoLeido = true; }
     const m = meta.marker || {};
     const dur = Number(m.duration);
-    if (!(dur > 0)) continue;
+    if (!(dur > 0) || out.source) continue;
     out.start = Number(m.start) || 0;
     out.duration = dur;
     out.markerName = meta.markerName || m.name || '';
     out.markerGuid = meta.markerGuid || m.guid || '';
     out.source = 'ficha';
-    return out;
   }
+  if (out.source) return out;
 
   // 2) La cola del proyecto: los trabajos guardan el tramo aunque falte la ficha.
   // Se compara por CARPETA y no por nombre de secuencia: la carpeta es el dato
@@ -1727,18 +1749,32 @@ async function renderManualHtml(body, onProgress) {
 
   const baseDir = ensureOutputDir(projectPath, sequenceName);
   const version = nextVersion(baseDir, markerSlug);
-  const outPaths = paths(baseDir, markerSlug, version, 'manual');
+  // Con fondo => mp4 opaco; sin fondo => mov con alpha. Antes esto salía siempre
+  // en mov: un recurso opaco cambiaba de formato al editarlo a mano.
+  const withBackground = body.background === true;
+  const videoExt = withBackground ? 'mp4' : 'mov';
+  const outPaths = paths(baseDir, markerSlug, version, 'manual', videoExt);
 
   report({ pct: 20, msg: 'Guardando HTML editado…' });
   fs.writeFileSync(outPaths.html, cleanHtml, 'utf8');
 
-  report({ pct: 40, msg: 'Renderizando el video con alpha…' });
+  report({ pct: 40, msg: withBackground ? 'Renderizando video HD (con fondo)…' : 'Renderizando el video con alpha…' });
   const renderStartedAt = Date.now();
-  await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
+  await renderComposition({
+    html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report,
+    format: videoExt, quality: body.draft ? 'draft' : 'high',
+    assetsDir: path.join(baseDir, '_assets', markerSlug),
+  });
 
   saveMeta(outPaths.meta, Object.assign(positionRecord({ sequenceName, markerSlug, marker }), {
-    instruction: '(edición manual)', version, model: 'manual', provider: 'manual',
+    // La instrucción de la ficha es el ENCARGO del recurso, no lo último que se
+    // le hizo: es lo que se le vuelve a mandar al modelo la próxima vez que se
+    // corrija. Escribir acá "(edición manual)" borraba el encargo original, y a
+    // partir de ahí las correcciones se pedían sin saber qué era ese gráfico.
+    instruction: inheritedInstruction(baseDir, markerSlug, version) || '(edición manual)',
+    version, model: 'manual', provider: 'manual',
     mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(),
+    background: withBackground, format: videoExt,
     // Sin IA de por medio: acá el tiempo del modelo es cero de verdad.
     timings: { modelMs: 0, renderMs: Date.now() - renderStartedAt },
     history: buildHistory(baseDir, markerSlug, version),
