@@ -659,6 +659,23 @@ async function prepareGeneration(body, mode, onProgress) {
   const version = nextVersion(baseDir, markerSlug);
   const outPaths = paths(baseDir, markerSlug, version, config.model, videoExt);
 
+  // La ficha de DÓNDE VA este recurso se escribe ANTES de gastar el modelo, no
+  // al final. Es el único dato que no se puede reconstruir mirando el disco: el
+  // segundo del timeline vive en el marcador de Premiere, y el marcador puede
+  // no existir cuando vuelvas de la revisión. Si la generación se cae a mitad,
+  // el HTML igual queda guardado y sin esta ficha nadie sabría a qué tramo de
+  // qué secuencia pertenece. Al terminar se reescribe completa.
+  saveMeta(outPaths.meta, Object.assign(
+    positionRecord({ sequenceName, markerSlug, marker }),
+    {
+      version, model: config.model, provider: config.provider, mode,
+      instruction, createdAt: new Date(Date.now()).toISOString(),
+      // Se termina de escribir cuando el render sale bien; si esto queda en
+      // true, la generación no llegó al final.
+      pending: true,
+    }
+  ));
+
   // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
   // Si el panel no mandó el HTML previo, lo leemos del disco (versión anterior).
   if (mode === 'adjust') {
@@ -841,8 +858,28 @@ async function prepareGeneration(body, mode, onProgress) {
   return {
     ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
     durationSec, videoExt, draft: body.draft === true, version, markerSlug, baseDir,
-    usage, background: withBackground, instruction, marker, assetsDir,
+    usage, background: withBackground, instruction, marker, assetsDir, sequenceName,
     model: config.model, provider: config.provider, mode, adjustment, modelMs,
+  };
+}
+
+/**
+ * Dónde iba este recurso en el timeline: la ficha que permite corregirlo dentro
+ * de un mes, cuando el marcador ya no exista en la secuencia.
+ *
+ * `marker.start` y `marker.duration` son lo importante. `sequenceName` va
+ * aparte porque la carpeta que contiene el archivo es el slug del nombre (sin
+ * acentos ni mayúsculas) y no alcanza para volver a encontrar la secuencia en
+ * Premiere. El `guid` viaja por si el marcador todavía existe.
+ */
+function positionRecord(src) {
+  const marker = (src && src.marker) || {};
+  return {
+    sequenceName: (src && src.sequenceName) || '',
+    markerSlug: (src && src.markerSlug) || '',
+    markerName: marker.name || '',
+    markerGuid: marker.guid || '',
+    marker: marker,
   };
 }
 
@@ -871,8 +908,8 @@ async function renderPrepared(prepared, onProgress) {
   });
   const renderMs = Date.now() - renderStartedAt;
 
-  saveMeta(prepared.metaPath, {
-    instruction: prepared.instruction, marker: prepared.marker, version: prepared.version,
+  saveMeta(prepared.metaPath, Object.assign(positionRecord(prepared), {
+    instruction: prepared.instruction, version: prepared.version,
     model: prepared.model, provider: prepared.provider, mode: prepared.mode,
     adjustment: prepared.mode === 'adjust' ? prepared.adjustment : undefined,
     background: prepared.background, format: prepared.videoExt,
@@ -883,7 +920,7 @@ async function renderPrepared(prepared, onProgress) {
     // no llaman a la IA (re-render, HTML editado a mano).
     timings: { modelMs: prepared.modelMs || 0, renderMs: renderMs },
     history: buildHistory(prepared.baseDir, prepared.markerSlug, prepared.version),
-  });
+  }));
 
   return { ok: true, movPath: prepared.outMovPath, htmlPath: prepared.htmlPath, version: prepared.version, markerSlug: prepared.markerSlug, usage: prepared.usage, background: prepared.background, renderMs: renderMs };
 }
@@ -1376,6 +1413,164 @@ function listMarkerVersions(body) {
   }
 }
 
+// ── Correcciones: reconstruir lo ya generado mirando el disco ───────────
+// La pestaña Corrections trabaja SIN los marcadores de Premiere. Cuando el
+// editor vuelve de la revisión, los marcadores pueden estar borrados, movidos o
+// mezclados con los comentarios de Frame.io, y volver a abrirlos no es opción.
+// Todo lo que hace falta para rediseñar y recolocar sale de la carpeta de la
+// secuencia: el HTML de cada versión y la ficha con el tramo del timeline.
+
+/**
+ * Dónde iba un recurso, buscando de la fuente más confiable a la más pobre:
+ *
+ *   ficha → la meta de la versión (`marker.start` / `marker.duration`).
+ *   cola  → queue.json, que guarda los tiempos de cada trabajo encolado.
+ *   html  → `data-duration` de la composición: da cuánto dura, no dónde iba.
+ *
+ * Devuelve siempre un objeto; `source` vacío significa "no hay dato en disco",
+ * y ahí es el editor quien lo escribe a mano.
+ *
+ * `ctx` = { sequenceName, queueJobs } — los trabajos de la cola se leen una vez
+ * para toda la lista y se pasan ya cargados.
+ */
+function findMarkerPosition(baseDir, slug, versions, ctx) {
+  const out = { start: null, duration: null, markerName: '', markerGuid: '', instruction: '', history: [], background: false, source: '' };
+
+  // 1) La ficha, empezando por la versión más nueva.
+  let fondoLeido = false;
+  for (let i = versions.length - 1; i >= 0; i--) {
+    const metaPath = versionFile(baseDir, slug, versions[i].version, '.meta.json');
+    const meta = metaPath ? readMeta(metaPath) : null;
+    if (!meta) continue;
+    if (!out.instruction) out.instruction = meta.instruction || '';
+    if (!out.history.length && Array.isArray(meta.history)) out.history = meta.history;
+    // Con o sin fondo se decidió cuando se generó; la corrección tiene que
+    // salir igual o cambiaría de opaco a transparente sin que nadie lo pida.
+    if (!fondoLeido) { out.background = meta.background === true; fondoLeido = true; }
+    const m = meta.marker || {};
+    const dur = Number(m.duration);
+    if (!(dur > 0)) continue;
+    out.start = Number(m.start) || 0;
+    out.duration = dur;
+    out.markerName = meta.markerName || m.name || '';
+    out.markerGuid = meta.markerGuid || m.guid || '';
+    out.source = 'ficha';
+    return out;
+  }
+
+  // 2) La cola del proyecto: los trabajos guardan el tramo aunque falte la ficha.
+  for (const job of ctx.queueJobs) {
+    if (!job || job.markerKey !== slug) continue;
+    if (ctx.sequenceName && job.seqName && job.seqName !== ctx.sequenceName) continue;
+    const dur = Number(job.markerDuration);
+    if (!(dur > 0)) continue;
+    out.start = Number(job.markerStart) || 0;
+    out.duration = dur;
+    out.source = 'cola';
+    return out;
+  }
+
+  // 3) El HTML: la duración está declarada en la composición, la posición no.
+  for (let i = versions.length - 1; i >= 0; i--) {
+    const htmlPath = versionFile(baseDir, slug, versions[i].version, '.html');
+    if (!htmlPath) continue;
+    try {
+      const seen = inspectComposition(fs.readFileSync(htmlPath, 'utf8'), { durationSec: 0, markerSlug: slug });
+      if (seen.duration > 0) { out.duration = seen.duration; out.source = 'html'; return out; }
+    } catch (e) {}
+  }
+
+  return out;
+}
+
+/** Los slugs "Marcador N" se ordenan por número; el resto, alfabético. */
+function compareSlugs(a, b) {
+  const na = /^Marcador (\d+)$/.exec(a);
+  const nb = /^Marcador (\d+)$/.exec(b);
+  if (na && nb) return parseInt(na[1], 10) - parseInt(nb[1], 10);
+  if (na) return -1;
+  if (nb) return 1;
+  return a < b ? -1 : (a > b ? 1 : 0);
+}
+
+/**
+ * Todo lo generado de una secuencia, listo para corregir.
+ * Devuelve { ok, sequenceName, markers: [...] }.
+ */
+function listCorrections(body) {
+  try {
+    body = body || {};
+    const sequenceName = String(body.sequenceName || '');
+    // Consulta de solo lectura: no crear la carpeta por abrir la pestaña.
+    const baseDir = outputDirPath(body.projectPath, sequenceName);
+    if (!fs.existsSync(baseDir)) return { ok: true, sequenceName, baseDir, markers: [] };
+
+    const byHtml = groupBySlug(baseDir, ['.html']);
+    const byVideo = groupBySlug(baseDir, ['.mov', '.mp4']);
+    // La cola se lee una vez para toda la lista: es el respaldo de los recursos
+    // a los que les falta la ficha, y son varios en las clases viejas.
+    const queueJobs = loadQueue({ projectPath: body.projectPath }).jobs || [];
+    const markers = Object.keys(byHtml).sort(compareSlugs).map((slug) => {
+      const versions = byHtml[slug];
+      const videos = byVideo[slug] || [];
+      const hasVideo = (v) => videos.some((e) => e.version === v);
+      const latest = versions[versions.length - 1];
+      const pos = findMarkerPosition(baseDir, slug, versions, { sequenceName, queueJobs });
+      return {
+        slug,
+        latestVersion: latest.version,
+        model: latest.model || '',
+        versions: versions.map((v) => ({ version: v.version, model: v.model || '', hasVideo: hasVideo(v.version) })),
+        start: pos.start,
+        duration: pos.duration,
+        timeSource: pos.source,
+        markerName: pos.markerName,
+        markerGuid: pos.markerGuid,
+        instruction: pos.instruction,
+        history: pos.history,
+        background: pos.background,
+      };
+    });
+    return { ok: true, sequenceName, baseDir, markers };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e), markers: [] };
+  }
+}
+
+/**
+ * Guarda a mano el tramo de un recurso al que le falta la ficha, para no
+ * volver a preguntarlo. Se escribe sobre la meta de la última versión.
+ */
+function saveCorrectionPosition(body) {
+  try {
+    body = body || {};
+    const markerSlug = String(body.markerSlug || '').trim();
+    const start = Number(body.start);
+    const duration = Number(body.duration);
+    if (!markerSlug) return { ok: false, error: 'falta markerSlug' };
+    if (!(duration > 0)) return { ok: false, error: 'la duración tiene que ser mayor a 0' };
+    if (!(start >= 0)) return { ok: false, error: 'el segundo de entrada no puede ser negativo' };
+
+    const baseDir = outputDirPath(body.projectPath, body.sequenceName);
+    const versions = listVersions(baseDir, markerSlug, '.html');
+    if (!versions.length) return { ok: false, error: 'no hay versiones de ' + markerSlug };
+    const version = versions[versions.length - 1].version;
+    const metaPath = versionFile(baseDir, markerSlug, version, '.meta.json') ||
+      paths(baseDir, markerSlug, version, versions[versions.length - 1].model).meta;
+    const prev = readMeta(metaPath) || {};
+    const marker = Object.assign({}, prev.marker, {
+      name: prev.markerName || (prev.marker || {}).name || markerSlug,
+      start, duration, end: start + duration,
+    });
+    saveMeta(metaPath, Object.assign({}, prev, positionRecord({
+      sequenceName: body.sequenceName, markerSlug, marker,
+    })));
+    return { ok: true, version, start, duration };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
 // Lee el HTML de una versión concreta de un marcador.
 function readMarkerHtml(body) {
   try {
@@ -1427,13 +1622,13 @@ async function renderManualHtml(body, onProgress) {
   const renderStartedAt = Date.now();
   await renderComposition({ html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report, quality: body.draft ? 'draft' : 'high', assetsDir: path.join(baseDir, '_assets', markerSlug) });
 
-  saveMeta(outPaths.meta, {
-    instruction: '(edición manual)', marker, version, model: 'manual', provider: 'manual',
+  saveMeta(outPaths.meta, Object.assign(positionRecord({ sequenceName, markerSlug, marker }), {
+    instruction: '(edición manual)', version, model: 'manual', provider: 'manual',
     mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(),
     // Sin IA de por medio: acá el tiempo del modelo es cero de verdad.
     timings: { modelMs: 0, renderMs: Date.now() - renderStartedAt },
     history: buildHistory(baseDir, markerSlug, version),
-  });
+  }));
 
   return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
 }
@@ -1715,6 +1910,9 @@ module.exports = {
   estimateTokens,
   listMarkerVersions,
   readMarkerHtml,
+  // Pestaña Corrections: lo ya generado, reconstruido desde el disco.
+  listCorrections,
+  saveCorrectionPosition,
   transcribeMedia,
   cancelTranscription,
   whisperStatus: whisperStatusForPanel,

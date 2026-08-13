@@ -26,9 +26,12 @@
   var addThousands = HPUtil.addThousands;
 
   // Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
-  // café (marrón) = borrador; magenta = procesado en alta calidad.
+  // café (marrón) = borrador; magenta = procesado en alta calidad;
+  // amarillo = corrección hecha desde la pestaña Corrections, para que en un
+  // timeline ya lleno se vea de un golpe qué se rehizo después de la revisión.
   var COLOR_BROWN = 14;
   var COLOR_MAGENTA = 11;
+  var COLOR_YELLOW = 15;
 
   // ── Timing auto-calibrado (estimación de la cola) ────────────────────
   // Promedio de CARRIL-segundos por job de modelo, y carril-segundos de render por
@@ -103,6 +106,9 @@
       msg: j.msg, kind: j.kind, seqName: j.seqName, projectPath: j.projectPath,
       markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
       markerDuration: j.markerDuration, version: j.version, usage: j.usage,
+      // Si el panel se reinicia a mitad, la corrección tiene que seguir
+      // colocándose en amarillo: sin esto volvería a salir magenta.
+      correction: j.correction,
       // Cuánto tardó cada etapa: el mensaje ya lo dice, pero guardar los números
       // deja que la vista los vuelva a componer sin parsear texto.
       _modelMs: j._modelMs, _renderMs: j._renderMs,
@@ -332,7 +338,10 @@
     // Color: café = "borrador mejorable con Render HQ" — SOLO aplica a clips
     // opacos (mp4) en borrador. Los clips con alpha ya salen en máxima calidad
     // (PNG→ProRes 4444) aunque estés en borrador → magenta.
-    var color = isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA;
+    // Amarillo gana sobre los dos: una corrección vuelve a un timeline que ya
+    // está lleno de clips nuestros, y lo que el editor necesita ver es cuál es
+    // el nuevo, no con qué calidad salió.
+    var color = job.correction ? COLOR_YELLOW : (isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA);
     job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
     return hostPlace(job, res.movPath, color).then(function (place) {
       if (place === "ok") { markDone(job, "✓ Listo y colocado"); return; }

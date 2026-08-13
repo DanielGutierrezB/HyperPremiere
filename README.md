@@ -246,6 +246,30 @@ extra, solo cuando lo usás.
   `<carpeta-del-.prproj>/HyperPremiere/queue.json` y se recarga al reabrir. El transcript
   va aparte, por secuencia, en `HyperPremiere/<secuencia>/transcript.json`.
 
+## Corrections: corregir lo que ya mandaste
+
+La pestaña **Corrections** es para el momento en que la clase ya salió: la mandaste a
+revisar, volvés con comentarios y **volver a abrir los marcadores no es opción** (los
+borraste, los moviste, o la secuencia está llena de los de Frame.io).
+
+Todo lo que necesita lo lee **del disco**, no de los marcadores:
+
+- **Cargar secuencia** arma una fila por recurso ya generado con **en qué segundo entraba
+  y cuánto duraba**, la última versión y con qué modelo se hizo. Ese tramo sale de la
+  ficha `.meta.json` que se escribe con cada generación.
+- **Corregir**: escribís qué está mal y sale un refinamiento normal, pero **sobre la
+  versión que elegís** (no siempre la anterior) y **de vuelta a su segundo original**, con
+  la misma duración.
+- **Pegar un HTML**: si traés una versión de afuera, se renderiza y se coloca igual, sin
+  gastar IA.
+- El clip corregido llega en **amarillo**, para verlo de un golpe entre los que ya
+  estaban. (Si después le corrés **Render HQ**, el recoloreo lo pasa a magenta.)
+
+Si un recurso es **anterior** a que existiera la ficha, el tramo se busca en la cola
+guardada (`queue.json`) y, si no, en el `data-duration` del HTML —que da la duración pero
+no la posición—. Cuando no hay de dónde sacarlo, la fila **te lo pregunta una vez** y lo
+deja anotado en la ficha. Nunca se coloca a ciegas: sin el tramo no se ofrece corregir.
+
 ## Acciones por recurso
 
 - **Generar** (1ª vez): crea el recurso desde cero, con todo el contexto.
@@ -265,11 +289,13 @@ extra, solo cuando lo usás.
   cargados en orden por `index.html`): `js/util.js` (helpers puros), `js/log.js` (log de
   diagnóstico), `js/engine-client.js` (`HPEngine`, carga/llamadas al motor Node),
   `js/host-client.js` (`HPHost`, frontera única con ExtendScript), `js/seq-watch.js`
-  (`HPSeqWatch`, se entera de que cambiaste de secuencia en Premiere), `js/store.js`
+  (`HPSeqWatch`, se entera de que cambiaste de secuencia en Premiere), `js/tabs.js`
+  (`HPTabs`, conmuta las tres vistas), `js/store.js`
   (`HPStore`, persiste por proyecto+secuencia), `js/transcript.js`, `js/widgets.js`
   (select propio, editor de código, tooltips — CEF no dibuja los `title` nativos),
   `js/stills.js` (control de imágenes/recursos por marcador), `js/queue.js` (cola
   `HPQueue`, máquina de estados), `js/queue-view.js` (pestaña Cola + limpieza),
+  `js/corrections.js` (pestaña Corrections, que lee lo generado del disco),
   `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
   marcadores + wiring). `css/style.css`.
 - **ExtendScript** (`cep/jsx/host.jsx`) — lee marcadores, mueve el playhead, importa y
@@ -280,6 +306,10 @@ extra, solo cuando lo usás.
   proceso externo ni servidor):
   - `bridge/engine.js` — orquestación en 2 etapas (`prepareGenerate`/`prepareFeedback` =
     modelo, `renderPrepared` = render), config, self-update, versiones, cola, capturas.
+    También `listCorrections`, que reconstruye lo ya generado de una secuencia leyendo la
+    carpeta: la ficha de cada versión guarda **dónde iba** en el timeline, y se escribe
+    **antes** de llamar al modelo — si el render se cae, el dato no se pierde, y es lo
+    único que no se puede volver a deducir cuando el marcador ya no existe.
   - `bridge/providers/` — `claude-cli`, `claude-api`, `cursor-cli`, `openai-compat`, `ollama`.
   - `bridge/composition.js` — dueño del **contrato** de la composición: lo lee y sobre todo
     **completa el andamiaje en código** (id, `data-duration` con la duración real del
@@ -749,6 +779,22 @@ baje al escalón siguiente. Y el **reparto de workers aprendido**: que no se com
 marcadores de tamaños distintos, que una diferencia chica no cambie nada, que un pico de
 carga no hunda a un reparto que en su mejor momento fue más rápido, y que lo aprendido en
 otra máquina no se use acá.
+
+Y los **marcadores de Frame.io**, donde el riesgo no es la tarjeta de más sino la
+**numeración**: que un comentario intercalado no le corra el número a un marcador que ya
+tiene archivos generados (con la contraprueba de cómo se veía el bug), que se reconozca el
+nombre venga como venga, que no se lleve puesto un marcador del editor que se parezca
+("Frames por segundo", "Frame final"), y que en un Premiere sin `guid` la numeración de
+respaldo siga saliendo bien.
+
+Y la pestaña **Corrections**, que trabaja sin los marcadores: que agrupe por marcador y
+tome la última versión, que el **tramo** se recupere por las tres fuentes en orden y que
+cuando no hay ninguna **se diga** en vez de inventarlo, que no se tome el tramo de un
+trabajo de **otra secuencia** con el mismo nombre de marcador, que abrir la pestaña **no
+cree carpetas**, que la corrección lleve el HTML de la versión **elegida** (no la
+anterior), que vuelva al segundo original y **en amarillo**, que una generación normal siga
+saliendo magenta, y que la marca de corrección **sobreviva** a reiniciar el panel. Las
+**tres pestañas** se prueban aparte: exactamente una vista visible, siempre.
 
 Aparte, dos scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué

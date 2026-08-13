@@ -94,6 +94,14 @@
     // Estado del contexto de una secuencia, o null si todavía no lo sabemos.
     sequenceContext: function (seqName) { return seqStatus[seqName] || null; }
   });
+  HPCorrections.init({
+    context: function () { return { projectPath: currentProjectPath, sequenceName: currentSequenceName }; },
+    // La pestaña se usa al volver de la revisión, cuando lo más probable es que
+    // hayas cambiado de secuencia desde que abriste el panel: se relee antes de
+    // listar para no mostrarte la carpeta de otra clase.
+    refreshContext: loadContext,
+    draft: function () { return draftMode; }
+  });
   // Cada evento de la cola refresca la vista de Cola, las tarjetas de la
   // secuencia actual y el contador de uso de la sesión.
   HPQueue.on(function () {
@@ -1159,7 +1167,10 @@
     var payload = {
       projectPath: currentProjectPath, sequenceName: currentSequenceName,
       objective: HPStore.getObjective(), transcript: segments,
-      marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
+      // El guid viaja para que quede en la ficha del recurso (.meta.json): es
+      // lo que permite reencontrar el marcador si todavía existe cuando vuelvas
+      // a corregir.
+      marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration, guid: marker.guid || "" },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
       generalInstruction: gen.instruction || "",
       // stills = TODAS las imágenes (marcador + generales) para que el modelo las VEA (contexto).
@@ -1845,20 +1856,13 @@
     });
   }
 
-  // ── Pestañas: Marcadores / Cola ─────────────────────────────────────
-  var tabMarkers = document.getElementById("tab-markers");
-  var tabQueue = document.getElementById("tab-queue");
-  var viewMarkers = document.getElementById("view-markers");
-  var viewQueue = document.getElementById("view-queue");
-  function selectTab(which) {
-    var q = which === "queue";
-    if (viewMarkers) viewMarkers.setAttribute("data-hidden", q ? "true" : "false");
-    if (viewQueue) viewQueue.setAttribute("data-hidden", q ? "false" : "true");
-    if (tabMarkers) tabMarkers.className = "tab" + (q ? "" : " is-active");
-    if (tabQueue) tabQueue.className = "tab" + (q ? " is-active" : "");
-  }
-  if (tabMarkers) tabMarkers.addEventListener("click", function () { selectTab("markers"); });
-  if (tabQueue) tabQueue.addEventListener("click", function () { selectTab("queue"); });
+  // ── Pestañas: Marcadores / Cola / Corrections ───────────────────────
+  var tabs = HPTabs.create([
+    { name: "markers", tab: document.getElementById("tab-markers"), view: document.getElementById("view-markers") },
+    { name: "queue", tab: document.getElementById("tab-queue"), view: document.getElementById("view-queue") },
+    { name: "corrections", tab: document.getElementById("tab-corrections"), view: document.getElementById("view-corrections") }
+  ]);
+  function selectTab(which) { tabs.select(which); }
 
   // ── "¿Cómo funciona?" como overlay ──────────────────────────────────
   var helpPanel = document.getElementById("help-panel");

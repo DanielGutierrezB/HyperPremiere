@@ -236,13 +236,17 @@ function inspectComposition(html, opts) {
 
   const isCode = outsideComments(out);
   const hallazgo = findStage(out, isCode);
-  if (!hallazgo.tag) return { html: out, fixes: [], problem: hallazgo.problem };
+  if (!hallazgo.tag) return { html: out, fixes: [], problem: hallazgo.problem, duration: 0 };
 
   const stage = hallazgo.tag;
   const attrs = parseAttrs(stage.text);
   const fixes = [];
   const tagEdits = [];
   if (hallazgo.adopted) fixes.push(hallazgo.adopted);
+
+  // Duración declarada por el modelo. Se lee acá arriba porque todas las
+  // salidas la informan, incluidas las que cortan por un problema.
+  const declared = parseFloat(attrs.has('data-duration') ? attrs.get('data-duration').value : '') || 0;
 
   // Escribe un atributo del stage: si ya está se reemplaza su valor en su lugar,
   // si no se encola para agregarlo antes del '>' de cierre (todos los agregados
@@ -277,14 +281,14 @@ function inspectComposition(html, opts) {
   if (regs.length > 1) {
     // Varios registros con un solo stage: no se sabe cuál es el de esta
     // composición, y elegir mal deja el video congelado.
-    return { html: out, fixes: fixes, problem: PROBLEM.MANY_REGISTRATIONS };
+    return { html: out, fixes: fixes, problem: PROBLEM.MANY_REGISTRATIONS, duration: declared };
   }
   if (!regs.length && hasGsapTimeline(out, isCode)) {
     // Hay una timeline armada pero sin registrar, y el registro no se inventa:
     // habría que adivinar el nombre de la variable Y que esté en el alcance
     // donde insertemos el código. Si erramos, el render no falla rápido — sale
     // un video congelado. Para esto sí se vuelve al modelo.
-    return { html: out, fixes: fixes, problem: PROBLEM.NO_REGISTRATION };
+    return { html: out, fixes: fixes, problem: PROBLEM.NO_REGISTRATION, duration: declared };
   }
 
   // Sin registro y sin GSAP no falta nada: la composición anima con CSS o WAAPI
@@ -304,7 +308,6 @@ function inspectComposition(html, opts) {
   if (writeAttr('data-composition-id', id)) fixes.push('data-composition-id="' + id + '"');
 
   // 2) Duración. La del marcador es la verdad; el modelo a veces la omite o pone 0.
-  const declared = parseFloat(attrs.has('data-duration') ? attrs.get('data-duration').value : '');
   if (!(declared > 0) && durationSec > 0) {
     const dur = String(round2(durationSec));
     if (writeAttr('data-duration', dur)) fixes.push('data-duration="' + dur + '"');
@@ -352,7 +355,10 @@ function inspectComposition(html, opts) {
   // pasaron la del marcador (los dos llamadores la validan antes, así que esto es
   // un cinturón).
   const finalDuration = declared > 0 ? declared : round2(durationSec);
-  return { html: repaired, fixes: fixes, problem: finalDuration > 0 ? null : PROBLEM.NO_DURATION };
+  // `duration` sale también hacia afuera: es el único lugar del código que sabe
+  // leer la duración declarada de una composición, y la pestaña Corrections la
+  // necesita para los recursos viejos a los que les falta la ficha.
+  return { html: repaired, fixes: fixes, problem: finalDuration > 0 ? null : PROBLEM.NO_DURATION, duration: finalDuration };
 }
 
 module.exports = { inspectComposition, auditFailure, PROBLEM };

@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.32</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.33</span>
       </button>
     </div>
   </header>
@@ -113,10 +113,11 @@
     <button id="su-reset" type="button" class="su-reset" title="Reiniciar contador">reiniciar</button>
   </div>
 
-  <!-- Pestañas: vista de marcadores / vista de cola (para colas largas). -->
+  <!-- Pestañas: marcadores / cola (para colas largas) / correcciones. -->
   <div class="tabs">
     <button id="tab-markers" class="tab is-active" type="button" title="Ver las tarjetas de los marcadores de la secuencia">Marcadores</button>
     <button id="tab-queue" class="tab" type="button" title="Ver la cola de generación/render (en proceso, en espera y terminados)">Cola <span id="tab-queue-count" class="tab-badge" data-hidden="true"></span></button>
+    <button id="tab-corrections" class="tab" type="button" title="Corregir recursos YA generados y enviados, sin depender de los marcadores: se leen del disco con el tramo del timeline donde iban">Corrections</button>
   </div>
 
   <main id="view-markers" class="panel-body">
@@ -262,6 +263,17 @@
     <div id="queue-panel" class="queue-panel"></div>
   </div>
 
+  <!-- Vista de Correcciones (pestaña): lo YA generado, reconstruido desde la
+       carpeta de la secuencia. Sirve cuando volvés de la revisión y los
+       marcadores ya no están (borrados, movidos o tapados por Frame.io). -->
+  <div id="view-corrections" class="corrections-view" data-hidden="true">
+    <div class="corr-head">
+      <button id="btn-load-corrections" type="button" class="btn-primary" title="Lee la carpeta HyperPremiere de la secuencia activa y arma una fila por recurso ya generado, con el tramo del timeline donde iba">Cargar secuencia</button>
+      <span id="corr-status" class="muted">Pulsá "Cargar secuencia" para ver lo ya generado.</span>
+    </div>
+    <div id="corr-list" class="corr-list"></div>
+  </div>
+
   <!-- Orden de carga: helpers → log → fronteras (motor/host) → estado → widgets → cola → vistas → orquestador -->
   <script src="js/CSInterface.js"></script>
   <script src="js/vendor/prism.js"></script>
@@ -270,12 +282,14 @@
   <script src="js/engine-client.js"></script>
   <script src="js/host-client.js"></script>
   <script src="js/seq-watch.js"></script>
+  <script src="js/tabs.js"></script>
   <script src="js/store.js"></script>
   <script src="js/transcript.js"></script>
   <script src="js/widgets.js"></script>
   <script src="js/stills.js"></script>
   <script src="js/queue.js"></script>
   <script src="js/queue-view.js"></script>
+  <script src="js/corrections.js"></script>
   <script src="js/config-ui.js"></script>
   <script src="js/main.js"></script>
 </body>

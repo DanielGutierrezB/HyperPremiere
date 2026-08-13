@@ -1317,9 +1317,13 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .qbtn-hq { width: auto; font-size: 10px; color: var(--ok); border-color: rgba(10,233,141,0.4); padding: 2px 7px; letter-spacing: 0.02em; }
 .qbtn-hq:hover { color: var(--ok); border-color: var(--ok); background: rgba(10,233,141,0.1); }
 
-/* v1.0.3 — pestañas Marcadores / Cola (vistas conmutables) */
+/* v1.0.3 — pestañas Marcadores / Cola / Corrections (vistas conmutables) */
 .tabs {
-  flex: none; display: flex; gap: 6px;
+  /* wrap: el panel va acoplado y angosto dentro de Premiere, y con tres
+     pestañas la barra ya no entra en una línea en Windows. Sin esto se
+     desbordan en horizontal en vez de bajar (mismo bug que tuvo el botón de
+     login de Claude). */
+  flex: none; display: flex; flex-wrap: wrap; gap: 6px;
   padding: 4px 12px 0; background: var(--bg-panel);
   border-bottom: 1px solid var(--hairline);
 }
@@ -1339,7 +1343,8 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .tab-badge[data-hidden="true"] { display: none; }
 
 /* Vistas conmutables */
-.panel-body[data-hidden="true"], .queue-view[data-hidden="true"] { display: none; }
+.panel-body[data-hidden="true"], .queue-view[data-hidden="true"],
+.corrections-view[data-hidden="true"] { display: none; }
 .queue-view { flex: 1; min-height: 0; overflow-y: auto; }
 /* En la pestaña, la cola ocupa todo (sin el look de "strip") */
 .queue-view .queue-panel { max-height: none; margin: 0; border: 0; background: transparent; box-shadow: none; padding: 12px 16px; }
@@ -1453,3 +1458,35 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0.5); }
   50% { box-shadow: 0 0 0 4px rgba(251,191,36,0); }
 }
+
+/* v1.4.33 — pestaña Corrections: lo ya generado, leído del disco */
+.corrections-view { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; }
+.corr-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.corr-head .btn-primary { flex: 0 0 auto; width: auto; }
+.corr-head .muted { flex: 1 1 100%; white-space: normal; }
+.corr-empty { color: var(--text-muted); font-size: 12px; text-align: center; padding: 28px 16px; line-height: 1.5; }
+.corr-row {
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius);
+  background: var(--bg-inset); padding: 8px 10px; margin-bottom: 8px;
+}
+.corr-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.corr-name { font-size: 12px; color: var(--text-primary); font-weight: 600; }
+/* El tramo es EL dato de esta pestaña (es lo que reemplaza al marcador que ya
+   no está), así que se lee tan fuerte como el nombre, no como un pie de nota. */
+.corr-when { font-size: 11px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.corr-meta { font-size: 10px; color: var(--text-secondary); margin-left: auto; }
+/* Sin ficha del tramo: hay que escribirlo a mano antes de poder corregir. */
+.corr-row.is-unknown { border-left: 3px solid var(--warn); }
+.corr-warn { font-size: 11px; color: var(--warn); margin-top: 4px; line-height: 1.4; }
+.corr-fix { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.corr-fix input[type="number"] { width: 80px; flex: 0 0 auto; }
+.corr-fix .qbtn { flex: 0 0 auto; }
+.corr-row textarea { width: 100%; margin-top: 6px; resize: vertical; }
+.corr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.corr-actions .qbtn { flex: 0 0 auto; }
+.corr-actions .corr-state { flex: 1 1 100%; font-size: 11px; color: var(--text-secondary); white-space: normal; }
+.corr-state.is-error { color: var(--error, #e08a8a); }
+.corr-state.is-ok { color: #0ae98d; }
+.corr-html { margin-top: 6px; }
+.corr-html summary { font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+.corr-html textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
