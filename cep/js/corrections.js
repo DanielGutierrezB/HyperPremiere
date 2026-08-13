@@ -15,6 +15,9 @@
  * volver de la revisión re-cortada y con otro nombre ("_02"), así que se elige
  * de qué carpeta leer y se dice a qué secuencia se va a colocar.
  *
+ * El HTML de cada versión se lee del disco y se puede retocar y renderizar sin
+ * gastar IA: la pestaña ya encontró los archivos, no tiene sentido pedirlos.
+ *
  * Deps de main vía init(deps):
  *   context()        → { projectPath, sequenceName } del panel
  *   refreshContext(cb) → relee proyecto/secuencia de Premiere y llama cb
@@ -146,12 +149,12 @@
     });
   }
 
-  /** Renderiza un HTML traído de afuera como versión nueva, sin gastar IA. */
+  /** Renderiza el HTML editado a mano como versión nueva, sin gastar IA. */
   function enqueueManualHtml(m, html, second, state) {
     var ctx = deps.context();
     var job = jobBase(m, second);
     job.kind = "renderManualHtml";
-    job.label = m.slug + " (HTML pegado)";
+    job.label = m.slug + " (HTML a mano)";
     job.payload = {
       projectPath: ctx.projectPath, sequenceName: origen.sequenceName,
       marker: markerFromMeta(m),
@@ -174,6 +177,20 @@
     name.className = "corr-name";
     name.textContent = m.slug + (m.markerName && m.markerName !== m.slug ? " · " + m.markerName : "");
     var when = document.createElement("span");
+    // El nombre lleva al timeline. Es lo primero que se quiere hacer con una fila
+    // —ver qué hay ahí antes de escribir la corrección— y más todavía cuando el
+    // segundo viene de otro corte y hay que confirmar que sigue sirviendo.
+    if (m.start != null) {
+      name.className = "corr-name is-link";
+      name.title = "Llevar el cursor de Premiere a este punto de “" + destino + "”.";
+      name.addEventListener("click", function () {
+        // El segundo que va a usarse al colocar, no el guardado: si el editor lo
+        // corrigió en el campo, es a ESE punto al que quiere ir a mirar.
+        var second = secondToPlace();
+        if (second == null) return;
+        HPHost.openSequenceAndSeek(destino, second, function () {});
+      });
+    }
     when.className = "corr-when";
     when.textContent = whenText(m) + sourceText(m);
     var meta = document.createElement("span");
@@ -293,28 +310,72 @@
         state.textContent = "El segundo donde colocarlo no es válido.";
         return;
       }
-      var v = pickVersion ? parseInt(pickVersion.value, 10) : m.latestVersion;
-      enqueueCorrection(m, v || m.latestVersion, text, second, state);
+      enqueueCorrection(m, chosenVersion(), text, second, state);
     });
 
-    // Traer un HTML de afuera (o el que el editor haya retocado a mano).
-    var pasteBox = document.createElement("details");
-    pasteBox.className = "corr-html";
+    // El HTML de la versión, cargado del disco. Antes esto era una caja vacía
+    // pidiendo que pegaras un HTML, lo cual no tenía sentido: la pestaña acaba de
+    // encontrar todas las versiones y sabe leerlas. Sirve para mirar qué tiene el
+    // recurso antes de escribir la corrección, para retocarlo a mano sin gastar
+    // IA, y para pegar una versión de afuera encima si eso es lo que querés.
+    var htmlBox = document.createElement("details");
+    htmlBox.className = "corr-html";
     var sum = document.createElement("summary");
-    sum.textContent = "Pegar un HTML y renderizarlo (sin IA)";
-    pasteBox.appendChild(sum);
-    var code = document.createElement("textarea");
-    code.rows = 6;
-    code.placeholder = "Pegá acá el HTML de la composición. Se guarda como versión nueva y se coloca en el mismo tramo.";
-    pasteBox.appendChild(code);
+    htmlBox.appendChild(sum);
+
+    var editor = HPWidgets.makeCodeEditor();
+    htmlBox.appendChild(editor.el);
     var renderBtn = document.createElement("button");
     renderBtn.type = "button"; renderBtn.className = "qbtn";
     renderBtn.textContent = "Renderizar y colocar";
-    pasteBox.appendChild(renderBtn);
-    row.appendChild(pasteBox);
+    renderBtn.title = "Renderiza este HTML como versión nueva, sin llamar a la IA, y lo coloca en el tramo.";
+    htmlBox.appendChild(renderBtn);
+    row.appendChild(htmlBox);
+
+    /** Qué versión está elegida en este momento. */
+    function chosenVersion() {
+      var v = pickVersion ? parseInt(pickVersion.value, 10) : m.latestVersion;
+      return v || m.latestVersion;
+    }
+
+    var cargada = 0; // versión que está en el editor (0 = ninguna)
+    function updateSummary() {
+      sum.textContent = "Ver y editar el HTML de la v" + chosenVersion() + " (sin IA)";
+    }
+    updateSummary();
+
+    /** Trae el HTML de la versión elegida, salvo que ya esté cargado. */
+    function loadHtml() {
+      var v = chosenVersion();
+      updateSummary();
+      if (cargada === v) return;
+      var ctx = deps.context();
+      state.className = "corr-state";
+      state.textContent = "Leyendo la v" + v + "…";
+      HPEngine.call("readMarkerHtml", {
+        projectPath: ctx.projectPath, sequenceName: origen.sequenceName,
+        markerSlug: m.slug, version: v
+      }).then(function (r) {
+        if (!r || !r.ok || typeof r.html !== "string") throw new Error((r && r.error) || "no pude leerlo");
+        editor.setValue(r.html);
+        cargada = v;
+        state.className = "corr-state";
+        state.textContent = "v" + v + " cargada. Podés retocarla y renderizar, sin gastar IA.";
+      }).catch(function (e) {
+        state.className = "corr-state is-error";
+        state.textContent = "No pude leer el HTML de la v" + v + ": " + ((e && e.message) || e);
+      });
+    }
+
+    htmlBox.addEventListener("toggle", function () { if (htmlBox.open) loadHtml(); });
+    // Cambiar de versión con el editor abierto tiene que traer ESA versión: si no,
+    // se renderizaría el HTML de una versión con la etiqueta de otra.
+    if (pickVersion) {
+      pickVersion.onChange = function () { if (htmlBox.open) loadHtml(); else updateSummary(); };
+    }
 
     renderBtn.addEventListener("click", function () {
-      var html = code.value.trim();
+      var html = editor.getValue().trim();
       if (!html) {
         state.className = "corr-state is-error";
         state.textContent = "El HTML está vacío.";

@@ -260,8 +260,13 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
 - **Corregir**: escribís qué está mal y sale un refinamiento normal, pero **sobre la
   versión que elegís** (no siempre la anterior) y **de vuelta a su segundo original**, con
   la misma duración.
-- **Pegar un HTML**: si traés una versión de afuera, se renderiza y se coloca igual, sin
-  gastar IA.
+- **Ver y editar el HTML**: el de la versión que tengas elegida, **traído del disco** (la
+  pestaña ya encontró los archivos, no te los pide). Sirve para ver qué tiene el recurso
+  antes de escribir la corrección, para retocarlo a mano y renderizarlo **sin gastar IA**,
+  o para pegar encima una versión que traigas de afuera.
+- **Clic en el nombre** del marcador: te lleva a ese punto del timeline. Si el segundo
+  viene de otro corte, va **al que digas en el campo**, que es justo el que querés
+  comprobar antes de mandar.
 - El clip corregido llega en **amarillo**, para verlo de un golpe entre los que ya
   estaban. (Si después le corrés **Render HQ**, el recoloreo lo pasa a magenta.)
 

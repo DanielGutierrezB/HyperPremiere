@@ -74,7 +74,7 @@ function montarPestana(opts) {
     'corr-picker': elemento('div'),
     'btn-load-corrections': elemento('button'),
   };
-  const espia = { encolados: [], leidos: [], guardados: [], listados: [] };
+  const espia = { encolados: [], leidos: [], guardados: [], listados: [], saltos: [] };
 
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
@@ -86,8 +86,25 @@ function montarPestana(opts) {
       select: function (root) {
         const api = { value: null, onChange: null };
         api.setOptions = function (list, sel) { api.opciones = list; api.value = sel; };
+        /** Elegir una opción como lo haría el editor: cambia y avisa. */
+        api.elegir = function (v) { api.value = String(v); if (api.onChange) api.onChange(api.value); };
         root.select = api;
         return api;
+      },
+      makeCodeEditor: function () {
+        const el = elemento('div');
+        let valor = '';
+        return {
+          el: el,
+          getValue: function () { return valor; },
+          setValue: function (v) { valor = String(v == null ? '' : v); },
+        };
+      },
+    },
+    HPHost: {
+      openSequenceAndSeek: function (seq, segundos, cb) {
+        espia.saltos.push({ seq: seq, segundos: segundos });
+        if (cb) cb('ok');
       },
     },
     HPQueue: { add: function (job) { espia.encolados.push(job); } },
@@ -255,10 +272,49 @@ test('si el HTML de esa versión no se puede leer, se dice y no se encola', asyn
   has(fila.buscar('corr-state is-error').textContent, 'No pude encolarla');
 });
 
-test('un HTML pegado se renderiza en el mismo tramo, también como corrección', async function () {
+// ── El HTML que la pestaña ya encontró ───────────────────────────────
+// No se pide pegarlo: acaba de listar todas las versiones y sabe leerlas del
+// disco. Sirve para mirar qué tiene el recurso antes de escribir la corrección,
+// y para retocarlo a mano sin gastar una llamada al modelo.
+
+/** Abre el bloque del HTML de una fila, como haría el clic en el resumen. */
+async function abrirHtml(fila) {
+  const caja = fila.children.filter(function (c) { return c.className === 'corr-html'; })[0];
+  caja.open = true;
+  (caja.listeners.toggle || []).forEach(function (f) { f(); });
+  await new Promise(function (r) { setTimeout(r, 0); });
+  return caja;
+}
+
+test('al abrir el HTML se carga el de la versión elegida, sin pedirlo', async function () {
   const { p, fila } = await cargarFila(recurso());
-  const codigo = fila.porTag('textarea')[1];
-  codigo.value = '<div id="stage" data-duration="7">traído de afuera</div>';
+  const caja = await abrirHtml(fila);
+  has(caja.children[0].textContent, 'v4', 'el resumen dice qué versión va a mostrar');
+  eq(p.espia.leidos[0].version, 4, 'y la trae del disco');
+  eq(p.espia.leidos[0].markerSlug, 'Marcador 3');
+});
+
+test('cambiar de versión con el HTML abierto trae ESA versión', async function () {
+  // Si no, se renderizaría el HTML de una versión con el número de otra.
+  const { p, fila } = await cargarFila(recurso());
+  await abrirHtml(fila);
+  const picker = fila.buscar('corr-actions').children[0].select;
+  picker.elegir('3');
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.leidos[1].version, 3);
+});
+
+test('el HTML no se vuelve a leer si ya está cargado', async function () {
+  const { p, fila } = await cargarFila(recurso());
+  const caja = await abrirHtml(fila);
+  await abrirHtml(fila);
+  eq(p.espia.leidos.length, 1, 'una sola lectura: cerrar y abrir no pierde lo editado');
+  ok(caja, 'la caja sigue ahí');
+});
+
+test('el HTML editado se renderiza en el mismo tramo, también como corrección', async function () {
+  const { p, fila } = await cargarFila(recurso());
+  await abrirHtml(fila);
   fila.porTag('button').filter(function (b) { return b.textContent === 'Renderizar y colocar'; })[0].click();
 
   const j = p.espia.encolados[0];
@@ -266,7 +322,42 @@ test('un HTML pegado se renderiza en el mismo tramo, también como corrección',
   eq(j.markerStart, 128.5);
   eq(j.markerDuration, 7);
   eq(j.correction, true);
-  has(j.payload.html, 'traído de afuera');
+  has(j.payload.html, 'v4', 'sale el HTML de la versión que se estaba viendo');
+});
+
+test('si el HTML de esa versión no se puede leer, se dice al abrirlo', async function () {
+  const { p, fila } = await cargarFila(recurso(), { htmlFalla: true });
+  await abrirHtml(fila);
+  has(fila.buscar('corr-state is-error').textContent, 'No pude leer el HTML');
+  eq(p.espia.encolados.length, 0);
+});
+
+// ── Ir al punto del timeline ─────────────────────────────────────────
+
+test('el nombre del marcador lleva el cursor de Premiere a ese punto', async function () {
+  const { p, fila } = await cargarFila(recurso());
+  const nombre = fila.buscar('corr-name is-link');
+  ok(nombre, 'el nombre es clickeable');
+  nombre.click();
+  eq(p.espia.saltos.length, 1);
+  eq(p.espia.saltos[0].seq, 'Clase 14', 'la secuencia que el editor tiene abierta');
+  eq(p.espia.saltos[0].segundos, 128.5);
+});
+
+test('leyendo de otro corte, el nombre lleva al segundo CORREGIDO', async function () {
+  // Es el uso real: cambiás el segundo porque el corte se movió y querés ver qué
+  // hay ahí antes de mandar. Llevarte al viejo no serviría de nada.
+  const { p, fila } = await cargarCruzada();
+  fila.buscar('corr-second').value = '96.2';
+  fila.buscar('corr-name is-link').click();
+  eq(p.espia.saltos[0].seq, 'Clase 14', 'la abierta, no la de origen');
+  eq(p.espia.saltos[0].segundos, 96.2);
+});
+
+test('sin el tramo, el nombre no es un enlace a ninguna parte', async function () {
+  const { p, fila } = await cargarFila(recurso({ start: null, duration: null, timeSource: '' }));
+  eq(fila.buscar('corr-name is-link'), null);
+  eq(p.espia.saltos.length, 0);
 });
 
 // ── Cuando falta el tramo ────────────────────────────────────────────

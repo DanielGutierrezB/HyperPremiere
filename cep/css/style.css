@@ -1471,6 +1471,9 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 }
 .corr-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .corr-name { font-size: 12px; color: var(--text-primary); font-weight: 600; }
+/* El nombre lleva el cursor de Premiere a ese punto. */
+.corr-name.is-link { cursor: pointer; }
+.corr-name.is-link:hover { color: var(--accent); text-decoration: underline; }
 /* El tramo es EL dato de esta pestaña (es lo que reemplaza al marcador que ya
    no está), así que se lee tan fuerte como el nombre, no como un pie de nota. */
 .corr-when { font-size: 11px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
@@ -1489,7 +1492,10 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .corr-state.is-ok { color: #0ae98d; }
 .corr-html { margin-top: 6px; }
 .corr-html summary { font-size: 11px; color: var(--text-secondary); cursor: pointer; }
-.corr-html textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+/* El editor de código es alto por naturaleza; acá vive dentro de una fila de una
+   lista, así que se limita para que no empuje a las demás fuera de la pantalla. */
+.corr-html .code-edit { margin-top: 6px; height: 220px; }
+.corr-html .qbtn { margin-top: 6px; }
 
 /* v1.4.34 — leer de otra secuencia (la clase volvió de la revisión re-cortada) */
 .corr-picker { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
