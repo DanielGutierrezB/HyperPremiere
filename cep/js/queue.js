@@ -107,9 +107,9 @@
       markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
       markerDuration: j.markerDuration, version: j.version, usage: j.usage,
       // Si el panel se reinicia a mitad, la corrección tiene que seguir
-      // colocándose en amarillo, en su segundo y con su material: sin esto
-      // volvería a salir magenta, en el segundo del corte viejo y sin imágenes.
-      correction: j.correction, placeStart: j.placeStart, storeSeqName: j.storeSeqName,
+      // colocándose en amarillo y con su material: sin esto volvería a salir
+      // magenta y sin las imágenes de la secuencia donde nació el recurso.
+      correction: j.correction, storeSeqName: j.storeSeqName,
       // Cuánto tardó cada etapa: el mensaje ya lo dice, pero guardar los números
       // deja que la vista los vuelva a componer sin parsear texto.
       _modelMs: j._modelMs, _renderMs: j._renderMs,
@@ -257,7 +257,7 @@
   // lugar (ver startRender). Nunca rechazan: el host contesta "ok" o "error: …".
   function hostRecolorHQ(job, movPath) {
     return new Promise(function (resolve) {
-      HPHost.recolorClip(job.seqName, placeSecond(job), COLOR_MAGENTA, movPath, resolve);
+      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, movPath, resolve);
     });
   }
   // ¿El .mov que vamos a colocar trae audio? La pregunta la contesta el motor
@@ -275,17 +275,15 @@
       return false;
     });
   }
-  // `placeStart` existe para las correcciones de una clase que se volvió a
-  // cortar: el segundo donde el recurso se generó (markerStart, el que manda al
-  // recortar el transcript) ya no es el segundo donde va en el corte nuevo. Sin
-  // separarlos, mover el clip movía también el tramo del guion que el modelo lee.
-  function placeSecond(job) {
-    return typeof job.placeStart === "number" ? job.placeStart : job.markerStart;
-  }
+  // Todo se coloca en `markerStart`, el segundo donde el recurso nació. Con una
+  // clase re-cortada eso puede no ser ya su lugar, pero el host lo pone en una
+  // pista NUEVA arriba de todo (ver hp_makeRoom), así que corregir la posición es
+  // arrastrar el clip: más rápido y más seguro que hacer que el editor calcule un
+  // segundo, y sin el riesgo de que se le vaya el tramo del guion que lee el modelo.
   function hostPlace(job, movPath, color) {
     return movHasAudio(movPath).then(function (hasAudio) {
       return new Promise(function (resolve) {
-        HPHost.placeClip(movPath, job.seqName, placeSecond(job), job.markerDuration, color, hasAudio, resolve);
+        HPHost.placeClip(movPath, job.seqName, job.markerStart, job.markerDuration, color, hasAudio, resolve);
       });
     });
   }

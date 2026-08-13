@@ -74,7 +74,10 @@ function montarPestana(opts) {
     'corr-picker': elemento('div'),
     'btn-load-corrections': elemento('button'),
   };
-  const espia = { encolados: [], leidos: [], guardados: [], listados: [], saltos: [] };
+  const espia = {
+    encolados: [], leidos: [], guardados: [], listados: [], saltos: [],
+    controles: [], fbAbiertos: [], fbCerrados: [],
+  };
 
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
@@ -105,6 +108,20 @@ function montarPestana(opts) {
       openSequenceAndSeek: function (seq, segundos, cb) {
         espia.saltos.push({ seq: seq, segundos: segundos });
         if (cb) cb('ok');
+      },
+    },
+    // El control de imágenes de verdad tiene su propio test; acá interesa que la
+    // fila lo monte y sobre QUÉ secuencia, que es lo que decide si el modelo ve
+    // las imágenes del recurso o ninguna.
+    HPStills: {
+      fbInit: function (id) { espia.fbAbiertos.push(id); },
+      fbClear: function (id) { espia.fbCerrados.push(id); },
+      fbCollect: function () { return opts.reenviar || []; },
+      createControl: function (markerKey, o) {
+        espia.controles.push({ markerKey: markerKey, opts: o });
+        const el = elemento('div');
+        el.className = 'marker-stills';
+        return el;
       },
     },
     HPQueue: { add: function (job) { espia.encolados.push(job); } },
@@ -181,6 +198,27 @@ async function cargarFila(m, opts) {
   return { p: p, fila: filas[0], filas: filas };
 }
 
+/**
+ * El botón grande de la fila. Es el mismo de una ronda de feedback en la Cola
+ * (`qbtn-react`), no un botón más de la barra: se busca por su clase para que
+ * el test falle si deja de serlo.
+ */
+function regenerar(fila) {
+  const b = fila.buscar('qbtn qbtn-react');
+  if (!b) throw new Error('la fila no tiene el botón grande de regenerar');
+  eq(b.textContent, '↻ Regenerar', 'y dice lo mismo que en la Cola');
+  b.click();
+  return b;
+}
+
+/** El botón de la fila que todavía no sabe dónde iba el recurso. */
+function guardarTramo(fila) {
+  const b = fila.buscar('qbtn');
+  if (!b) throw new Error('la fila no ofrece guardar el tramo');
+  b.click();
+  return b;
+}
+
 // ── Acortar nombres sin perder lo que distingue ──────────────────────
 
 test('acortar por el medio conserva los dos extremos', function () {
@@ -203,7 +241,7 @@ test('acortar por el medio conserva los dos extremos', function () {
 test('corregir encola un refinamiento con el tramo original', async function () {
   const { p, fila } = await cargarFila(recurso());
   fila.porTag('textarea')[0].value = 'el título tapa la cara, subilo';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
   eq(p.espia.encolados.length, 1, 'un job');
@@ -230,7 +268,7 @@ test('el HTML previo viaja explícito, de la versión que se eligió', async fun
   picker.value = '3';
 
   fila.porTag('textarea')[0].value = 'cambiá el color';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
   eq(p.espia.leidos[0].version, 3, 'leyó la v3');
@@ -242,7 +280,7 @@ test('con una sola versión no se pregunta cuál, y se usa la última', async fu
     latestVersion: 1, versions: [{ version: 1, model: 'x', hasVideo: true }],
   }));
   fila.porTag('textarea')[0].value = 'corregir';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.leidos[0].version, 1);
 });
@@ -250,14 +288,14 @@ test('con una sola versión no se pregunta cuál, y se usa la última', async fu
 test('con fondo se conserva el fondo', async function () {
   const { p, fila } = await cargarFila(recurso({ background: true }));
   fila.porTag('textarea')[0].value = 'corregir';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados[0].payload.background, true, 'un clip opaco no se vuelve transparente al corregirlo');
 });
 
 test('sin instrucción no se gasta una llamada', async function () {
   const { p, fila } = await cargarFila(recurso());
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados.length, 0, 'no encoló nada');
   has(fila.buscar('corr-state is-error').textContent, 'Escribí qué hay que corregir');
@@ -266,7 +304,7 @@ test('sin instrucción no se gasta una llamada', async function () {
 test('si el HTML de esa versión no se puede leer, se dice y no se encola', async function () {
   const { p, fila } = await cargarFila(recurso(), { htmlFalla: true });
   fila.porTag('textarea')[0].value = 'corregir';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados.length, 0, 'mejor no encolar que encolar sin referencia');
   has(fila.buscar('corr-state is-error').textContent, 'No pude encolarla');
@@ -344,14 +382,12 @@ test('el nombre del marcador lleva el cursor de Premiere a ese punto', async fun
   eq(p.espia.saltos[0].segundos, 128.5);
 });
 
-test('leyendo de otro corte, el nombre lleva al segundo CORREGIDO', async function () {
-  // Es el uso real: cambiás el segundo porque el corte se movió y querés ver qué
-  // hay ahí antes de mandar. Llevarte al viejo no serviría de nada.
+test('leyendo de otro corte, el nombre lleva a la secuencia ABIERTA', async function () {
+  // Es donde va a caer el clip; el corte viejo puede ni estar abierto.
   const { p, fila } = await cargarCruzada();
-  fila.buscar('corr-second').value = '96.2';
   fila.buscar('corr-name is-link').click();
   eq(p.espia.saltos[0].seq, 'Clase 14', 'la abierta, no la de origen');
-  eq(p.espia.saltos[0].segundos, 96.2);
+  eq(p.espia.saltos[0].segundos, 128.5);
 });
 
 test('sin el tramo, el nombre no es un enlace a ninguna parte', async function () {
@@ -374,7 +410,7 @@ test('el tramo escrito a mano se guarda en la ficha', async function () {
   const campos = fila.porTag('input');
   eq(campos[1].value, '9', 'la duración que sí se sabía viene puesta');
   campos[0].value = '55';
-  fila.buscar('qbtn').click();
+  guardarTramo(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
   eq(p.espia.guardados[0].start, 55);
@@ -476,7 +512,7 @@ test('la corrección se genera en la carpeta de origen y se coloca en la secuenc
   // caer en el timeline que el editor está mirando.
   const { p, fila } = await cargarCruzada();
   fila.porTag('textarea')[0].value = 'subí el título';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
   const j = p.espia.encolados[0];
@@ -486,39 +522,59 @@ test('la corrección se genera en la carpeta de origen y se coloca en la secuenc
   eq(p.espia.leidos[0].sequenceName, 'Clase 14 v1', 'el HTML previo también se lee de allá');
 });
 
-test('el segundo donde colocar se puede corregir, y no arrastra al del transcript', async function () {
-  // Si la clase se volvió a cortar, el segundo guardado ya no sirve. Cambiarlo NO
-  // puede mover el tramo del guion que el modelo lee: eso lo manda markerStart.
+test('el segundo no se pregunta nunca: cae donde nació, aunque sea de otro corte', async function () {
+  // Se probó pidiéndolo escrito y editable, y es un cálculo que el editor no
+  // tiene por qué hacer: el clip llega a una pista nueva arriba de todo, así que
+  // si el corte se movió, se arrastra. Un campo menos y ningún tramo del guion
+  // en riesgo (ese sale de markerStart, el mismo número).
   const { p, fila } = await cargarCruzada();
-  const campo = fila.buscar('corr-second');
-  ok(campo, 'la fila ofrece el segundo, escrito y editable');
-  eq(campo.value, '128.5', 'viene con el del corte donde se generó');
-  campo.value = '96.2';
-
+  eq(fila.buscar('corr-second'), null, 'no hay campo de segundo');
   fila.porTag('textarea')[0].value = 'subí el título';
-  fila.buscar('qbtn').click();
+  regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
   const j = p.espia.encolados[0];
-  eq(j.placeStart, 96.2, 'se coloca donde dijo el editor');
-  eq(j.markerStart, 128.5, 'y el tramo del transcript sigue siendo el de origen');
+  eq(j.markerStart, 128.5, 'el segundo donde se generó');
   eq(j.markerDuration, 7, 'la duración no se toca');
+  eq(j.placeStart, undefined, 'y nada que pueda separarse de él');
 });
 
-test('un segundo inválido no encola nada', async function () {
-  const { p, fila } = await cargarCruzada();
-  fila.buscar('corr-second').value = '-4';
-  fila.porTag('textarea')[0].value = 'corregir';
-  fila.buscar('qbtn').click();
-  await new Promise(function (r) { setTimeout(r, 0); });
-  eq(p.espia.encolados.length, 0);
-  has(fila.buscar('corr-state is-error').textContent, 'no es válido');
+test('estando en su propia secuencia no se avisa nada', async function () {
+  const { p } = await cargarFila(recurso());
+  eq(p.nodos['corr-list'].children[0].className.indexOf('corr-cross'), -1, 'sin aviso');
 });
 
-test('estando en su propia secuencia no se pregunta el segundo ni se avisa nada', async function () {
+// ── Una corrección es una ronda de feedback ──────────────────────────
+// Mismo material que en la Cola: mandar imágenes nuevas, decidir cuáles viajan
+// y marcar qué se incrusta. Sin eso, corregir "usá el logo que te mandé" es
+// pedirle al modelo algo que no puede ver.
+
+test('la fila monta el control de imágenes del marcador', async function () {
   const { p, fila } = await cargarFila(recurso());
-  eq(fila.buscar('corr-second'), null, 'un control que no decide nada no va');
-  eq(p.nodos['corr-list'].children[0].className.indexOf('corr-cross'), -1, 'y sin aviso');
+  ok(fila.buscar('marker-stills'), 'las imágenes están en la fila, no en otra pestaña');
+  const c = p.espia.controles[0];
+  eq(c.markerKey, 'Marcador 3');
+  eq(c.opts.sequenceName, 'Clase 14', 'la secuencia del recurso');
+  ok(c.opts.fbJobId, 'en modo feedback: cada miniatura decide si se reenvía');
+  has(fila.buscar('qj-fb-hint').textContent, 'viajan otra vez en cada corrección');
+});
+
+test('las imágenes se leen de la secuencia de ORIGEN, no de la abierta', async function () {
+  // Es el punto entero: las imágenes de referencia de ese marcador están
+  // guardadas contra el corte donde nació. Leyendo la secuencia abierta, el
+  // marcador aparecería sin imágenes y la corrección sería un rediseño a ciegas.
+  const { p } = await cargarCruzada();
+  eq(p.espia.controles[0].opts.sequenceName, 'Clase 14 v1');
+  eq(p.espia.controles[0].opts.projectPath, '/p/Clases.prproj');
+});
+
+test('qué imágenes viajan sale del 📤 de cada miniatura', async function () {
+  const { p, fila } = await cargarFila(recurso(), { reenviar: [0, 2] });
+  fila.porTag('textarea')[0].value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(JSON.stringify(p.espia.encolados[0].payload.stillsSend), '[0,2]');
+  eq(p.espia.fbCerrados.length, 1, 'y la próxima ronda arranca con todas activas');
 });
 
 test('el desplegable aparece con varias carpetas y recarga la elegida', async function () {
@@ -542,7 +598,7 @@ test('el tramo escrito a mano se guarda en la carpeta de origen, no en la abiert
   const campos = fila.porTag('input');
   campos[0].value = '30';
   campos[1].value = '5';
-  fila.buscar('qbtn').click();
+  guardarTramo(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.guardados[0].sequenceName, 'Clase 14 v1');
 });

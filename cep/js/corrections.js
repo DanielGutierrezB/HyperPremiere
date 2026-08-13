@@ -9,7 +9,10 @@
  * con el tramo del timeline donde iba el recurso.
  *
  * Lo que sale de acá vuelve al MISMO segundo y con la MISMA duración con la que
- * se generó, y se coloca en amarillo para distinguirlo de un vistazo.
+ * se generó, en una pista nueva y en amarillo para distinguirlo de un vistazo.
+ *
+ * Cada fila es una ronda de feedback completa, como la de la Cola: instrucción,
+ * imágenes nuevas, qué imágenes viajan y qué versión se toma como base.
  *
  * Tampoco depende de estar parado en la secuencia correcta: la clase suele
  * volver de la revisión re-cortada y con otro nombre ("_02"), así que se elige
@@ -93,7 +96,7 @@
    * versiones siga siendo una, y el clip se coloca en la secuencia ABIERTA, que
    * es la que el editor está mirando.
    */
-  function jobBase(m, second) {
+  function jobBase(m) {
     var ctx = deps.context();
     return {
       projectPath: ctx.projectPath,
@@ -101,8 +104,19 @@
       storeSeqName: origen.sequenceName,
       markerKey: m.slug,
       markerStart: m.start, markerDuration: m.duration,
-      placeStart: second,
       correction: true
+    };
+  }
+
+  /**
+   * Sobre qué secuencia trabaja el material del marcador. Sus imágenes viven
+   * contra la secuencia donde nació el recurso, no contra la que está abierta.
+   */
+  function stillsOpts(m) {
+    return {
+      fbJobId: "corr:" + origen.slug + ":" + m.slug,
+      projectPath: deps.context().projectPath,
+      sequenceName: origen.sequenceName
     };
   }
 
@@ -112,8 +126,9 @@
    * versión anterior, y acá podés corregir cualquiera) y el tramo sale de la
    * ficha en vez del marcador.
    */
-  function enqueueCorrection(m, version, text, second, state) {
+  function enqueueCorrection(m, version, text, state) {
     var ctx = deps.context();
+    var opts = stillsOpts(m);
     state.className = "corr-state";
     state.textContent = "Leyendo la v" + version + "…";
 
@@ -123,7 +138,7 @@
     }).then(function (r) {
       if (!r || !r.ok || !r.html) throw new Error((r && r.error) || "no pude leer el HTML de la v" + version);
 
-      var job = jobBase(m, second);
+      var job = jobBase(m);
       job.kind = "feedback";
       job.label = m.slug + " (corrección)";
       job.payload = {
@@ -132,14 +147,18 @@
         markerSlug: m.slug, mode: "adjust",
         instruction: text, adjustment: text,
         previousHtml: r.html,
+        // Qué imágenes del marcador viajan (el 📤 de cada miniatura). La cola las
+        // resuelve contra la secuencia de origen justo antes de llamar al modelo.
+        stillsSend: HPStills.fbCollect(opts.fbJobId, m.slug, opts),
         // Con o sin fondo tiene que salir igual que el original: si no, una
         // corrección convertiría un clip opaco en uno transparente.
         background: !!m.background,
         draft: deps.draft()
       };
       HPQueue.add(job);
+      HPStills.fbClear(opts.fbJobId); // la próxima ronda arranca con todas activas
       hpLog("Corrección encolada [" + m.slug + "] sobre la v" + version + " · de “" +
-        origen.sequenceName + "” a “" + destino + "” en " + formatTime(second) +
+        origen.sequenceName + "” a “" + destino + "” en " + formatTime(m.start) +
         " por " + fmtDuration(m.duration));
       state.className = "corr-state is-ok";
       state.textContent = "Encolada sobre la v" + version + ". El progreso está en la pestaña Cola.";
@@ -150,9 +169,9 @@
   }
 
   /** Renderiza el HTML editado a mano como versión nueva, sin gastar IA. */
-  function enqueueManualHtml(m, html, second, state) {
+  function enqueueManualHtml(m, html, state) {
     var ctx = deps.context();
-    var job = jobBase(m, second);
+    var job = jobBase(m);
     job.kind = "renderManualHtml";
     job.label = m.slug + " (HTML a mano)";
     job.payload = {
@@ -184,11 +203,7 @@
       name.className = "corr-name is-link";
       name.title = "Llevar el cursor de Premiere a este punto de “" + destino + "”.";
       name.addEventListener("click", function () {
-        // El segundo que va a usarse al colocar, no el guardado: si el editor lo
-        // corrigió en el campo, es a ESE punto al que quiere ir a mirar.
-        var second = secondToPlace();
-        if (second == null) return;
-        HPHost.openSequenceAndSeek(destino, second, function () {});
+        HPHost.openSequenceAndSeek(destino, m.start, function () {});
       });
     }
     when.className = "corr-when";
@@ -251,21 +266,21 @@
     box.placeholder = "Qué hay que corregir. Ej: “el título tapa la cara, subilo”, “falta la fuente del dato”.";
     row.appendChild(box);
 
+    // Una corrección es una ronda de feedback como las de la Cola, así que tiene
+    // que traer lo mismo: mandar imágenes nuevas, decidir cuáles viajan y marcar
+    // qué se incrusta. Trabaja sobre la secuencia de ORIGEN, donde están las
+    // imágenes con las que se generó el recurso.
+    var opts = stillsOpts(m);
+    HPStills.fbInit(opts.fbJobId);
+    var hint = document.createElement("div");
+    hint.className = "qj-fb-hint";
+    hint.textContent = "Las imágenes viajan otra vez en cada corrección (el modelo no recuerda la anterior). " +
+      "📤 apaga la que no querés mandar; ✓ usar se incrusta igual.";
+    row.appendChild(hint);
+    row.appendChild(HPStills.createControl(m.slug, opts));
+
     var actions = document.createElement("div");
     actions.className = "corr-actions";
-
-    // Si los recursos salieron de otro corte de la clase, el segundo guardado es
-    // el de ESE corte: puede seguir sirviendo o no, y el único que lo sabe es el
-    // editor. Se ofrece escrito, para confirmar de un clic o cambiarlo.
-    var inSecond = null;
-    if (otroCorte()) {
-      inSecond = document.createElement("input");
-      inSecond.type = "number"; inSecond.step = "0.1"; inSecond.min = "0";
-      inSecond.className = "corr-second";
-      inSecond.value = String(Math.round(m.start * 10) / 10);
-      inSecond.title = "En qué segundo de “" + destino + "” colocar el clip. Viene con el del corte donde se generó.";
-      actions.appendChild(inSecond);
-    }
 
     // Selector de versión: solo si hay más de una para elegir. Va con el
     // desplegable propio porque Premiere no dibuja el popup de los <select>.
@@ -280,22 +295,16 @@
       }), String(m.latestVersion));
     }
 
+    // El botón grande de la ronda de feedback, igual que en la Cola y en las
+    // tarjetas: es la acción de la fila, no un control más de la barra.
     var fixBtn = document.createElement("button");
-    fixBtn.type = "button"; fixBtn.className = "qbtn";
-    fixBtn.textContent = "Corregir";
-    fixBtn.title = "Rediseña sobre esa versión y devuelve el clip a " +
-      (otroCorte() ? "el segundo que digas en “" + destino + "”" : formatTime(m.start)) +
-      ", con la misma duración y etiqueta amarilla.";
+    fixBtn.type = "button"; fixBtn.className = "qbtn qbtn-react";
+    fixBtn.textContent = "↻ Regenerar";
+    fixBtn.title = "Rediseña sobre esa versión y devuelve el clip a " + formatTime(m.start) +
+      " de “" + destino + "”, con la misma duración, en una pista nueva y en amarillo.";
     actions.appendChild(fixBtn);
     actions.appendChild(state);
     row.appendChild(actions);
-
-    /** El segundo donde colocar, ya validado. null = el editor lo dejó inválido. */
-    function secondToPlace() {
-      if (!inSecond) return m.start;
-      var n = Number(inSecond.value);
-      return (isFinite(n) && n >= 0) ? n : null;
-    }
 
     fixBtn.addEventListener("click", function () {
       var text = box.value.trim();
@@ -304,13 +313,7 @@
         state.textContent = "Escribí qué hay que corregir.";
         return;
       }
-      var second = secondToPlace();
-      if (second == null) {
-        state.className = "corr-state is-error";
-        state.textContent = "El segundo donde colocarlo no es válido.";
-        return;
-      }
-      enqueueCorrection(m, chosenVersion(), text, second, state);
+      enqueueCorrection(m, chosenVersion(), text, state);
     });
 
     // El HTML de la versión, cargado del disco. Antes esto era una caja vacía
@@ -381,13 +384,7 @@
         state.textContent = "El HTML está vacío.";
         return;
       }
-      var second = secondToPlace();
-      if (second == null) {
-        state.className = "corr-state is-error";
-        state.textContent = "El segundo donde colocarlo no es válido.";
-        return;
-      }
-      enqueueManualHtml(m, html, second, state);
+      enqueueManualHtml(m, html, state);
     });
 
     return row;
@@ -462,7 +459,10 @@
 
     var nota = document.createElement("div");
     nota.className = "corr-cross-note";
-    nota.textContent = "Los segundos son los del corte viejo: revisá el de cada fila antes de mandar.";
+    // Antes acá había un campo para escribir el segundo de destino. Sobra: el
+    // clip cae en una pista nueva, arriba de todo, así que si el corte se movió
+    // se arrastra en el timeline, que es más rápido y más seguro que calcularlo.
+    nota.textContent = "El clip cae en el segundo del corte viejo, en una pista nueva: si se movió, arrastralo.";
     box.appendChild(nota);
 
     listEl.appendChild(box);

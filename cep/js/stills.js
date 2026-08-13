@@ -4,9 +4,15 @@
  * feedback) la selección por-imagen de qué se reenvía al modelo.
  *
  * Lo usan las tarjetas de marcador, la zona de "Prompt general" (markerKey =
- * HPStore.GENERAL_KEY) y la caja de feedback de la pestaña Cola (fbJobId).
- * Este módulo es el DUEÑO del estado de selección de reenvío por job
- * (fbInit/fbCollect/fbClear), así la vista de cola no necesita conocerlo.
+ * HPStore.GENERAL_KEY), la caja de feedback de la pestaña Cola y las filas de
+ * Corrections (las dos últimas con fbJobId). Este módulo es el DUEÑO del estado
+ * de selección de reenvío por job (fbInit/fbCollect/fbClear), así la vista de
+ * cola no necesita conocerlo.
+ *
+ * `createControl(markerKey, opts)` acepta `opts.sequenceName` (+ projectPath):
+ * sobre QUÉ secuencia trabaja. Sin eso, un control solo podía tocar el marcador
+ * de la secuencia abierta, y por eso el feedback de un job de otra clase —o una
+ * corrección de un recurso nacido en el corte anterior— se quedaba sin imágenes.
  *
  * init(deps): onGeneralChanged() — avisar cuando cambian los adjuntos del
  * prompt general (main actualiza su resumen "✓ · n adj.").
@@ -22,6 +28,41 @@
 
   function notifyIfGeneral(markerKey) {
     if (markerKey === HPStore.GENERAL_KEY) deps.onGeneralChanged();
+  }
+
+  // ── Sobre qué marcador y qué secuencia trabaja un control ────────────
+  // El material de un marcador vive en el namespace de SU secuencia. Mientras
+  // todo control era de la secuencia abierta esto no hacía falta; con la cola
+  // de varias clases y las correcciones de un corte anterior, sí: el control
+  // tiene que decir sobre cuál opera o termina leyendo el marcador homónimo de
+  // otra clase.
+  //
+  // `vista` = { key, fbJobId, ctx }. ctx null = la secuencia abierta.
+  function vistaDe(markerKey, opts) {
+    opts = opts || {};
+    return {
+      key: markerKey,
+      fbJobId: opts.fbJobId || null,
+      ctx: opts.sequenceName
+        ? { projectPath: opts.projectPath || "", sequenceName: opts.sequenceName }
+        : null
+    };
+  }
+
+  /**
+   * Corre `fn` en el contexto de la vista. El contexto se resuelve EN CADA
+   * lectura y no al crear el control: el editor puede cambiar de secuencia en
+   * Premiere con la caja abierta, y lo que este control toca no depende de eso.
+   */
+  function enCtx(vista, fn) {
+    var ctx = vista && vista.ctx;
+    if (!ctx) return fn();
+    return HPStore.withContext(ctx.projectPath || HPStore.getContext().projectPath, ctx.sequenceName, fn);
+  }
+
+  /** Los datos del marcador de la vista (imágenes, etiquetas, recursos). */
+  function datosDe(vista) {
+    return enCtx(vista, function () { return HPStore.getMarkerData(vista.key) || {}; });
   }
 
   // ── Selección de reenvío de imágenes en un feedback, por job ─────────
@@ -46,11 +87,15 @@
   function fbInit(jobId) {
     if (feedbackImgSel[jobId] === undefined) feedbackImgSel[jobId] = { sel: {} };
   }
-  /** Índices de las imágenes que quedaron activas (📤) para reenviar al modelo. */
-  function fbCollect(jobId, markerKey) {
+  /**
+   * Índices de las imágenes que quedaron activas (📤) para reenviar al modelo.
+   * `opts` es el mismo de createControl: sin él se contarían las imágenes del
+   * marcador homónimo de la secuencia abierta, que puede tener otras.
+   */
+  function fbCollect(jobId, markerKey, opts) {
     var out = [];
     if (feedbackImgSel[jobId]) {
-      var cnt = ((HPStore.getMarkerData(markerKey) || {}).stills || []).length;
+      var cnt = (datosDe(vistaDe(markerKey, opts)).stills || []).length;
       for (var i = 0; i < cnt; i++) if (fbSend(jobId, i)) out.push(i);
     }
     return out;
@@ -75,10 +120,11 @@
     return "file://" + encodeURI(p).replace(/#/g, "%23").replace(/\?/g, "%3F");
   }
 
-  function renderStills(container, markerKey, fbJobId) {
+  function renderStills(container, vista) {
+    var markerKey = vista.key, fbJobId = vista.fbJobId;
     container.innerHTML = "";
-    var data = HPStore.getMarkerData(markerKey);
-    var stills = data.stills, uses = data.stillUse || [];
+    var data = datosDe(vista);
+    var stills = data.stills || [], uses = data.stillUse || [];
 
     for (var i = 0; i < stills.length; i++) {
       (function (index) {
@@ -100,8 +146,8 @@
         remove.textContent = "x";
         remove.title = "Quitar esta imagen del marcador";
         remove.addEventListener("click", function () {
-          HPStore.removeMarkerStill(markerKey, index);
-          renderStills(container, markerKey);
+          enCtx(vista, function () { HPStore.removeMarkerStill(markerKey, index); });
+          renderStills(container, vista);
           notifyIfGeneral(markerKey);
         });
 
@@ -117,8 +163,8 @@
           ? "Se INCRUSTA en el gráfico (logo/icono/foto). Clic para volver a solo referencia."
           : "Solo referencia visual (contexto). Clic para marcarla como recurso a INCRUSTAR.";
         tag.addEventListener("click", function () {
-          HPStore.setMarkerStillUse(markerKey, index, !isUse);
-          renderStills(container, markerKey);
+          enCtx(vista, function () { HPStore.setMarkerStillUse(markerKey, index, !isUse); });
+          renderStills(container, vista);
           notifyIfGeneral(markerKey);
         });
 
@@ -145,7 +191,7 @@
           var toggle = function (e) {
             e.stopPropagation();
             fbToggle(fbJobId, index);
-            renderStills(container, markerKey, fbJobId);
+            renderStills(container, vista);
           };
           send.addEventListener("click", toggle);
           img.style.cursor = "pointer";
@@ -159,9 +205,10 @@
   }
 
   // Lista de recursos de referencia (PDFs, docs, etc.) del marcador.
-  function renderResources(container, markerKey) {
+  function renderResources(container, vista) {
+    var markerKey = vista.key;
     container.innerHTML = "";
-    var resources = HPStore.getMarkerData(markerKey).resources || [];
+    var resources = datosDe(vista).resources || [];
     for (var i = 0; i < resources.length; i++) {
       (function (index) {
         var chip = document.createElement("div");
@@ -178,8 +225,8 @@
         remove.textContent = "×";
         remove.title = "Quitar este recurso del marcador";
         remove.addEventListener("click", function () {
-          HPStore.removeMarkerResource(markerKey, index);
-          renderResources(container, markerKey);
+          enCtx(vista, function () { HPStore.removeMarkerResource(markerKey, index); });
+          renderResources(container, vista);
         });
         chip.appendChild(icon);
         chip.appendChild(name);
@@ -190,14 +237,15 @@
   }
 
   // Ingesta de una lista de File: imágenes → stills, el resto → recursos.
-  function ingestFiles(files, markerKey, thumbs, resList, statusEl, fbJobId) {
+  function ingestFiles(files, vista, thumbs, resList, statusEl) {
     if (!files || !files.length) return;
+    var markerKey = vista.key;
     var pending = files.length;
     function done() {
       pending--;
       if (pending === 0) {
-        renderStills(thumbs, markerKey, fbJobId);
-        renderResources(resList, markerKey);
+        renderStills(thumbs, vista);
+        renderResources(resList, vista);
         notifyIfGeneral(markerKey);
       }
     }
@@ -206,15 +254,17 @@
         var reader = new FileReader();
         var isImage = /^image\//i.test(file.type) || /\.(png|jpe?g|webp|gif)$/i.test(file.name || "");
         reader.onload = function () {
-          if (isImage) {
-            HPStore.addMarkerStill(markerKey, reader.result);
-          } else {
-            HPStore.addMarkerResource(markerKey, {
-              name: file.name || "recurso",
-              dataUrl: reader.result,
-              mediaType: file.type || ""
-            });
-          }
+          enCtx(vista, function () {
+            if (isImage) {
+              HPStore.addMarkerStill(markerKey, reader.result);
+            } else {
+              HPStore.addMarkerResource(markerKey, {
+                name: file.name || "recurso",
+                dataUrl: reader.result,
+                mediaType: file.type || ""
+              });
+            }
+          });
           done();
         };
         reader.onerror = done;
@@ -239,17 +289,29 @@
       }
     }
     if (!mount) return false;
+    var vista = vistaDe(markerKey, null);
     var t = mount.querySelector(".still-thumbs"), r = mount.querySelector(".resource-list");
-    if (t) renderStills(t, markerKey);
-    if (r) renderResources(r, markerKey);
+    if (t) renderStills(t, vista);
+    if (r) renderResources(r, vista);
     return true;
+  }
+
+  /**
+   * La TARJETA del marcador, solo si es la de la secuencia abierta: con otro
+   * contexto, la tarjeta que tiene esa misma clave es de otra clase y le
+   * pintaríamos imágenes que no son suyas.
+   */
+  function refreshCardOf(vista) {
+    if (vista.ctx && vista.ctx.sequenceName !== HPStore.getContext().sequenceName) return;
+    refresh(vista.key);
   }
 
   // Captura el frame actual del monitor de programa (host.jsx exportFramePNG), lo
   // GUARDA en la carpeta de la secuencia (engine.saveCapture) y lo agrega como
   // still del marcador. Nota: QE muestra un alert nativo "Exported frame …" que
   // hay que cerrar (comportamiento de Premiere, no del plugin).
-  function captureProgramStill(markerKey, thumbs, btn, statusEl, fbJobId) {
+  function captureProgramStill(vista, thumbs, btn, statusEl) {
+    var markerKey = vista.key;
     var tmpPath = "/tmp/hp-still-" + (new Date().getTime()) + ".png";
     var prev = btn.textContent;
     btn.disabled = true;
@@ -270,19 +332,22 @@
         return;
       }
       var realPath = result.substring(3); // "ok|<ruta real>"
-      var ctx = HPStore.getContext();
+      // El frame se captura del monitor (lo que el editor está viendo), pero se
+      // guarda en la carpeta de la secuencia DEL MARCADOR: es ahí donde el motor
+      // busca sus imágenes al generar.
+      var ctx = vista.ctx || HPStore.getContext();
       HPEngine.call("saveCapture", {
-        projectPath: ctx.projectPath, sequenceName: ctx.sequenceName,
+        projectPath: ctx.projectPath || HPStore.getContext().projectPath, sequenceName: ctx.sequenceName,
         markerSlug: markerKey, tmpPath: realPath
       }).then(function (res) {
         if (res && res.ok && (res.savedPath || res.dataUrl)) {
           // Guardamos la RUTA en disco (no el base64) → no revienta la cuota de
           // localStorage. El engine la lee y la convierte a imagen al generar.
-          HPStore.addMarkerStill(markerKey, res.savedPath || res.dataUrl);
+          enCtx(vista, function () { HPStore.addMarkerStill(markerKey, res.savedPath || res.dataUrl); });
           // Refrescar el contenedor LOCAL (el que inició la captura, ej. la caja de
           // feedback) SIEMPRE, y además la tarjeta si está visible.
-          if (thumbs) renderStills(thumbs, markerKey, fbJobId);
-          refresh(markerKey);
+          if (thumbs) renderStills(thumbs, vista);
+          refreshCardOf(vista);
           notifyIfGeneral(markerKey);
           if (statusEl) statusEl.textContent = "✓ guardada en la carpeta de la secuencia";
           hpLog("Captura OK → " + res.savedPath + " · agregada a [" + markerKey + "]");
@@ -298,8 +363,12 @@
     });
   }
 
-  /** Control completo: 📸 captura + drag&drop + miniaturas + recursos. */
-  function createControl(markerKey, fbJobId) {
+  /**
+   * Control completo: 📸 captura + drag&drop + miniaturas + recursos.
+   * opts = { fbJobId, projectPath, sequenceName } — ver cabecera del módulo.
+   */
+  function createControl(markerKey, opts) {
+    var vista = vistaDe(markerKey, opts);
     var wrap = document.createElement("div");
     wrap.className = "marker-stills";
 
@@ -327,7 +396,7 @@
     stillStatus.className = "still-status";
 
     captureBtn.addEventListener("click", function () {
-      captureProgramStill(markerKey, thumbs, captureBtn, stillStatus, fbJobId);
+      captureProgramStill(vista, thumbs, captureBtn, stillStatus);
     });
 
     // Zona drag & drop: al clicar abre el selector; al soltar, ingiere.
@@ -341,11 +410,11 @@
       e.preventDefault();
       drop.classList.remove("is-over");
       var files = e.dataTransfer && e.dataTransfer.files;
-      ingestFiles(files, markerKey, thumbs, resList, stillStatus, fbJobId);
+      ingestFiles(files, vista, thumbs, resList, stillStatus);
     });
 
     fileInput.addEventListener("change", function () {
-      ingestFiles(fileInput.files, markerKey, thumbs, resList, stillStatus, fbJobId);
+      ingestFiles(fileInput.files, vista, thumbs, resList, stillStatus);
       fileInput.value = "";
     });
 
@@ -355,8 +424,8 @@
     wrap.appendChild(stillStatus);
     wrap.appendChild(thumbs);
     wrap.appendChild(resList);
-    renderStills(thumbs, markerKey, fbJobId);
-    renderResources(resList, markerKey);
+    renderStills(thumbs, vista);
+    renderResources(resList, vista);
     return wrap;
   }
 

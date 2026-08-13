@@ -265,7 +265,7 @@
   }
 
   // Caja de feedback inline de un job terminado: texto + regenerar + control de
-  // imágenes con selección de reenvío (solo si el job es de la secuencia actual).
+  // imágenes con selección de reenvío.
   function buildFeedbackBox(j) {
     var fb = document.createElement("div"); fb.className = "qj-feedback-wrap";
     var inRow = document.createElement("div"); inRow.className = "qj-feedback";
@@ -277,11 +277,18 @@
     inRow.appendChild(ta);
     var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
     go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
+    // Sobre qué secuencia trabaja el material de este marcador. Es la del job,
+    // NO la que el editor tenga abierta: con la cola de varias clases, o
+    // corrigiendo algo generado en el corte anterior, no coinciden.
+    var stillsOpts = {
+      fbJobId: j.id, projectPath: j.projectPath,
+      sequenceName: j.storeSeqName || j.seqName
+    };
     go.addEventListener("click", function (e) {
       e.stopPropagation();
       var t = feedbackDraft[j.id] || "";
       // Índices de las imágenes que el usuario dejó activas (📤) para reenviar.
-      var sendIdx = HPStills.fbCollect(j.id, j.markerKey);
+      var sendIdx = HPStills.fbCollect(j.id, j.markerKey, stillsOpts);
       feedbackOpen[j.id] = false; feedbackDraft[j.id] = ""; HPStills.fbClear(j.id);
       HPQueue.regenerate(j.id, t, sendIdx);
     });
@@ -289,25 +296,20 @@
     fb.appendChild(inRow);
     // Imágenes/elementos para el feedback — mismo control que la tarjeta
     // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
-    // marcador y la regeneración los toma. Solo si el job es de la secuencia
-    // actual (HPStore opera sobre ese contexto).
-    var ctx = HPStore.getContext();
-    if (j.seqName === ctx.sequenceName && j.projectPath === ctx.projectPath) {
-      // Selección de reenvío por imagen: todas activas, el 📤 apaga la que no
-      // quieras mandar. Se inicializa una vez por apertura de la caja.
-      HPStills.fbInit(j.id);
-      var hint = document.createElement("div"); hint.className = "qj-fb-hint";
-      hint.textContent = "Al refinar, las imágenes se envían otra vez: el modelo no recuerda la generación anterior. Usá 📤 si querés que alguna NO viaje. Las ✓ usar se incrustan igual.";
-      fb.appendChild(hint);
-      var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
-      mnt.addEventListener("click", function (e) { e.stopPropagation(); });
-      mnt.appendChild(HPStills.createControl(j.markerKey, j.id));
-      fb.appendChild(mnt);
-    } else {
-      var note = document.createElement("div"); note.className = "qj-msg";
-      note.textContent = "Para adjuntar imágenes a este marcador, abrí su secuencia en la pestaña Marcadores.";
-      fb.appendChild(note);
-    }
+    // marcador y la regeneración los toma.
+    //
+    // Antes esto solo aparecía si el job era de la secuencia ABIERTA, y si no se
+    // reemplazaba por un "abrí su secuencia en la pestaña Marcadores": una ronda
+    // de feedback sin poder mandar una imagen, que es justo lo que hace falta
+    // para arreglar un gráfico. El control ya sabe operar sobre otra secuencia.
+    HPStills.fbInit(j.id); // selección de reenvío: todas activas, 📤 apaga
+    var hint = document.createElement("div"); hint.className = "qj-fb-hint";
+    hint.textContent = "Al refinar, las imágenes se envían otra vez: el modelo no recuerda la generación anterior. Usá 📤 si querés que alguna NO viaje. Las ✓ usar se incrustan igual.";
+    fb.appendChild(hint);
+    var mnt = document.createElement("div"); mnt.className = "qj-fb-stills";
+    mnt.addEventListener("click", function (e) { e.stopPropagation(); });
+    mnt.appendChild(HPStills.createControl(j.markerKey, stillsOpts));
+    fb.appendChild(mnt);
     return fb;
   }
 

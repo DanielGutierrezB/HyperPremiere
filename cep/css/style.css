@@ -1487,6 +1487,14 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .corr-row textarea { width: 100%; margin-top: 6px; resize: vertical; }
 .corr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .corr-actions .qbtn { flex: 0 0 auto; }
+/* Regenerar es LA acción de la fila, no un control más de la barra. Se agranda
+   acá porque `qbtn-react` nació para caber al lado de la caja de dos líneas de
+   la Cola, donde el alto se lo daba el estirón del flex. */
+.corr-actions .qbtn-react {
+  margin-left: auto; font-size: 12px; font-weight: 600; padding: 8px 18px;
+  background: rgba(251, 191, 36, 0.12);
+}
+.corr-actions .qbtn-react:hover { background: rgba(251, 191, 36, 0.22); }
 .corr-actions .corr-state { flex: 1 1 100%; font-size: 11px; color: var(--text-secondary); white-space: normal; }
 .corr-state.is-error { color: var(--error, #e08a8a); }
 .corr-state.is-ok { color: #0ae98d; }

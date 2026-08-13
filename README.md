@@ -257,18 +257,22 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
 - **Cargar secuencia** arma una fila por recurso ya generado con **en qué segundo entraba
   y cuánto duraba**, la última versión y con qué modelo se hizo. Ese tramo sale de la
   ficha `.meta.json` que se escribe con cada generación.
-- **Corregir**: escribís qué está mal y sale un refinamiento normal, pero **sobre la
-  versión que elegís** (no siempre la anterior) y **de vuelta a su segundo original**, con
-  la misma duración.
+- **Regenerar**: cada fila es una **ronda de feedback completa**, igual que en la Cola.
+  Escribís qué está mal, **mandás imágenes nuevas** (arrastrando o con 📸 del programa),
+  decidís con 📤 **cuáles viajan** y marcás las que se **incrustan** (✓ usar), y elegís
+  **sobre qué versión** se rediseña (no siempre la última). Vuelve a su segundo original,
+  con la misma duración.
+  Las imágenes son las **del marcador en la secuencia donde nació**, incluso si estás
+  parado en otro corte: es lo que hizo bueno al original y tiene que seguir viajando.
 - **Ver y editar el HTML**: el de la versión que tengas elegida, **traído del disco** (la
   pestaña ya encontró los archivos, no te los pide). Sirve para ver qué tiene el recurso
   antes de escribir la corrección, para retocarlo a mano y renderizarlo **sin gastar IA**,
   o para pegar encima una versión que traigas de afuera.
-- **Clic en el nombre** del marcador: te lleva a ese punto del timeline. Si el segundo
-  viene de otro corte, va **al que digas en el campo**, que es justo el que querés
-  comprobar antes de mandar.
-- El clip corregido llega en **amarillo**, para verlo de un golpe entre los que ya
-  estaban. (Si después le corrés **Render HQ**, el recoloreo lo pasa a magenta.)
+- **Clic en el nombre** del marcador: te lleva a ese punto del timeline de la secuencia
+  que tenés abierta, para ver qué hay ahí antes de escribir la corrección.
+- El clip corregido llega en **amarillo** y en una **pista nueva**, para verlo de un golpe
+  entre los que ya estaban. (Si después le corrés **Render HQ**, el recoloreo lo pasa a
+  magenta.)
 
 Si un recurso es **anterior** a que existiera la ficha, el tramo se busca en la cola
 guardada (`queue.json`) y, si no, en el `data-duration` del HTML —que da la duración pero
@@ -284,10 +288,10 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
 - El recurso se **genera en la carpeta donde nació**, así su historia de versiones sigue
   siendo una sola (v5 después de la v4) y las **imágenes de referencia** de ese marcador
   —que están guardadas contra esa secuencia— se siguen mandando al modelo.
-- El clip se **coloca en la secuencia que tenés abierta**.
-- El segundo guardado es el del **corte viejo**, así que la fila te lo muestra **escrito y
-  editable**: si los tiempos ya no coinciden, lo cambiás. Cambiarlo mueve el clip, no el
-  tramo del guion que lee el modelo.
+- El clip se **coloca en la secuencia que tenés abierta**, en el segundo del corte viejo y
+  en una **pista nueva arriba de todo**: si los tiempos se movieron, lo arrastrás. Se
+  probó pidiéndote el segundo escrito y era peor: un cálculo de más para vos, con el
+  riesgo de correr también el tramo del guion que lee el modelo.
 
 ## Acciones por recurso
 
