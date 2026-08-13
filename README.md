@@ -18,6 +18,11 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
 
 1. Ponés **marcadores nativos con duración** en tu secuencia donde querés un recurso y
    pulsás **Cargar marcadores** → una **tarjeta** por marcador.
+   Los **comentarios que volvés a importar de Frame.io** (marcadores cuyo nombre lleva
+   `Frame.io:`) se **ignoran**: son notas para vos, no trabajo para la herramienta. El
+   panel te dice cuántos salteó. Importante que no entren, porque si se colaran
+   **correrían la numeración** y "Marcador 3" pasaría a ser otro marcador distinto del
+   que tiene los archivos ya generados.
 2. Le das **contexto**: el **Objetivo de la clase** y el transcript. Lo más directo es
    **🎙 Transcribir esta secuencia**: Premiere exporta el audio de la secuencia a un
    **.wav temporal** (mono 16 kHz), lo transcribe con tu **Whisper local** (sin nube ni

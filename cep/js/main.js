@@ -1585,11 +1585,18 @@
     return card;
   }
 
-  function renderMarkers(markers) {
+  // `ignored` = cuántos marcadores de Frame.io se descartaron antes de llegar
+  // acá. Solo se usa para contarlo en pantalla: si no se dijera, con una
+  // secuencia llena de comentarios el panel parecería estar roto.
+  function renderMarkers(markers, ignored) {
     markersContainer.innerHTML = "";
+    ignored = ignored || 0;
+    var deFrameIo = ignored ? " · " + ignored + " de Frame.io ignorados" : "";
 
     if (markers.length === 0) {
-      setOutput("La secuencia activa no tiene marcadores.", false);
+      setOutput(ignored
+        ? "La secuencia solo tiene comentarios de Frame.io (" + ignored + "), ningún marcador para animar."
+        : "La secuencia activa no tiene marcadores.", false);
       setHeaderStatus((currentSequenceName || "secuencia") + " · sin marcadores", "idle");
       return;
     }
@@ -1607,7 +1614,7 @@
     for (var i = 0; i < markers.length; i++) {
       markersContainer.appendChild(createMarkerCard(markers[i]));
     }
-    setOutput(markers.length + " marcador(es) cargados · estado guardado ✓", false);
+    setOutput(markers.length + " marcador(es) cargados · estado guardado ✓" + deFrameIo, false);
     // Estado de secuencia arriba, en verde.
     setHeaderStatus((currentSequenceName || "secuencia") + " ✓", "ok");
     // Flujo progresivo: al tener marcadores, si ya hay contexto (objetivo o
@@ -1677,7 +1684,16 @@
           return;
         }
 
-        renderMarkers(data);
+        // Los comentarios que vuelven de Frame.io llegan como marcadores y no
+        // son trabajo para la herramienta. Se descartan ACÁ, antes de numerar
+        // y de crear tarjetas, que es el único lugar por donde los marcadores
+        // entran al panel.
+        var limpio = HPUtil.withoutFrameIoMarkers(data);
+        if (limpio.ignored) {
+          hpLog("Marcadores: ignorados " + limpio.ignored + " de Frame.io (comentarios de revisión)");
+        }
+
+        renderMarkers(limpio.markers, limpio.ignored);
       });
     });
   }

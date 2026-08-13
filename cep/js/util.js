@@ -52,6 +52,42 @@
   }
 
   /**
+   * ¿Es un marcador de comentario importado de Frame.io?
+   *
+   * Al volver de revisión, Frame.io deja un marcador por comentario y quedan
+   * mezclados con los de animación. No son trabajo para la herramienta: son
+   * notas para el editor. Se piden los dos puntos ("Frame.io:") y no solo el
+   * nombre suelto, para no llevarse puesto un marcador que el editor haya
+   * llamado "frames" o "Frame final".
+   */
+  function isFrameIoMarker(marker) {
+    var name = (marker && marker.name) || "";
+    return /frame\.io\s*:/i.test(name);
+  }
+
+  /**
+   * Saca los marcadores de Frame.io de la lista que llega de Premiere.
+   *
+   * Devuelve una lista NUEVA (no toca la original) con `index` recalculado:
+   * ese campo es el respaldo de la numeración cuando Premiere no expone el
+   * guid del marcador, así que si quedara con los huecos de los descartados,
+   * los marcadores se numerarían salteado.
+   */
+  function withoutFrameIoMarkers(markers) {
+    var kept = [];
+    var ignored = 0;
+    for (var i = 0; i < (markers || []).length; i++) {
+      var m = markers[i];
+      if (isFrameIoMarker(m)) { ignored++; continue; }
+      var copy = {};
+      for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) copy[k] = m[k];
+      copy.index = kept.length;
+      kept.push(copy);
+    }
+    return { markers: kept, ignored: ignored };
+  }
+
+  /**
    * Cómo se muestra el botón ⟳ según lo que contestó el motor (checkUpdate).
    * Son TRES estados, no dos: el tercero existe porque durante mucho tiempo
    * "no pude consultar GitHub" se veía igual que "estás al día", y así nadie
@@ -88,6 +124,8 @@
     fmtDuration: fmtDuration,
     addThousands: addThousands,
     fmtTokens: fmtTokens,
-    updateBadge: updateBadge
+    updateBadge: updateBadge,
+    isFrameIoMarker: isFrameIoMarker,
+    withoutFrameIoMarkers: withoutFrameIoMarkers
   };
 })(typeof window !== "undefined" ? window : this);
