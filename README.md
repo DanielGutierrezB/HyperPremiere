@@ -270,6 +270,20 @@ guardada (`queue.json`) y, si no, en el `data-duration` del HTML —que da la du
 no la posición—. Cuando no hay de dónde sacarlo, la fila **te lo pregunta una vez** y lo
 deja anotado en la ficha. Nunca se coloca a ciegas: sin el tramo no se ofrece corregir.
 
+**Si volviste a cortar la clase.** Es lo normal: la clase vuelve como "…_02" y esa
+secuencia no tiene nada generado, porque todo se hizo en la anterior. La pestaña **no se
+queda en la carpeta de la secuencia abierta**: te ofrece las del proyecto que sí tienen
+recursos y, si hay una que es la misma clase con otro sufijo, la trae sola y te lo dice.
+Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
+
+- El recurso se **genera en la carpeta donde nació**, así su historia de versiones sigue
+  siendo una sola (v5 después de la v4) y las **imágenes de referencia** de ese marcador
+  —que están guardadas contra esa secuencia— se siguen mandando al modelo.
+- El clip se **coloca en la secuencia que tenés abierta**.
+- El segundo guardado es el del **corte viejo**, así que la fila te lo muestra **escrito y
+  editable**: si los tiempos ya no coinciden, lo cambiás. Cambiarlo mueve el clip, no el
+  tramo del guion que lee el modelo.
+
 ## Acciones por recurso
 
 - **Generar** (1ª vez): crea el recurso desde cero, con todo el contexto.
@@ -795,6 +809,15 @@ cree carpetas**, que la corrección lleve el HTML de la versión **elegida** (no
 anterior), que vuelva al segundo original y **en amarillo**, que una generación normal siga
 saliendo magenta, y que la marca de corrección **sobreviva** a reiniciar el panel. Las
 **tres pestañas** se prueban aparte: exactamente una vista visible, siempre.
+
+Y el caso de la clase **re-cortada**, que es el que apareció en producción: que estando
+parado en "…_105875_02" se encuentren los recursos de "…_105875" y se **avise** que la
+elección la hicimos nosotros; que "Clase 10" **no** pase por otro corte de "Clase 1"; que
+el recurso se escriba en la carpeta de **origen** mientras el clip va a la secuencia
+**abierta**, con las imágenes de referencia saliendo de la de origen; que cambiar el
+segundo **no** mueva el tramo del transcript que lee el modelo; y que los dos nombres —45
+caracteres iguales salvo el sufijo— se muestren recortados a **lo que los diferencia**, que
+es lo único que evita corregir el corte equivocado.
 
 Aparte, dos scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué

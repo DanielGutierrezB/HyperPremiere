@@ -18,21 +18,16 @@ const { test, ok, eq, deepEq } = require('./harness');
 
 const engine = require('../bridge/engine');
 
-/** Carpeta de proyecto descartable, con la estructura real que arma el motor. */
-function armarProyecto(nombreSecuencia) {
-  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-corr-'));
-  const proyecto = path.join(raiz, 'Clases.prproj');
-  fs.writeFileSync(proyecto, 'x');
-  const slug = String(nombreSecuencia).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  const dir = path.join(raiz, 'HyperPremiere', slug);
-  fs.mkdirSync(dir, { recursive: true });
+function slugify(nombre) {
+  return String(nombre).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
 
+/** Escribe en una carpeta de secuencia lo mismo que deja una generación real. */
+function escritorDe(dir, nombreSecuencia) {
+  fs.mkdirSync(dir, { recursive: true });
   return {
-    projectPath: proyecto,
-    sequenceName: nombreSecuencia,
     dir,
-    raiz,
-    /** Escribe los archivos de una versión, como los deja una generación real. */
+    sequenceName: nombreSecuencia,
     version: function (slugMarcador, v, opts) {
       opts = opts || {};
       const base = slugMarcador + ' v' + v + (opts.model ? ' [' + opts.model + ']' : '');
@@ -46,13 +41,42 @@ function armarProyecto(nombreSecuencia) {
           marker: opts.marker,
         }, opts.metaExtra || {})));
       }
+      return this;
+    },
+    /** El transcript, que es de donde sale el nombre real de la secuencia. */
+    transcript: function () {
+      fs.writeFileSync(path.join(dir, 'transcript.json'),
+        JSON.stringify({ sequenceName: nombreSecuencia, segments: [] }));
+      return this;
+    },
+  };
+}
+
+/** Carpeta de proyecto descartable, con la estructura real que arma el motor. */
+function armarProyecto(nombreSecuencia) {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-corr-'));
+  const proyecto = path.join(raiz, 'Clases.prproj');
+  fs.writeFileSync(proyecto, 'x');
+  const hp = path.join(raiz, 'HyperPremiere');
+  const propia = escritorDe(path.join(hp, slugify(nombreSecuencia)), nombreSecuencia);
+
+  return {
+    projectPath: proyecto,
+    sequenceName: nombreSecuencia,
+    dir: propia.dir,
+    raiz,
+    version: propia.version,
+    /** Otra secuencia del MISMO proyecto (otro corte de la clase, u otra clase). */
+    otraSecuencia: function (nombre) {
+      return escritorDe(path.join(hp, slugify(nombre)), nombre);
     },
     cola: function (jobs) {
-      fs.writeFileSync(path.join(raiz, 'HyperPremiere', 'queue.json'),
-        JSON.stringify({ version: 1, jobs }));
+      fs.writeFileSync(path.join(hp, 'queue.json'), JSON.stringify({ version: 1, jobs }));
     },
-    listar: function () {
-      return engine.listCorrections({ projectPath: proyecto, sequenceName: nombreSecuencia });
+    listar: function (folderSlug) {
+      return engine.listCorrections({
+        projectPath: proyecto, sequenceName: nombreSecuencia, folderSlug: folderSlug || '',
+      });
     },
   };
 }
@@ -172,6 +196,104 @@ test('con fondo o sin fondo se conserva, para no cambiar de opaco a transparente
   const ms = p.listar().markers;
   eq(ms[0].background, true);
   eq(ms[1].background, false);
+});
+
+// ── La clase volvió re-cortada, con otro nombre ──────────────────────
+// Este es el caso que rompió en producción: el editor manda la clase, la vuelve
+// a cortar como "Clase 14_02" y al pedir las correcciones la pestaña miraba la
+// carpeta de ESA secuencia —vacía— y contestaba que no había nada generado,
+// mientras los cinco recursos estaban en la carpeta de al lado.
+
+test('si la secuencia abierta no tiene nada, se leen los recursos del otro corte', function () {
+  const p = armarProyecto('Clase 14_02');
+  p.otraSecuencia('Clase 14').transcript()
+    .version('Marcador 1', 1, { marker: { name: 'Intro', start: 12, duration: 5 } })
+    .version('Marcador 2', 1, { marker: { name: 'Dato', start: 40, duration: 6 } });
+
+  const r = p.listar();
+  eq(r.markers.length, 2, 'encontró lo generado en el corte viejo');
+  eq(r.sourceSequenceName, 'Clase 14', 'y dice de dónde salió');
+  eq(r.sequenceName, 'Clase 14_02', 'sin perder cuál es la abierta');
+  eq(r.guessed, true, 'la elección fue nuestra, así que el panel lo avisa');
+  eq(r.markers[0].start, 12, 'con el tramo del corte donde se generó');
+});
+
+test('el nombre real de la secuencia sale del transcript, no del nombre de la carpeta', function () {
+  // La carpeta es el slug ("clase-14-copia-2"): no sirve para volver a
+  // encontrar la secuencia en Premiere ni para mostrárselo al editor.
+  const p = armarProyecto('Clase 14_02');
+  p.otraSecuencia('Clase 14 · copia 2').transcript()
+    .version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+
+  eq(p.listar().sources[0].sequenceName, 'Clase 14 · copia 2');
+});
+
+test('sin transcript, el nombre de la secuencia se saca de la ficha', function () {
+  const p = armarProyecto('Clase 14_02');
+  p.otraSecuencia('Clase 14').version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+
+  eq(p.listar().sourceSequenceName, 'Clase 14', 'la ficha lo guarda desde la v1.4.33');
+});
+
+test('se ofrecen todas las carpetas con recursos, para poder elegir a mano', function () {
+  const p = armarProyecto('Clase 99');
+  p.otraSecuencia('Clase 14').transcript().version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+  p.otraSecuencia('Clase 15').transcript().version('Marcador 1', 1, { marker: { name: 'x', start: 2, duration: 3 } });
+  p.otraSecuencia('Clase 16').transcript(); // sin recursos: no es una opción
+
+  const r = p.listar();
+  const nombres = r.sources.map(function (s) { return s.sequenceName; }).sort();
+  deepEq(nombres, ['Clase 14', 'Clase 15'], 'las que tienen algo que corregir');
+  eq(r.markers.length, 0, 'ninguna es pariente de la abierta, así que no se adivina');
+  eq(r.folderSlug, '', 'y no se elige nada por el editor');
+});
+
+test('elegir una carpeta a mano manda sobre la que se hubiera adivinado', function () {
+  const p = armarProyecto('Clase 14_02');
+  p.otraSecuencia('Clase 14').transcript().version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+  p.otraSecuencia('Clase 23').transcript()
+    .version('Marcador 5', 1, { marker: { name: 'x', start: 70, duration: 4 } });
+
+  const r = p.listar(slugify('Clase 23'));
+  eq(r.sourceSequenceName, 'Clase 23');
+  eq(r.guessed, false, 'lo eligió el editor, no nosotros');
+  eq(r.markers[0].slug, 'Marcador 5');
+});
+
+test('"Clase 10" no se toma por otro corte de "Clase 1"', function () {
+  // El parecido entre slugs solo vale si la parte de más empieza con "-": si no,
+  // abrir la Clase 1 traería los recursos de la Clase 10 y el editor corregiría
+  // la clase equivocada sin enterarse.
+  const p = armarProyecto('Clase 1');
+  p.otraSecuencia('Clase 10').transcript()
+    .version('Marcador 1', 1, { marker: { name: 'x', start: 5, duration: 3 } });
+
+  const r = p.listar();
+  eq(r.markers.length, 0, 'no se adivinó nada');
+  eq(r.sources.length, 1, 'pero está ofrecida para elegirla a mano');
+});
+
+test('el tramo de la cola se busca por la secuencia de ORIGEN, no por la abierta', function () {
+  // Al leer de otro corte, filtrar la cola contra la secuencia abierta descarta
+  // justo el trabajo que tiene el tramo que se está buscando.
+  const p = armarProyecto('Clase 14_02');
+  p.otraSecuencia('Clase 14').transcript()
+    .version('Marcador 1', 1, { meta: false, html: '<div id="stage"></div>' });
+  p.cola([{ markerKey: 'Marcador 1', seqName: 'Clase 14', markerStart: 33, markerDuration: 7 }]);
+
+  const m = p.listar().markers[0];
+  eq(m.start, 33);
+  eq(m.timeSource, 'cola');
+});
+
+test('las carpetas internas de la herramienta no son secuencias', function () {
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+  // `_assets` guarda las imágenes de referencia; `_capturas`, los frames.
+  fs.mkdirSync(path.join(p.raiz, 'HyperPremiere', '_assets', 'Marcador 1'), { recursive: true });
+  fs.writeFileSync(path.join(p.raiz, 'HyperPremiere', '_assets', 'Marcador 1 v1.html'), '<p>x</p>');
+
+  eq(p.listar().sources.length, 1, 'solo la secuencia de verdad');
 });
 
 // ── Anotar el tramo a mano ───────────────────────────────────────────

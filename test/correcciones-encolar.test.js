@@ -71,9 +71,10 @@ function montarPestana(opts) {
   const nodos = {
     'corr-list': elemento('div'),
     'corr-status': elemento('span'),
+    'corr-picker': elemento('div'),
     'btn-load-corrections': elemento('button'),
   };
-  const espia = { encolados: [], leidos: [], guardados: [] };
+  const espia = { encolados: [], leidos: [], guardados: [], listados: [] };
 
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
@@ -92,7 +93,11 @@ function montarPestana(opts) {
     HPQueue: { add: function (job) { espia.encolados.push(job); } },
     HPEngine: {
       call: function (metodo, arg) {
-        if (metodo === 'listCorrections') return Promise.resolve(opts.listado || { ok: true, markers: [] });
+        if (metodo === 'listCorrections') {
+          espia.listados.push(arg);
+          const base = opts.listado || { ok: true, markers: [], sources: [] };
+          return Promise.resolve(base);
+        }
         if (metodo === 'readMarkerHtml') {
           espia.leidos.push(arg);
           if (opts.htmlFalla) return Promise.resolve({ ok: false, error: 'no existe' });
@@ -116,8 +121,9 @@ function montarPestana(opts) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
 
+  const contexto = opts.contexto || { projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14' };
   ctx.HPCorrections.init({
-    context: function () { return { projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14' }; },
+    context: function () { return contexto; },
     refreshContext: function (cb) { cb(); },
     draft: function () { return !!opts.draft; },
   });
@@ -141,11 +147,39 @@ function recurso(extra) {
 
 /** Carga la pestaña y devuelve la primera fila dibujada. */
 async function cargarFila(m, opts) {
-  const p = montarPestana(Object.assign({ listado: { ok: true, markers: [m], baseDir: '/p/HyperPremiere/clase-14' } }, opts));
+  opts = opts || {};
+  const listado = Object.assign({
+    ok: true, markers: [m], baseDir: '/p/HyperPremiere/clase-14',
+    sequenceName: 'Clase 14', sourceSequenceName: 'Clase 14',
+    folderSlug: 'clase-14', guessed: false,
+    sources: [{ slug: 'clase-14', sequenceName: 'Clase 14', count: 1 }],
+  }, opts.listado || {});
+  const p = montarPestana(Object.assign({}, opts, { listado }));
   p.nodos['btn-load-corrections'].click();
   await new Promise(function (r) { setTimeout(r, 0); });
-  return { p: p, fila: p.nodos['corr-list'].children[0] };
+  // Con el aviso de "esto viene de otro corte" la primera cría no es la fila.
+  const filas = p.nodos['corr-list'].children.filter(function (c) {
+    return String(c.className).indexOf('corr-row') === 0;
+  });
+  return { p: p, fila: filas[0], filas: filas };
 }
+
+// ── Acortar nombres sin perder lo que distingue ──────────────────────
+
+test('acortar por el medio conserva los dos extremos', function () {
+  const p = montarPestana({});
+  const corto = p.ctx.HPUtil.shortenMiddle;
+  eq(corto('Clase 14', 34), 'Clase 14', 'lo que entra no se toca');
+  const largo = '01_2607_bi-deep-research-ai-1783646520_105875_02';
+  const r = corto(largo, 30);
+  eq(r.length, 30, 'entra en el ancho pedido');
+  eq(r.indexOf('01_2607'), 0, 'el principio dice de qué clase es');
+  ok(/_105875_02$/.test(r), 'y el final, de qué corte');
+  // Dos cortes de la misma clase tienen que seguir viéndose distintos: es lo
+  // único que decide si el editor corrige el archivo correcto.
+  ok(corto(largo, 30) !== corto('01_2607_bi-deep-research-ai-1783646520_105875', 30), 'siguen siendo distinguibles');
+  eq(corto('', 30), '', 'un nombre vacío no rompe');
+});
 
 // ── Qué job arma la pestaña ──────────────────────────────────────────
 
@@ -257,11 +291,169 @@ test('el tramo escrito a mano se guarda en la ficha', async function () {
   eq(p.espia.guardados[0].markerSlug, 'Marcador 3');
 });
 
-test('una secuencia sin nada generado lo dice en vez de quedar en blanco', async function () {
-  const p = montarPestana({ listado: { ok: true, markers: [], baseDir: '/p' } });
+test('un proyecto sin nada generado lo dice en vez de quedar en blanco', async function () {
+  const p = montarPestana({ listado: { ok: true, markers: [], sources: [], baseDir: '/p' } });
   p.nodos['btn-load-corrections'].click();
   await new Promise(function (r) { setTimeout(r, 0); });
   has(p.nodos['corr-list'].children[0].textContent, 'todavía no tiene recursos generados');
+});
+
+test('con carpetas disponibles, el vacío invita a elegir en vez de dar por cerrado', async function () {
+  const p = montarPestana({ listado: {
+    ok: true, markers: [], folderSlug: '', sourceSequenceName: '',
+    sources: [{ slug: 'clase-09', sequenceName: 'Clase 09', count: 3 }, { slug: 'clase-10', sequenceName: 'Clase 10', count: 2 }],
+  } });
+  p.nodos['btn-load-corrections'].click();
+  await new Promise(function (r) { setTimeout(r, 0); });
+  has(p.nodos['corr-list'].children[0].textContent, 'Elegí de qué secuencia leer');
+});
+
+// ── La clase volvió re-cortada, con otro nombre ──────────────────────
+// El bug que reportó el editor: parado en "Clase 14_02" la pestaña decía que no
+// había nada generado, y los recursos estaban en la carpeta de "Clase 14".
+
+/** Fila leída de otro corte: el editor está en `Clase 14`, los archivos en `Clase 14 v1`. */
+function cargarCruzada(extra) {
+  return cargarFila(recurso(extra), { listado: {
+    sourceSequenceName: 'Clase 14 v1', folderSlug: 'clase-14-v1', guessed: true,
+    baseDir: '/p/HyperPremiere/clase-14-v1',
+    sources: [
+      { slug: 'clase-14-v1', sequenceName: 'Clase 14 v1', count: 5 },
+      { slug: 'clase-14', sequenceName: 'Clase 14', count: 0 },
+    ],
+  } });
+}
+
+test('leyendo de otro corte, se avisa de dónde salió y a dónde va', async function () {
+  const { p } = await cargarCruzada();
+  const aviso = p.nodos['corr-list'].children[0];
+  eq(aviso.className, 'corr-cross', 'el aviso va ARRIBA de la lista, antes de apretar nada');
+  const filas = aviso.buscarTodos('corr-cross-val');
+  eq(filas[0].title, 'Clase 14 v1', 'de dónde se lee');
+  eq(filas[1].title, 'Clase 14', 'y a dónde se coloca');
+});
+
+test('los dos nombres del aviso se recortan a lo que los diferencia', async function () {
+  // Uno al lado del otro, dos nombres de 45 caracteres que solo cambian en el
+  // sufijo no se leen: hay que comparar letra por letra para ver si son distintos.
+  const viejo = '01_2607_bi-deep-research-ai-1783646520_105875';
+  const { p } = await cargarFila(recurso(), {
+    contexto: { projectPath: '/p/x.prproj', sequenceName: viejo + '_02' },
+    listado: {
+      sourceSequenceName: viejo, folderSlug: 'v1', guessed: true,
+      sequenceName: viejo + '_02',
+      sources: [{ slug: 'v1', sequenceName: viejo, count: 5 }],
+    },
+  });
+  const filas = p.nodos['corr-list'].children[0].buscarTodos('corr-cross-val');
+  eq(filas[0].textContent, '…_105875', 'lo compartido se cae');
+  eq(filas[1].textContent, '…_105875_02', 'y queda a la vista lo que cambia');
+  eq(filas[0].title, viejo, 'el nombre entero sigue disponible al pasar el mouse');
+});
+
+test('si se lee de OTRA clase, los nombres van completos: ahí el prefijo es el dato', async function () {
+  const { p } = await cargarFila(recurso(), {
+    contexto: { projectPath: '/p/x.prproj', sequenceName: 'Clase 23' },
+    listado: {
+      sourceSequenceName: 'Clase 14', folderSlug: 'clase-14', guessed: false,
+      sequenceName: 'Clase 23',
+      sources: [{ slug: 'clase-14', sequenceName: 'Clase 14', count: 5 }],
+    },
+  });
+  const filas = p.nodos['corr-list'].children[0].buscarTodos('corr-cross-val');
+  eq(filas[0].textContent, 'Clase 14');
+  eq(filas[1].textContent, 'Clase 23');
+});
+
+test('un nombre de secuencia largo se acorta por el MEDIO, no por el final', async function () {
+  // Los cortes de una clase se diferencian en el sufijo ("_105875" vs
+  // "_105875_02"): cortando por el final se ven idénticos y el editor no puede
+  // saber cuál está corrigiendo.
+  const largo = '01_2607_bi-deep-research-ai-1783646520_105875_02';
+  const { p } = await cargarFila(recurso(), { listado: {
+    sourceSequenceName: largo, folderSlug: 'x', guessed: false,
+    sources: [{ slug: 'x', sequenceName: largo, count: 5 }, { slug: 'y', sequenceName: 'otra', count: 1 }],
+  } });
+  const etiqueta = p.nodos['corr-picker'].children.filter(function (c) { return !!c.select; })[0].select.opciones[0].label;
+  has(etiqueta, '01_2607', 'se ve de qué clase es');
+  has(etiqueta, '_105875_02', 'y de qué corte');
+});
+
+test('la corrección se genera en la carpeta de origen y se coloca en la secuencia abierta', async function () {
+  // Son dos secuencias distintas a propósito: la historia de versiones tiene que
+  // seguir siendo una (v5 después de la v4, en su carpeta) y el clip tiene que
+  // caer en el timeline que el editor está mirando.
+  const { p, fila } = await cargarCruzada();
+  fila.porTag('textarea')[0].value = 'subí el título';
+  fila.buscar('qbtn').click();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const j = p.espia.encolados[0];
+  eq(j.payload.sequenceName, 'Clase 14 v1', 'el recurso se escribe donde vive su historia');
+  eq(j.seqName, 'Clase 14', 'pero el clip va a la secuencia abierta');
+  eq(j.storeSeqName, 'Clase 14 v1', 'y las imágenes de referencia salen del corte viejo');
+  eq(p.espia.leidos[0].sequenceName, 'Clase 14 v1', 'el HTML previo también se lee de allá');
+});
+
+test('el segundo donde colocar se puede corregir, y no arrastra al del transcript', async function () {
+  // Si la clase se volvió a cortar, el segundo guardado ya no sirve. Cambiarlo NO
+  // puede mover el tramo del guion que el modelo lee: eso lo manda markerStart.
+  const { p, fila } = await cargarCruzada();
+  const campo = fila.buscar('corr-second');
+  ok(campo, 'la fila ofrece el segundo, escrito y editable');
+  eq(campo.value, '128.5', 'viene con el del corte donde se generó');
+  campo.value = '96.2';
+
+  fila.porTag('textarea')[0].value = 'subí el título';
+  fila.buscar('qbtn').click();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const j = p.espia.encolados[0];
+  eq(j.placeStart, 96.2, 'se coloca donde dijo el editor');
+  eq(j.markerStart, 128.5, 'y el tramo del transcript sigue siendo el de origen');
+  eq(j.markerDuration, 7, 'la duración no se toca');
+});
+
+test('un segundo inválido no encola nada', async function () {
+  const { p, fila } = await cargarCruzada();
+  fila.buscar('corr-second').value = '-4';
+  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('qbtn').click();
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados.length, 0);
+  has(fila.buscar('corr-state is-error').textContent, 'no es válido');
+});
+
+test('estando en su propia secuencia no se pregunta el segundo ni se avisa nada', async function () {
+  const { p, fila } = await cargarFila(recurso());
+  eq(fila.buscar('corr-second'), null, 'un control que no decide nada no va');
+  eq(p.nodos['corr-list'].children[0].className.indexOf('corr-cross'), -1, 'y sin aviso');
+});
+
+test('el desplegable aparece con varias carpetas y recarga la elegida', async function () {
+  const { p } = await cargarCruzada();
+  const host = p.nodos['corr-picker'].children.filter(function (c) { return !!c.select; })[0];
+  ok(host, 'hay desplegable cuando hay de dónde elegir');
+  eq(host.select.value, 'clase-14-v1', 'marcado en la carpeta que se está leyendo');
+
+  host.select.onChange('clase-14');
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.listados[1].folderSlug, 'clase-14', 'y al cambiarlo se relee esa');
+});
+
+test('con una sola carpeta no hay desplegable', async function () {
+  const { p } = await cargarFila(recurso());
+  eq(p.nodos['corr-picker'].children.length, 0, 'nada que elegir, nada que dibujar');
+});
+
+test('el tramo escrito a mano se guarda en la carpeta de origen, no en la abierta', async function () {
+  const { p, fila } = await cargarCruzada({ start: null, duration: null, timeSource: '' });
+  const campos = fila.porTag('input');
+  campos[0].value = '30';
+  campos[1].value = '5';
+  fila.buscar('qbtn').click();
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.guardados[0].sequenceName, 'Clase 14 v1');
 });
 
 // ── Qué hace la cola con esa corrección ──────────────────────────────

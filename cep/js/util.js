@@ -52,6 +52,50 @@
   }
 
   /**
+   * Acorta por el MEDIO, conservando principio y final.
+   *
+   * Los nombres de secuencia de una clase son largos y se diferencian en los
+   * extremos: el número de clase adelante ("01_", "23_") y el del corte atrás
+   * ("_105875" vs "_105875_02"). Cortando por el final —lo que hace el CSS— dos
+   * cortes de la misma clase se ven idénticos, que es justo lo que hay que
+   * distinguir para no corregir el equivocado.
+   */
+  function shortenMiddle(text, max) {
+    var s = String(text == null ? "" : text);
+    var tope = Math.max(8, Number(max) || 34);
+    if (s.length <= tope) return s;
+    // Con el "…" en medio, se reparte lo que queda; el final se lleva el resto
+    // impar porque ahí está el sufijo que diferencia.
+    var libres = tope - 1;
+    var inicio = Math.floor(libres / 2);
+    return s.slice(0, inicio) + "…" + s.slice(s.length - (libres - inicio));
+  }
+
+  /**
+   * Dos nombres para mostrar juntos, recortados a lo que los DIFERENCIA.
+   *
+   * Los cortes de una misma clase comparten 40 caracteres y difieren en el
+   * sufijo ("…_105875" vs "…_105875_02"). Mostrarlos enteros pone al editor a
+   * comparar dos cadenas casi iguales letra por letra, justo cuando lo que
+   * necesita es ver de un golpe que son distintas. Si en cambio los nombres se
+   * parecen poco (leer de OTRA clase), se muestran completos: ahí el prefijo es
+   * la información.
+   */
+  function distinguish(a, b, max) {
+    var x = String(a == null ? "" : a);
+    var y = String(b == null ? "" : b);
+    var i = 0;
+    while (i < x.length && i < y.length && x.charAt(i) === y.charAt(i)) i++;
+    // Se retrocede al último separador para no cortar en mitad de una palabra.
+    var corte = i;
+    while (corte > 0 && !/[-_ .]/.test(x.charAt(corte - 1))) corte--;
+    if (corte >= 12 && corte < x.length && corte < y.length) {
+      return ["…" + x.slice(corte - 1), "…" + y.slice(corte - 1)];
+    }
+    return [shortenMiddle(x, max), shortenMiddle(y, max)];
+  }
+
+  /**
    * ¿Es un marcador de comentario importado de Frame.io?
    *
    * Al volver de revisión, Frame.io deja un marcador por comentario y quedan
@@ -124,6 +168,8 @@
     fmtDuration: fmtDuration,
     addThousands: addThousands,
     fmtTokens: fmtTokens,
+    shortenMiddle: shortenMiddle,
+    distinguish: distinguish,
     updateBadge: updateBadge,
     isFrameIoMarker: isFrameIoMarker,
     withoutFrameIoMarkers: withoutFrameIoMarkers

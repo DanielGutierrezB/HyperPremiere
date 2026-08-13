@@ -1490,3 +1490,22 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .corr-html { margin-top: 6px; }
 .corr-html summary { font-size: 11px; color: var(--text-secondary); cursor: pointer; }
 .corr-html textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+
+/* v1.4.34 — leer de otra secuencia (la clase volvió de la revisión re-cortada) */
+.corr-picker { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.corr-picker:empty { display: none; }
+.corr-picker-label { font-size: 11px; color: var(--text-secondary); flex: 0 0 auto; }
+.corr-picker .hp-select { flex: 1 1 auto; min-width: 0; }
+/* De dónde salió y a dónde va: hay que leerlo ANTES de apretar Corregir, así que
+   va arriba de la lista y con el borde de aviso, no como una nota al pie. */
+.corr-cross {
+  font-size: 11px; color: var(--text-primary); line-height: 1.45;
+  border: 1px solid var(--warn); border-radius: var(--radius);
+  background: var(--bg-inset); padding: 8px 10px; margin-bottom: 10px;
+}
+.corr-cross-title { color: var(--warn); margin-bottom: 5px; }
+.corr-cross-row { display: flex; gap: 8px; align-items: baseline; }
+.corr-cross-key { color: var(--text-secondary); flex: 0 0 62px; }
+.corr-cross-val { color: var(--text-primary); word-break: break-all; }
+.corr-cross-note { color: var(--text-secondary); margin-top: 5px; }
+.corr-second { width: 76px; flex: 0 0 auto; font-variant-numeric: tabular-nums; }

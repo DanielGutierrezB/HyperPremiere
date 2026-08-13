@@ -23,7 +23,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.33</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.34</span>
       </button>
     </div>
   </header>
@@ -271,6 +271,10 @@
       <button id="btn-load-corrections" type="button" class="btn-primary" title="Lee la carpeta HyperPremiere de la secuencia activa y arma una fila por recurso ya generado, con el tramo del timeline donde iba">Cargar secuencia</button>
       <span id="corr-status" class="muted">Pulsá "Cargar secuencia" para ver lo ya generado.</span>
     </div>
+    <!-- De qué secuencia leer: aparece cuando el proyecto tiene varias con
+         recursos, que es lo normal al volver de la revisión con la clase
+         re-cortada. -->
+    <div id="corr-picker" class="corr-picker"></div>
     <div id="corr-list" class="corr-list"></div>
   </div>
 

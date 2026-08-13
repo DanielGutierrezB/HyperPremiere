@@ -1430,7 +1430,7 @@ function listMarkerVersions(body) {
  * Devuelve siempre un objeto; `source` vacío significa "no hay dato en disco",
  * y ahí es el editor quien lo escribe a mano.
  *
- * `ctx` = { sequenceName, queueJobs } — los trabajos de la cola se leen una vez
+ * `ctx` = { folderSlug, queueJobs } — los trabajos de la cola se leen una vez
  * para toda la lista y se pasan ya cargados.
  */
 function findMarkerPosition(baseDir, slug, versions, ctx) {
@@ -1459,9 +1459,12 @@ function findMarkerPosition(baseDir, slug, versions, ctx) {
   }
 
   // 2) La cola del proyecto: los trabajos guardan el tramo aunque falte la ficha.
+  // Se compara por CARPETA y no por nombre de secuencia: la carpeta es el dato
+  // que siempre existe (el nombre real depende de que haya transcript o ficha), y
+  // el mismo "Marcador 1" de otra clase daría un segundo que no le corresponde.
   for (const job of ctx.queueJobs) {
     if (!job || job.markerKey !== slug) continue;
-    if (ctx.sequenceName && job.seqName && job.seqName !== ctx.sequenceName) continue;
+    if (job.seqName && slugify(job.seqName) !== ctx.folderSlug) continue;
     const dur = Number(job.markerDuration);
     if (!(dur > 0)) continue;
     out.start = Number(job.markerStart) || 0;
@@ -1483,6 +1486,92 @@ function findMarkerPosition(baseDir, slug, versions, ctx) {
   return out;
 }
 
+/**
+ * El nombre REAL de la secuencia de una carpeta. La carpeta se llama con el
+ * slug (sin acentos ni mayúsculas), que no sirve para volver a encontrar la
+ * secuencia en Premiere ni para mostrarle al editor.
+ */
+function sequenceNameOfDir(dir, groups) {
+  for (const file of [TRANSCRIPT_FILE, TRANSCRIPT_FILE_LEGACY]) {
+    const t = readMeta(path.join(dir, file));
+    if (t && t.sequenceName) return String(t.sequenceName);
+  }
+  // Sin transcript, la ficha lo guarda desde la v1.4.33.
+  for (const slug of Object.keys(groups)) {
+    for (const v of groups[slug]) {
+      const meta = readMeta(path.join(dir, v.name.replace(/\.html$/, '.meta.json')));
+      if (meta && meta.sequenceName) return String(meta.sequenceName);
+    }
+  }
+  return '';
+}
+
+/**
+ * ¿Son la misma secuencia con distinto sufijo? Se pide que la parte de más
+ * empiece con "-" para que "clase-10" no pase por pariente de "clase-1".
+ */
+function slugsParientes(a, b) {
+  if (a === b) return true;
+  const largo = a.length > b.length ? a : b;
+  const corto = a.length > b.length ? b : a;
+  return largo.indexOf(corto) === 0 && largo.charAt(corto.length) === '-';
+}
+
+/**
+ * Todas las carpetas del proyecto que TIENEN recursos generados.
+ *
+ * La pestaña no puede limitarse a la carpeta de la secuencia abierta: para
+ * cuando llegan las correcciones, la clase suele estar re-cortada o renombrada
+ * ("_02", "v2", "copia"), y entonces el editor está parado en una secuencia
+ * cuya carpeta está vacía mientras lo generado vive en la de al lado.
+ */
+function correctionSources(root) {
+  let names = [];
+  try { names = fs.readdirSync(root); } catch (e) { return []; }
+  const out = [];
+  for (const name of names) {
+    // `_assets`, `_capturas` y los `.DS_Store` de macOS no son secuencias.
+    if (name.charAt(0) === '.' || name.charAt(0) === '_') continue;
+    const dir = path.join(root, name);
+    let st = null;
+    try { st = fs.statSync(dir); } catch (e) { continue; }
+    if (!st.isDirectory()) continue;
+    const groups = groupBySlug(dir, ['.html']);
+    const count = Object.keys(groups).length;
+    if (!count) continue;
+    // El nombre puede no estar (una clase vieja, sin transcript ni ficha): se
+    // deja vacío para que lo resuelva quien sabe cuál es la secuencia abierta.
+    out.push({
+      slug: name,
+      sequenceName: sequenceNameOfDir(dir, groups),
+      count: count,
+      at: st.mtimeMs || 0,
+    });
+  }
+  out.sort((a, b) => b.at - a.at);
+  return out;
+}
+
+/**
+ * Qué carpeta mirar. La de la secuencia abierta si tiene algo; si no, la que
+ * sea su misma secuencia con un sufijo distinto —el patrón de la clase
+ * re-cortada— y ahí se avisa que la elección fue nuestra. Se exige que un slug
+ * sea prefijo del otro: sin eso, "parecido" acabaría eligiendo cualquier cosa.
+ */
+function pickCorrectionSource(sources, activeSlug, wanted) {
+  if (wanted) {
+    const exacta = sources.find((s) => s.slug === wanted);
+    if (exacta) return { source: exacta, guessed: false };
+  }
+  const propia = sources.find((s) => s.slug === activeSlug);
+  if (propia) return { source: propia, guessed: false };
+  const parientes = sources
+    .filter((s) => slugsParientes(s.slug, activeSlug))
+    .sort((a, b) => b.slug.length - a.slug.length);
+  if (parientes.length) return { source: parientes[0], guessed: true };
+  return { source: null, guessed: false };
+}
+
 /** Los slugs "Marcador N" se ordenan por número; el resto, alfabético. */
 function compareSlugs(a, b) {
   const na = /^Marcador (\d+)$/.exec(a);
@@ -1494,16 +1583,38 @@ function compareSlugs(a, b) {
 }
 
 /**
- * Todo lo generado de una secuencia, listo para corregir.
- * Devuelve { ok, sequenceName, markers: [...] }.
+ * Todo lo generado, listo para corregir. Por defecto la carpeta de la secuencia
+ * abierta; `body.folderSlug` fuerza otra, que es lo que hace falta cuando la
+ * clase se volvió a cortar con otro nombre.
+ *
+ * Devuelve { ok, sequenceName, sourceSequenceName, folderSlug, guessed,
+ * sources: [...], markers: [...] }. `sources` viaja siempre: es lo que le
+ * permite al panel ofrecer las demás carpetas en vez de decir "no hay nada".
  */
 function listCorrections(body) {
   try {
     body = body || {};
     const sequenceName = String(body.sequenceName || '');
     // Consulta de solo lectura: no crear la carpeta por abrir la pestaña.
-    const baseDir = outputDirPath(body.projectPath, sequenceName);
-    if (!fs.existsSync(baseDir)) return { ok: true, sequenceName, baseDir, markers: [] };
+    const activeDir = outputDirPath(body.projectPath, sequenceName);
+    const activeSlug = path.basename(activeDir);
+    const root = path.dirname(activeDir);
+    const sources = correctionSources(root);
+    // La carpeta de la secuencia abierta es la única cuyo nombre real sabemos sin
+    // leer nada: es el que mandó Premiere.
+    for (const s of sources) {
+      if (!s.sequenceName) s.sequenceName = (s.slug === activeSlug) ? sequenceName : s.slug;
+    }
+    const elegida = pickCorrectionSource(sources, activeSlug, String(body.folderSlug || ''));
+    const vacio = {
+      ok: true, sequenceName, sourceSequenceName: '', folderSlug: '',
+      baseDir: activeDir, guessed: false, sources, markers: [],
+    };
+    if (!elegida.source) return vacio;
+
+    const folderSlug = elegida.source.slug;
+    const baseDir = path.join(root, folderSlug);
+    const sourceSequenceName = elegida.source.sequenceName;
 
     const byHtml = groupBySlug(baseDir, ['.html']);
     const byVideo = groupBySlug(baseDir, ['.mov', '.mp4']);
@@ -1515,7 +1626,7 @@ function listCorrections(body) {
       const videos = byVideo[slug] || [];
       const hasVideo = (v) => videos.some((e) => e.version === v);
       const latest = versions[versions.length - 1];
-      const pos = findMarkerPosition(baseDir, slug, versions, { sequenceName, queueJobs });
+      const pos = findMarkerPosition(baseDir, slug, versions, { folderSlug, queueJobs });
       return {
         slug,
         latestVersion: latest.version,
@@ -1531,9 +1642,12 @@ function listCorrections(body) {
         background: pos.background,
       };
     });
-    return { ok: true, sequenceName, baseDir, markers };
+    return {
+      ok: true, sequenceName, sourceSequenceName, folderSlug,
+      baseDir, guessed: elegida.guessed, sources, markers,
+    };
   } catch (e) {
-    return { ok: false, error: (e && e.message) || String(e), markers: [] };
+    return { ok: false, error: (e && e.message) || String(e), sources: [], markers: [] };
   }
 }
 
