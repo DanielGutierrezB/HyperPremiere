@@ -23,6 +23,9 @@ const { inspectComposition, auditFailure, PROBLEM } = require('./composition');
 // código. El módulo del contrato devuelve códigos justamente para que la
 // redacción viva acá, donde se arma el prompt.
 const PROBLEM_TEXT = {
+  // Neutral a propósito: lo lee tanto la generación como el render de un HTML
+  // editado a mano, y ahí no hay ningún modelo a quien atribuirle nada.
+  [PROBLEM.NOT_HTML]: 'esto no es una composición HTML',
   [PROBLEM.NO_STAGE]: 'no encuentro el contenedor `<div id="stage">`',
   [PROBLEM.MANY_STAGES]: 'hay más de un elemento con `id="stage"` y no sé cuál es la composición',
   [PROBLEM.NO_REGISTRATION]: 'la timeline no queda registrada en `window.__timelines`, así que el motor no la encuentra',
@@ -32,6 +35,14 @@ const PROBLEM_TEXT = {
 
 function problemText(problem) {
   return PROBLEM_TEXT[problem] || 'el andamiaje de la composición está incompleto';
+}
+
+// Lo que dijo el modelo, en una línea y corto, para que quepa en el log del
+// panel. Va entre comillas en el mensaje de error: es su explicación, no la
+// nuestra, y suele decir exactamente qué lo frenó.
+function quoteReply(text) {
+  const una = String(text || '').replace(/\s+/g, ' ').trim();
+  return una.length > 240 ? una.slice(0, 240) + '…' : (una || '(nada)');
 }
 
 function structureFixPrompt(userPrompt, html, problem, durationSec) {
@@ -123,6 +134,37 @@ async function composeAnimation(a) {
 
   let best = await ask(a.userPrompt);
 
+  // El modelo contestó en prosa. Se corta acá, sin gastar la llamada de
+  // estructura y SIN guardar nada.
+  //
+  // Las dos cosas se aprendieron el mismo día. Un editor perdió tres rondas
+  // seguidas de un marcador porque el CLI de Cursor corría en `--mode ask` y el
+  // modelo empezó a contestar "I'm in Ask mode… I can't author a final
+  // production deliverable. Please switch to Agent mode" (el modo ya se
+  // arregló, en cursor-cli.js; esto es la red).
+  //
+  //   - La llamada de estructura no sirve: le manda esa prosa como "tu versión a
+  //     corregir" y el modelo se vuelve a negar. Se vio tres veces, veinte
+  //     segundos y una tanda de tokens cada una.
+  //   - Y guardarla era lo peor: quedaba como el HTML de la versión nueva, así
+  //     que la ronda siguiente la leía como "la versión previa" y le pedía
+  //     mejorar un texto de disculpa. El propio modelo lo detectó y lo dijo:
+  //     "the 'versión previa' block does not actually contain the prior HTML
+  //     (it contains an earlier refusal message instead)". Una negativa no
+  //     puede contaminar la cadena de versiones.
+  if (best.problem === PROBLEM.NOT_HTML) {
+    const vacia = !String(best.html || '').trim();
+    throw Object.assign(new Error(
+      (vacia
+        ? 'El proveedor "' + a.config.provider + '" devolvió una respuesta vacía: no hay composición.\n'
+        : 'El modelo no compuso nada: contestó en prosa en vez de devolver el HTML.\n' +
+          'Lo que dijo: «' + quoteReply(best.html) + '»\n') +
+      'No lo guardo como versión: si lo guardara, la próxima corrección tomaría ' +
+      'este texto como "la versión previa".\n' +
+      'Qué hacer: dale "Reintentar". Si se repite, probá con otro modelo o con otro proveedor.'
+    ), { problem: best.problem, usage: usage, sinComposicion: true });
+  }
+
   // Reintento por estructura. Llegar acá ya es raro: el reparador cubre el id, la
   // duración y el registro desalineado.
   if (best.problem) {
@@ -142,8 +184,6 @@ async function composeAnimation(a) {
     if (!fixed.problem) best = fixed;
     else report({ note: 'La corrección de auditoría no cumplía el contrato: me quedo con la versión anterior.', level: 'WARN' });
   }
-
-  if (!best.html) throw new Error('El proveedor "' + a.config.provider + '" devolvió respuesta vacía');
 
   // Si después de todo el andamiaje sigue incompleto, esta composición NO se
   // puede renderizar, y decirlo acá es parte del trabajo de este módulo: es el

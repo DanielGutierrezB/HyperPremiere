@@ -471,8 +471,13 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   Acá el nivel de pensamiento **va dentro del ID del modelo** (`…-thinking-high`,
   `-xhigh`), así que el selector de esfuerzo no aparece.
   A tener en cuenta: cada generación arrastra ~30k tokens de contexto del propio
-  agente y tarda ~1,5–3 min, más que Claude directo. Corre en modo **solo lectura**
-  y con un directorio temporal como workspace, así que no puede tocar tus proyectos.
+  agente y tarda ~1,5–3 min, más que Claude directo. Lo que puede ver es un
+  **directorio temporal nuestro** —ahí dejamos las imágenes de referencia, nunca
+  se le pasa la carpeta de tu proyecto— y va **sin permisos abiertos**, así que
+  cualquier herramienta que necesite aprobación queda denegada. Lo que **no** hace
+  es correr en los modos de solo lectura del CLI (`ask`, `plan`): son para
+  preguntar y para planear, y componer una animación es producir el entregable
+  (ver **Cuando el modelo contesta en vez de componer**).
 - **Login de Claude (⚙):** abre la página de autorización en el navegador; autorizás,
   copiás el **código** que te muestra la página y lo pegás en el panel. Requiere el CLI
   `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)
@@ -583,6 +588,44 @@ Tres cambios, en el orden en que actúan:
    arregla un Chromium que se muere o una máquina sin memoria; no le agrega una duración a
    una composición que no la declara. Ante un error de contenido corta en el primer
    intento y lo dice con todas las letras: *el problema no está en el hardware*.
+
+## Cuando el modelo contesta en vez de componer
+
+Otro caso real (Marcador 1, tres rondas seguidas). El panel corría el CLI de Cursor en
+`--mode ask` porque parecía la opción prudente —es de solo lectura—, y en medio de una
+clase el modelo se plantó:
+
+> *I'm in Ask mode, which is for answering questions and providing guidance — I can't
+> generate a final production deliverable… please switch to Agent mode.*
+
+Eso no es un error del CLI: es una respuesta, en prosa, con código de salida 0. Y disparó
+tres problemas en cadena. El primero fue el diagnóstico: el motor la leyó como una
+composición mal armada y dijo *"no encuentro el contenedor `<div id="stage">`"* — cierto y
+completamente engañoso, porque no había composición ninguna. El segundo, que gastó la
+llamada extra de estructura mandándole su propia negativa como "tu versión a corregir", y
+el modelo se volvió a negar. El tercero fue el que hizo daño de verdad: la prosa quedó
+guardada como el HTML de la versión nueva, así que la ronda siguiente la leyó como **"la
+versión previa"** y le pidió mejorar un texto de disculpa. Lo detectó el propio modelo:
+*"the 'versión previa' block does not actually contain the prior HTML (it contains an
+earlier refusal message instead)"*.
+
+Qué cambió:
+
+1. **El modo.** Los dos que ofrece el CLI son de solo lectura y los dos son para otra
+   cosa: `ask` es Q&A y `plan` es analizar y proponer. Componer **es** el entregable, así
+   que va sin `--mode`. El aislamiento no dependía del modo y no cambia: el workspace
+   sigue siendo un temporal nuestro y sigue sin `--force`. Medido contra el CLI de verdad,
+   4 de 4 composiciones impecables y ni una negativa (`test/manual/cursor-contrato.js`,
+   que sabe forzar `--modo ask` para reproducir la corrida que falló).
+2. **"Esto no es HTML" es un problema aparte.** No es lo mismo que un andamiaje
+   incompleto: no hay nada que reparar. Se corta en la primera llamada, sin gastar la de
+   estructura, y el mensaje trae **las palabras del modelo**, que suelen decir exactamente
+   qué lo frenó.
+3. **Una negativa no puede contaminar la cadena de versiones.** No se guarda como versión,
+   y si en el disco quedó una de antes, la referencia para corregir la **saltea** y vuelve
+   sobre el último diseño real. Lo mismo vale para **Renderizar HTML**: si lo que hay en el
+   editor es texto pegado de un chat, se dice en el momento en vez de esperar un render que
+   saldría en negro.
 
 ## Con cuántos workers conviene renderizar
 
@@ -828,7 +871,18 @@ Y el **render que no puede salir bien**, que es donde se tiraba un minuto para l
 mensaje equivocado: que una composición sin andamiaje **no llegue** al render, que el
 motivo no nombre la GPU (porque no es la GPU), que el HTML se conserve igual, que el error
 permanente **corte** la escalera en el primer intento y que un crash, en cambio, **sí**
-baje al escalón siguiente. Y el **reparto de workers aprendido**: que no se comparen
+baje al escalón siguiente.
+
+Y la **negativa del modelo**, con la respuesta real guardada como fixture: que se reconozca
+como "esto no es HTML" y no como un contenedor que falta, que no se gaste la llamada de
+estructura, que **no viaje** como HTML para que no quede guardada de versión, que una
+composición mínima de una sola etiqueta **no** se confunda con prosa (y que la prosa que
+nombra un tag al pasar sí), que una negativa que llega en la segunda o tercera llamada no se
+lleve puesto el diseño ya pago, que la referencia para corregir saltee las versiones
+envenenadas que hayan quedado en disco, y que el CLI de Cursor no se invoque en un modo de
+solo lectura pero siga aislado en su temporal.
+
+Y el **reparto de workers aprendido**: que no se comparen
 marcadores de tamaños distintos, que una diferencia chica no cambie nada, que un pico de
 carga no hunda a un reparto que en su mejor momento fue más rápido, y que lo aprendido en
 otra máquina no se use acá.

@@ -4,7 +4,7 @@
  * Proveedor: Cursor Agent CLI en modo headless (suscripción de Cursor).
  *
  * Invoca el binario `cursor-agent` con:
- *   cursor-agent -p <prompt> --output-format json --mode ask --trust
+ *   cursor-agent -p <prompt> --output-format json --trust
  *                --model <model> --workspace <dir temporal>
  *
  * Por qué existe: permite gastar la suscripción de Cursor en vez de la de
@@ -19,8 +19,20 @@
  *   de esfuerzo del panel no aplica acá.
  * - En headless exige --trust. Para que eso sea inofensivo, el workspace que le
  *   damos es SIEMPRE un directorio temporal nuestro (nunca el proyecto del
- *   editor) y corre en --mode ask, que es de solo lectura: puede leer los
- *   stills que le dejamos ahí, pero no escribe archivos ni ejecuta comandos.
+ *   editor), y no se le pasa --force/--yolo, así que cualquier herramienta que
+ *   necesite permiso queda denegada (en headless no hay a quién preguntarle).
+ * - Va SIN --mode. Los dos modos que ofrece el CLI son de solo lectura y los dos
+ *   son para otra cosa: `ask` es "Q&A para explicaciones y preguntas" y `plan`
+ *   es "analizar y proponer planes, sin editar". Corrimos meses en `ask` —
+ *   parecía la opción prudente— hasta que el modelo se plantó en medio de una
+ *   clase: "I'm in Ask mode, which is for answering questions… I can't author a
+ *   final production deliverable. Please switch to Agent mode". Contestó eso EN
+ *   PROSA tres rondas seguidas, y como esa prosa se guardaba como la versión
+ *   nueva, la ronda siguiente la mandaba de vuelta como "versión previa" y el
+ *   daño se propagaba. Componer una animación ES el entregable, así que el modo
+ *   que corresponde es el normal. Se puede volver a forzar con `cursorMode`
+ *   ('ask' | 'plan'), que es como se mide (test/manual/cursor-contrato.js
+ *   --modo ask).
  * - El backend a veces responde "[unavailable]" de forma transitoria; ante eso
  *   se reintenta en vez de perder la generación.
  * - No informa costo en dólares (es suscripción), solo tokens.
@@ -181,15 +193,19 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
   // las herramientas, que ya alcanzan para saber que sigue vivo.
   const partial = !agentStream.envDisabled('HYPERPREMIERE_STREAM_THINKING');
 
+  // Modo del agente. Vacío = el normal, el único en el que el modelo acepta
+  // producir el entregable (ver la cabecera). 'ask'/'plan' quedan para medir.
+  const modo = String(cfg.cursorMode || '').trim().toLowerCase();
+
   function buildArgs(streaming) {
     const args = [
       '-p',
       '--output-format', streaming ? 'stream-json' : 'json',
-      '--mode', 'ask',   // solo lectura: que no escriba archivos ni corra comandos
       '--trust',         // headless lo exige; el workspace es nuestro temp, no el proyecto
       '--model', useModel,
       '--workspace', ws.dir,
     ];
+    if (modo === 'ask' || modo === 'plan') args.push('--mode', modo);
     if (streaming && partial) args.push('--stream-partial-output');
     if (!viaStdin) args.splice(1, 0, prompt);
     return args;

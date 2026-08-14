@@ -8,7 +8,9 @@ const os = require('os');
 const path = require('path');
 
 // Contrato de nombres versionados ("<slug> vN [modelo].ext"): vive en versions.js.
-const { formatBase } = require('./versions');
+const { formatBase, listVersions } = require('./versions');
+// Qué es una composición y qué no: el contrato vive en composition.js.
+const { inspectComposition, PROBLEM } = require('../composition');
 
 /**
  * Convierte un nombre arbitrario en un slug seguro para el filesystem.
@@ -113,6 +115,33 @@ function readMeta(metaPath) {
 }
 
 /**
+ * El HTML de la última versión de `markerSlug` anterior a `version` que sea UNA
+ * COMPOSICIÓN DE VERDAD. '' si no hay ninguna.
+ *
+ * Camina para atrás en vez de leer version-1 y confiar. Hace falta porque en el
+ * disco puede haber quedado un .html que no es una composición: hubo un día en
+ * que el modelo contestó EN PROSA tres rondas seguidas y esa prosa se guardó
+ * como la versión nueva (la historia entera está en compose.js). Leer eso como
+ * "la versión previa" es peor que no tener referencia — al modelo se le termina
+ * pidiendo mejorar un texto de disculpa, y contesta algo sin que nada falle.
+ * Salteándolas, la corrección vuelve sobre el último diseño real.
+ */
+function lastCompositionHtml(baseDir, markerSlug, version) {
+  const previas = listVersions(baseDir, markerSlug, '.html')
+    .filter((v) => v.version < Number(version))
+    .reverse();
+  for (const v of previas) {
+    try {
+      const html = fs.readFileSync(path.join(baseDir, v.name), 'utf8');
+      if (inspectComposition(html, {}).problem !== PROBLEM.NOT_HTML) return html;
+    } catch {
+      // Archivo ilegible: seguimos con la versión anterior.
+    }
+  }
+  return '';
+}
+
+/**
  * Guarda dataURLs (imágenes) en stillsDir. Devuelve las rutas escritas.
  */
 function saveStills(stillsDir, dataUrls) {
@@ -170,6 +199,7 @@ module.exports = {
   paths,
   saveMeta,
   readMeta,
+  lastCompositionHtml,
   saveStills,
   saveResources,
 };

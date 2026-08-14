@@ -230,6 +230,10 @@ async function unaCorrida(variante, i, opts) {
       config: {
         model: opts.modelo,
         timeoutMs: opts.timeoutMs,
+        // Vacío = el modo normal del agente. Con 'ask' se reproduce el modo en
+        // el que corría el proveedor cuando el modelo se negó a componer, que es
+        // la comparación que decidió sacarlo (ver cursor-cli.js).
+        cursorMode: opts.modo,
         // El interruptor que hace posible la comparación: mismo código, mismo
         // modelo, mismo prompt — la única diferencia es el recordatorio final.
         contractTail: variante === 'con',
@@ -339,6 +343,7 @@ async function main() {
     paralelo: Number(arg('paralelo', 3)),
     timeoutMs: Number(arg('timeout', 600000)),
     solo: arg('solo', ''),
+    modo: arg('modo', ''),
     continuidad: arg('continuidad', ''),
     salida: arg('salida', fs.mkdtempSync(path.join(os.tmpdir(), 'hp-contrato-'))),
   };
@@ -352,6 +357,7 @@ async function main() {
     : (opts.solo ? [opts.solo] : ['antes', 'con']);
   console.log('Medición del recordatorio de contrato · proveedor cursor-cli');
   console.log('  modelo:    ' + opts.modelo);
+  console.log('  modo:      ' + (opts.modo || 'normal (sin --mode)'));
   console.log('  corridas:  ' + opts.n + ' por variante (' + variantes.join(' y ') + ')' +
     ' = ' + opts.n * variantes.length + ' llamadas al modelo');
   console.log('  paralelo:  ' + opts.paralelo);
@@ -374,7 +380,8 @@ async function main() {
   let hechas = 0;
   const filas = await conParalelismo(tareas, opts.paralelo, function (f) {
     hechas++;
-    const marca = !f.ok ? 'ERROR' : (f.cumpleSolo ? 'cumple' : 'NO cumple');
+    const marca = !f.ok ? 'ERROR'
+      : (f.rechazo ? 'SE NEGÓ' : (f.cumpleSolo ? 'cumple' : 'NO cumple'));
     const detalle = !f.ok ? f.error.slice(0, 90)
       : (f.problem ? 'problem=' + f.problem : (f.fixes.length ? 'arreglos: ' + f.fixes.length : 'impecable'));
     console.log('  [' + String(hechas).padStart(2) + '/' + tareas.length + '] ' +

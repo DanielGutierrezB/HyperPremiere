@@ -34,6 +34,11 @@ const SKELETON = {
 // para el editor y para el prompt lo pone quien llama (engine.js), que es el
 // dueño de esa redacción.
 const PROBLEM = {
+  // La respuesta no es una composición: el modelo contestó en prosa. Es de otra
+  // especie que los demás — no le falta andamiaje, no hay nada que arreglar — y
+  // por eso tiene su propio código: quien llama tiene que cortar distinto (ver
+  // compose.js).
+  NOT_HTML: 'not-html',
   NO_STAGE: 'no-stage',
   MANY_STAGES: 'many-stages',
   NO_REGISTRATION: 'no-timeline-registration',
@@ -190,6 +195,37 @@ function findStage(html, isCode) {
   return { problem: PROBLEM.NO_STAGE };
 }
 
+/**
+ * ¿Esto es HTML, aunque esté incompleto?
+ *
+ * Hace falta preguntarlo antes de buscar el #stage porque un modelo puede
+ * contestar EN PROSA: negarse a componer, pedir una aclaración, explicar lo que
+ * haría. Sin esta pregunta, esa prosa entraba por la misma puerta que una
+ * composición mal armada y salía "no encuentro el contenedor `<div id="stage">`"
+ * — cierto y completamente engañoso, porque no hay composición ninguna.
+ *
+ * Se pregunta de tres formas, porque una sola se equivoca:
+ *   1. ¿ARRANCA con un tag? Una composición empieza en `<` —el doctype, el
+ *      documento o el propio bloque— y la prosa empieza con palabras. Es la que
+ *      salva a las composiciones mínimas: `<div id="stage" data-duration="9">`
+ *      suelto es una sola etiqueta, y contando etiquetas se la confundía con
+ *      prosa.
+ *   2. ¿Trae `<style>`, `<script>` o un documento? Cubre al modelo que escribe
+ *      dos líneas de introducción antes del HTML sin cercarlo.
+ *   3. ¿Hay al menos tres etiquetas? El piso para cualquier otra cosa.
+ *
+ * Lo que queda afuera con las tres es justo la prosa que NOMBRA un tag al pasar
+ * ("te falta el `<div id="stage">`"): no arranca con él, no trae script ni
+ * style, y no llega a tres. Que se colara sería lo peor de todo — el reparador
+ * le adoptaría ese div como raíz, le completaría los data-* y saldría un video
+ * de la duración pedida en negro, que no falla: se descubre mirándolo.
+ */
+function looksLikeHtml(html, isCode) {
+  if (/^\s*</.test(html)) return true;
+  if (/<!doctype\s+html|<html[\s>]|<body[\s>]|<style[\s>]|<script[\s>]/i.test(html)) return true;
+  return scanOpenTags(html, isCode).length >= 3;
+}
+
 // ¿Hay una timeline de GSAP que registrar? Si la composición anima con CSS o
 // WAAPI no hay NADA que registrar: el motor saca la duración de data-duration y
 // un `window.__timelines` vacío es correcto, no un defecto. Tratar los dos casos
@@ -235,6 +271,9 @@ function inspectComposition(html, opts) {
   const durationSec = Number(opts.durationSec || 0);
 
   const isCode = outsideComments(out);
+  if (!looksLikeHtml(out, isCode)) {
+    return { html: out, fixes: [], problem: PROBLEM.NOT_HTML, duration: 0 };
+  }
   const hallazgo = findStage(out, isCode);
   if (!hallazgo.tag) return { html: out, fixes: [], problem: hallazgo.problem, duration: 0 };
 

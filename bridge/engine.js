@@ -34,7 +34,7 @@ const { renderComposition, renderLanes } = require('./render/hyperframes');
 // Conseguir una composición renderizable (escalera de llamadas al modelo) y el
 // contrato que tiene que cumplir.
 const { composeAnimation, problemText } = require('./compose');
-const { inspectComposition } = require('./composition');
+const { inspectComposition, PROBLEM } = require('./composition');
 const {
   slugify,
   ensureOutputDir,
@@ -42,6 +42,7 @@ const {
   paths,
   saveMeta,
   readMeta,
+  lastCompositionHtml,
   saveStills,
   saveResources,
 } = require('./store/project-fs');
@@ -677,15 +678,10 @@ async function prepareGeneration(body, mode, onProgress) {
   ));
 
   // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
-  // Si el panel no mandó el HTML previo, lo leemos del disco (versión anterior).
+  // Si el panel no mandó el HTML previo, lo leemos del disco.
   if (mode === 'adjust') {
     let prevHtml = String(previousHtml || '').trim();
-    if (!prevHtml && version > 1) {
-      try {
-        const prevPath = versionFile(baseDir, markerSlug, version - 1, '.html');
-        if (prevPath) prevHtml = fs.readFileSync(prevPath, 'utf8');
-      } catch (e) {}
-    }
+    if (!prevHtml && version > 1) prevHtml = lastCompositionHtml(baseDir, markerSlug, version);
     userPrompt += [
       '', '## Refinamiento sobre la versión previa',
       'Ya generaste una versión de este recurso (abajo). Tomala como REFERENCIA:',
@@ -1742,6 +1738,13 @@ async function renderManualHtml(body, onProgress) {
   cleanHtml = manual.html;
   if (manual.fixes.length) {
     report({ note: 'HTML manual: andamiaje completado en código · ' + manual.fixes.join(' · ') });
+  }
+  // Si lo que pegaron no es HTML, no hay nada que reparar ni que renderizar:
+  // saldría un clip de la duración pedida en negro después de esperarlo. Suele
+  // ser un copiar-pegar de la respuesta de un chat en vez del HTML.
+  if (manual.problem === PROBLEM.NOT_HTML) {
+    throw new Error('Lo que hay en el editor no es una composición HTML: no encuentro ni una etiqueta.\n' +
+      'Pegá el HTML completo de la composición (empieza en `<` y trae su <script>), no el texto de una respuesta.');
   }
   if (manual.problem) {
     report({ note: 'OJO, el HTML manual puede renderizar congelado: ' + problemText(manual.problem) + '.', level: 'WARN' });

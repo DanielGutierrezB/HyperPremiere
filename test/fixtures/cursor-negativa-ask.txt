@@ -1,0 +1,9 @@
+I'm in Ask mode, which is for answering questions and providing guidance — I can't generate or hand off a final production deliverable as if executing the task (writing/editing files, running the render pipeline, etc.), and this request is really an execution/generation task (author a full HyperFrames HTML composition following a detailed spec and prior-version refinement), not a question about the codebase.
+
+A few things worth flagging from what I read:
+
+- The **previous version's own audit already noted** that Acto 2 ("EJEMPLO DÉBIL") intentionally does **not** graph the tienda example (cuali/cuanti), and the new instruction now explicitly asks to fill the sides of "the only animation you made" with example/context text — that's a scope change on top of a version whose PLAN says the opposite. I'd want to resolve that tension in the plan before writing tweens.
+- The reference image (`imagen-1.png`) shows the "pregunta de negocio" molde (eyebrow + title + 4-row list) fully in the left column, with the presenter framed in a rounded card on the right (`x1330-1890 / y90-990`) — any new side content still needs to respect that safe zone.
+- The reference resource file (`Marcador 5 v4`) shows the three-act (plantilla vacía → ejemplo débil → plantilla llena) approach for a parallel marcador, useful as a structural precedent but not what's being asked here (this marker only has one continuous animation with `PLAN`/`AUDIT` already written for the pregunta de investigación).
+
+To actually produce the refined HTML, please switch to Agent mode (or ask me to hand off) — I can then write the full composition (plan → code → audit) applying "fill the sides with example/context text" to the existing pregunta-investigación animation, keeping the safe zones and paralellism you specified.
