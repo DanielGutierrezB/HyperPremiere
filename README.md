@@ -316,9 +316,19 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
 - **Regenerar desde cero**: descarta lo anterior y crea uno nuevo con la instrucción +
   recursos actuales.
 - **Editar HTML manualmente**: abrís una versión, la retocás a mano y la renderizás sin IA.
-- **🧹 Limpiar versiones viejas**: borra los videos de versiones anteriores (deja la última)
-  para liberar disco; primero saca los clips del proyecto/secuencia (evita el "Link Media"
-  de Premiere) y pide confirmación mostrando qué borra.
+- **🧹 Limpiar previas** (en cada recurso terminado de la Cola): cuando ya estás feliz con
+  una animación, borra sus **versiones anteriores** — del disco **y de las secuencias donde
+  estén**— y deja la aprobada. Va de a un recurso porque los demás pueden estar a medio
+  revisar. No aparece en una v1, que no tiene nada atrás.
+- **🧹 Limpiar versiones viejas** (arriba, en la Cola): lo mismo para **todas** las
+  secuencias de la cola de una vez, al cerrar la tanda.
+
+  Las dos piden confirmación mostrando archivo por archivo qué se borra y qué se conserva.
+  Los **HTMLs no se tocan**: son kilobytes y son con lo que Corrections puede volver sobre
+  una versión vieja. El orden importa y es siempre el mismo: primero se sacan los clips de
+  la secuencia y del proyecto, después se borran los archivos —al revés, Premiere te recibe
+  con el cartel de "Link Media"—. Y los clips se identifican por **ruta**, no por nombre:
+  toda clase tiene su `Marcador 1 v1 [modelo].mov`.
 
 ## Arquitectura
 

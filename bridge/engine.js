@@ -1830,9 +1830,11 @@ async function rerenderLatest(body, hq, onProgress) {
   return out;
 }
 
-// Limpia VIDEOS de versiones viejas de una secuencia: por cada marcador deja
-// solo el video (.mov/.mp4) de la ÚLTIMA versión y borra los anteriores.
-// NO toca los .html (historial/editor) ni stills/recursos. Devuelve cuánto liberó.
+// Limpia VIDEOS de versiones viejas de una secuencia —o de UN marcador, si viene
+// `markerSlug`—: deja solo el video (.mov/.mp4) de la ÚLTIMA versión y borra los
+// anteriores. NO toca los .html (historial/editor, y lo que la pestaña
+// Corrections necesita para volver sobre una versión vieja) ni stills/recursos:
+// el peso está en los videos, esos archivos son kilobytes. Devuelve cuánto liberó.
 // Agrupa los archivos de VIDEO por marcador con su versión: { slug: [{name,version,path,size}] }.
 function groupMarkerVideos(baseDir) {
   const grouped = groupBySlug(baseDir, ['.mov', '.mp4']);
@@ -1848,10 +1850,14 @@ function groupMarkerVideos(baseDir) {
 }
 
 // Calcula los VIDEOS de versiones viejas (no-últimas) de una secuencia. SIN borrar.
-function oldVersionVideos(projectPath, sequenceName) {
+// Con `markerSlug` se limita a ESE marcador: es la limpieza que se pide desde un
+// job terminado, cuando el editor quedó conforme con un recurso y no quiere
+// tocar los demás (que pueden estar a medio aprobar).
+function oldVersionVideos(projectPath, sequenceName, markerSlug) {
   const bySlug = groupMarkerVideos(ensureOutputDir(projectPath, sequenceName));
   const out = [];
   Object.keys(bySlug).forEach((slug) => {
+    if (markerSlug && slug !== markerSlug) return;
     const list = bySlug[slug];
     let maxV = 0; list.forEach((x) => { if (x.version > maxV) maxV = x.version; });
     list.forEach((x) => { if (x.version < maxV) out.push({ name: x.name, path: x.path, size: x.size }); });
@@ -1864,7 +1870,7 @@ function oldVersionVideos(projectPath, sequenceName) {
 function listOldVersions(body) {
   try {
     body = body || {};
-    return { ok: true, files: oldVersionVideos(body.projectPath, body.sequenceName) };
+    return { ok: true, files: oldVersionVideos(body.projectPath, body.sequenceName, body.markerSlug) };
   } catch (e) { return { ok: false, error: (e && e.message) || String(e), files: [] }; }
 }
 
@@ -1876,6 +1882,7 @@ function cleanupPreview(body) {
     const bySlug = groupMarkerVideos(ensureOutputDir(body.projectPath, body.sequenceName));
     const groups = []; let totalDeletes = 0, totalBytes = 0;
     Object.keys(bySlug).forEach((slug) => {
+      if (body.markerSlug && slug !== body.markerSlug) return;
       const list = bySlug[slug].slice().sort((a, b) => a.version - b.version);
       let maxV = 0; list.forEach((x) => { if (x.version > maxV) maxV = x.version; });
       const keep = list.filter((x) => x.version === maxV)[0] || null;
@@ -1892,7 +1899,7 @@ function cleanupPreview(body) {
 function cleanOldVersions(body) {
   try {
     body = body || {};
-    const list = oldVersionVideos(body.projectPath, body.sequenceName);
+    const list = oldVersionVideos(body.projectPath, body.sequenceName, body.markerSlug);
     let deleted = 0, freed = 0; const names = [];
     list.forEach((x) => {
       try { fs.unlinkSync(x.path); deleted++; freed += x.size; names.push(x.name); } catch (e) {}

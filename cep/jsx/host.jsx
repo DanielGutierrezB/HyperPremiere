@@ -670,22 +670,40 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
 
 // Saca de Premiere las versiones viejas ANTES de borrar sus archivos: (1) quita
 // sus clips de todas las secuencias, (2) elimina sus ítems del proyecto (bin) con
-// el truco mover-a-bin-temporal + deleteBin. `namesJoined` = nombres de archivo
-// separados por "\n" (los nombres nunca contienen saltos de línea — ExtendScript
-// no trae JSON, así evitamos parsear con eval). Devuelve "ok|<n>|<m>" o "error: ...".
-function hp_purgeClipsByName(namesJoined) {
+// el truco mover-a-bin-temporal + deleteBin. `pathsJoined` = rutas de archivo
+// separadas por "\n" (las rutas nunca contienen saltos de línea — ExtendScript no
+// trae JSON, así evitamos parsear con eval). Devuelve "ok|<n>|<m>" o "error: ...".
+//
+// Identifica por RUTA DE MEDIA, la misma regla de identidad que para colocar y
+// recolorear (ver hp_mediaPathIs). Por nombre no alcanza: cada clase tiene su
+// "Marcador 1 v1 [modelo].mov", así que limpiar las previas de una se llevaba de
+// OTRA clase un clip que el editor ya había aprobado — y ese archivo no se
+// borraba, así que el clip desaparecía del timeline sin ninguna señal.
+function hp_purgeClipsByPath(pathsJoined) {
     try {
-        var arr = String(namesJoined || "").split("\n");
-        var names = {};
+        var arr = String(pathsJoined || "").split("\n");
+        var paths = [];   // rutas como las ve el SO
+        var names = {};   // respaldo SOLO para ítems sin ruta legible
         for (var a = 0; a < arr.length; a++) {
-            var nm = arr[a];
-            if (!nm) continue;
-            names[nm] = true;
-            names[nm.replace(/\.[^.]+$/, "")] = true; // sin extensión
+            var p = arr[a];
+            if (!p) continue;
+            var f = null;
+            try { f = new File(p); } catch (eF) {}
+            paths.push(f ? String(f.fsName) : String(p));
+            if (f && f.name) names[String(f.name)] = true;
         }
-        function matches(name) {
-            if (!name) return false;
-            return names[name] === true || names[String(name).replace(/\.[^.]+$/, "")] === true;
+        // ¿Este ítem del proyecto es uno de los que vamos a borrar?
+        function matches(item, fallbackName) {
+            for (var i = 0; i < paths.length; i++) {
+                if (hp_mediaPathIs(item, paths[i])) return true;
+            }
+            // Media offline: no hay ruta con la que comparar y lo único que queda
+            // es el nombre. Es el caso raro, y era la regla anterior.
+            var mp = "";
+            try { mp = (item && item.getMediaPath) ? String(item.getMediaPath() || "") : ""; } catch (e) {}
+            if (mp) return false;
+            var nm = String((item && item.name) || fallbackName || "");
+            return nm !== "" && names[nm] === true;
         }
 
         // 1) Quitar clips de TODAS las secuencias (de arriba hacia abajo).
@@ -699,8 +717,8 @@ function hp_purgeClipsByName(namesJoined) {
                     var track = vt[t];
                     for (var c = track.clips.numItems - 1; c >= 0; c--) {
                         var clip = track.clips[c];
-                        var pn = clip && clip.projectItem ? clip.projectItem.name : (clip ? clip.name : "");
-                        if (matches(pn)) {
+                        if (!clip) continue;
+                        if (matches(clip.projectItem, clip.name)) {
                             try { clip.remove(false, false); removedClips++; } catch (er) {}
                         }
                     }
@@ -720,7 +738,7 @@ function hp_purgeClipsByName(namesJoined) {
                 if (!ch) continue;
                 if (trash && ch === trash) continue;
                 if (ch.type === 2) { walk(ch); continue; } // bin → recursar
-                if (matches(ch.name)) {
+                if (matches(ch, ch.name)) {
                     try { if (trash) { ch.moveBin(trash); removedItems++; } } catch (em) {}
                 }
             }

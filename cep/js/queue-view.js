@@ -126,6 +126,10 @@
   // ── Limpieza de versiones viejas ──────────────────────────────────────
 
   // Ejecuta la limpieza REAL (ya confirmada): secuencia → proyecto → disco.
+  // Cada `target` es { projectPath, sequenceName } y, si la limpieza es de un
+  // solo recurso, además markerSlug. El orden importa y no es negociable: si se
+  // borrara del disco primero, Premiere se queda con clips apuntando a archivos
+  // que no están y te recibe con el cartel de "Link Media".
   function performCleanup(targets) {
     deps.setOutput("🧹 Limpiando versiones viejas…", false);
     hpLog("Limpiando versiones viejas en " + targets.length + " secuencia(s)…");
@@ -133,12 +137,13 @@
       return HPEngine.call("listOldVersions", t).then(function (r) { return (r && r.ok) ? (r.files || []) : []; }).catch(function () { return []; });
     });
     Promise.all(listPromises).then(function (lists) {
-      var names = [];
-      lists.forEach(function (files) { files.forEach(function (f) { if (f && f.name) names.push(f.name); }); });
-      if (!names.length) { deps.setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
+      // Rutas completas, no nombres: es la identidad del clip (ver purgeClipsByPath).
+      var rutas = [];
+      lists.forEach(function (files) { files.forEach(function (f) { if (f && f.path) rutas.push(f.path); }); });
+      if (!rutas.length) { deps.setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
       // Paso 2: sacarlos de secuencia + proyecto ANTES de borrar (evita re-vincular).
-      HPHost.purgeClipsByName(names, function (purge) {
-        hpLog("purge en Premiere: " + purge + " (" + names.length + " nombres)");
+      HPHost.purgeClipsByPath(rutas, function (purge) {
+        hpLog("purge en Premiere: " + purge + " (" + rutas.length + " archivo(s))");
         var totalDeleted = 0, totalBytes = 0, pending = targets.length, errs = [];
         targets.forEach(function (t) {
           HPEngine.call("cleanOldVersions", t).then(function (res) {
@@ -162,22 +167,14 @@
     });
   }
 
-  // Botón "limpiar versiones viejas": PRIMERO muestra el detalle (qué se borra ↔
-  // qué se conserva) y pide confirmación; recién al aceptar borra.
-  function cleanOldVersions() {
-    var seen = {}, targets = [];
-    function addTarget(pp, sn) {
-      if (!sn) return;
-      var k = String(pp) + "::" + String(sn);
-      if (seen[k]) return; seen[k] = true;
-      targets.push({ projectPath: pp, sequenceName: sn });
-    }
-    var jobs = HPQueue.jobs();
-    for (var i = 0; i < jobs.length; i++) addTarget(jobs[i].projectPath, jobs[i].seqName);
-    var ctx = HPStore.getContext();
-    addTarget(ctx.projectPath, ctx.sequenceName);
-    if (!targets.length) { deps.setOutput("No hay secuencias en la cola para limpiar.", false); return; }
-
+  /**
+   * Muestra el detalle (qué se borra ↔ qué se conserva) y pide confirmación;
+   * recién al aceptar borra. El detalle lo arma el MOTOR mirando el disco, así
+   * que la pregunta dice lo mismo trate de una secuencia entera o de un solo
+   * recurso: lo que cambia es qué targets se le pasan.
+   * `nada` = qué decir cuando no hay nada viejo que borrar.
+   */
+  function confirmAndClean(targets, titulo, nada) {
     var previewPromises = targets.map(function (t) {
       return HPEngine.call("cleanupPreview", t)
         .then(function (r) { return (r && r.ok) ? r : { groups: [], totalDeletes: 0, totalBytes: 0, sequenceName: t.sequenceName }; })
@@ -186,13 +183,14 @@
     Promise.all(previewPromises).then(function (previews) {
       var totalDeletes = 0, totalBytes = 0;
       previews.forEach(function (p) { totalDeletes += p.totalDeletes || 0; totalBytes += p.totalBytes || 0; });
-      if (!totalDeletes) { deps.setOutput("🧹 No hay versiones viejas para limpiar.", false); return; }
-      HPWidgets.confirmOverlay("Limpiar versiones viejas", function (body) {
+      if (!totalDeletes) { deps.setOutput(nada, false); return; }
+      HPWidgets.confirmOverlay(titulo, function (body) {
         var intro = document.createElement("p");
         var strong = document.createElement("strong"); strong.textContent = totalDeletes + " video(s)";
         intro.appendChild(document.createTextNode("Se van a borrar "));
         intro.appendChild(strong);
-        intro.appendChild(document.createTextNode(" viejos (" + (totalBytes / 1048576).toFixed(1) + " MB). Se conserva la última versión de cada marcador. Los HTMLs no se tocan."));
+        intro.appendChild(document.createTextNode(" viejos (" + (totalBytes / 1048576).toFixed(1) + " MB) del disco y de las " +
+          "secuencias donde estén. Se conserva la última versión. Los HTMLs no se tocan: podés volver sobre una versión vieja desde Corrections."));
         body.appendChild(intro);
         previews.forEach(function (p) {
           if (!p.groups || !p.groups.length) return;
@@ -210,6 +208,41 @@
         });
       }, "Borrar " + totalDeletes + " video(s)", function () { performCleanup(targets); });
     });
+  }
+
+  /**
+   * "🧹 Limpiar previas" de un job terminado: borra las versiones ANTERIORES de
+   * ESE recurso y deja la que el editor acaba de aprobar. Es el momento real de
+   * fin de clase — quedaste conforme con la v5 y las cuatro anteriores son
+   * cientos de MB que además Premiere sigue mostrando en el proyecto—, y va por
+   * marcador porque los otros pueden estar a medio revisar.
+   */
+  function cleanJobPrevious(job) {
+    confirmAndClean([{
+      projectPath: job.projectPath,
+      // La carpeta del recurso es la de la secuencia donde NACIÓ: en una
+      // corrección no es la que estás mirando.
+      sequenceName: job.storeSeqName || job.seqName,
+      markerSlug: job.markerKey
+    }], "Limpiar las versiones previas de " + job.markerKey,
+      "🧹 " + job.markerKey + " no tiene versiones anteriores: no hay nada que borrar.");
+  }
+
+  // Botón "limpiar versiones viejas": lo mismo para TODAS las secuencias de la cola.
+  function cleanOldVersions() {
+    var seen = {}, targets = [];
+    function addTarget(pp, sn) {
+      if (!sn) return;
+      var k = String(pp) + "::" + String(sn);
+      if (seen[k]) return; seen[k] = true;
+      targets.push({ projectPath: pp, sequenceName: sn });
+    }
+    var jobs = HPQueue.jobs();
+    for (var i = 0; i < jobs.length; i++) addTarget(jobs[i].projectPath, jobs[i].seqName);
+    var ctx = HPStore.getContext();
+    addTarget(ctx.projectPath, ctx.sequenceName);
+    if (!targets.length) { deps.setOutput("No hay secuencias en la cola para limpiar.", false); return; }
+    confirmAndClean(targets, "Limpiar versiones viejas", "🧹 No hay versiones viejas para limpiar.");
   }
 
   // Costo estimado de la cola, auto-calibrado con el costo REAL ya acumulado en la
@@ -542,6 +575,16 @@
               }; })(j.id)));
             dc.appendChild(iconBtn("✎ Editar HTML", "Editar el HTML de este marcador y renderizarlo de nuevo (en la pestaña Marcadores)",
               (function (job) { return function () { deps.goToJobMarker(job, true); }; })(j)));
+          }
+          // Limpiar las versiones previas de ESTE recurso, cuando el editor ya
+          // quedó conforme. No se ofrece en una v1 (no hay nada anterior); si no
+          // sabemos la versión —un job que quedó de otra sesión— se ofrece igual
+          // y el detalle de la confirmación lo dice.
+          if (!(j.version > 0 && j.version < 2)) {
+            dc.appendChild(iconBtn("🧹 Limpiar previas",
+              "Borra las versiones anteriores de este recurso: del disco y de las secuencias donde estén. " +
+              "Conserva esta última y los HTMLs.",
+              (function (job) { return function () { cleanJobPrevious(job); }; })(j)));
           }
           line.appendChild(dc);
         }

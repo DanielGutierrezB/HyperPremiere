@@ -1529,3 +1529,14 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .corr-cross-val { color: var(--text-primary); word-break: break-all; }
 .corr-cross-note { color: var(--text-secondary); margin-top: 5px; }
 .corr-second { width: 76px; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+/* v1.4.39 — "🧹 Limpiar previas" en la fila terminada.
+   Con tres acciones (Feedback, Editar HTML, Limpiar previas) la barra ya no
+   entra en una línea con el panel acoplado y angosto dentro de Premiere: los
+   botones se apilan en dos filas contra la derecha en vez de desbordarse en
+   horizontal (el bug que tuvieron las pestañas y el login de Claude en Windows).
+   El mínimo del nombre es lo que evita el otro extremo: sin él, el título cedía
+   todo su espacio y quedaba en "✓ M…", o sea tres botones sin saber de qué
+   marcador son. */
+.qj-ctrls { flex-wrap: wrap; justify-content: flex-end; flex-shrink: 1; }
+.qj-title { min-width: 120px; }

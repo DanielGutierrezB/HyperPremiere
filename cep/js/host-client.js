@@ -115,12 +115,14 @@
         Number(colorLabel) + ", " + JSON.stringify(movPath || "") + ")", cb);
     },
     /**
-     * Saca clips/ítems del proyecto por nombre de archivo ANTES de borrarlos
-     * del disco. `names` = array de nombres; viajan unidos por "\n"
-     * (ExtendScript no trae JSON.parse y los nombres nunca tienen saltos).
+     * Saca clips/ítems del proyecto ANTES de borrar sus archivos del disco.
+     * `paths` = array de RUTAS COMPLETAS (no nombres: el mismo "Marcador 1 v1
+     * [modelo].mov" existe en toda clase, y por nombre se limpiaba de una clase
+     * lo que estaba aprobado en otra). Viajan unidas por "\n" — ExtendScript no
+     * trae JSON.parse y las rutas nunca tienen saltos de línea.
      */
-    purgeClipsByName: function (names, cb) {
-      callMutating("hp_purgeClipsByName(" + JSON.stringify((names || []).join("\n")) + ")", cb);
+    purgeClipsByPath: function (paths, cb) {
+      callMutating("hp_purgeClipsByPath(" + JSON.stringify((paths || []).join("\n")) + ")", cb);
     }
   };
 })(typeof window !== "undefined" ? window : this);
