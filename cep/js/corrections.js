@@ -153,8 +153,12 @@
    * diferencias: el HTML previo viaja explícito (el motor por defecto lee la
    * versión anterior, y acá podés corregir cualquiera) y el tramo sale de la
    * ficha en vez del marcador.
+   *
+   * `staged` = encolar SIN arrancar. Es la diferencia entre corregir una cosa y
+   * juntar las correcciones de toda la clase: se revisan todos los recursos, se
+   * escribe qué está mal en cada uno y después se larga la cola de una vez.
    */
-  function enqueueCorrection(m, version, text, state) {
+  function enqueueCorrection(m, version, text, state, staged) {
     var ctx = deps.context();
     var opts = stillsOpts(m);
     state.className = "corr-state";
@@ -193,13 +197,15 @@
         background: !!m.background,
         draft: deps.draft()
       };
-      HPQueue.add(job);
+      if (staged) HPQueue.addStaged(job); else HPQueue.add(job);
       HPStills.fbClear(opts.fbJobId); // la próxima ronda arranca con todas activas
       hpLog("Corrección encolada [" + m.slug + "] sobre la v" + version + " · de “" +
         origen.sequenceName + "” a “" + destino + "” en " + formatTime(m.start) +
-        " por " + fmtDuration(m.duration));
+        " por " + fmtDuration(m.duration) + (staged ? " · en espera (no arranca sola)" : ""));
       state.className = "corr-state is-ok";
-      state.textContent = "Encolada sobre la v" + version + ". El progreso está en la pestaña Cola.";
+      state.textContent = staged
+        ? "En espera sobre la v" + version + ". Arranca cuando toques “Iniciar cola”."
+        : "Encolada sobre la v" + version + ". El progreso está en la pestaña Cola.";
     }).catch(function (e) {
       state.className = "corr-state is-error";
       state.textContent = "No pude encolarla: " + ((e && e.message) || e);
@@ -347,26 +353,38 @@
       }), String(m.latestVersion));
     }
 
+    // Dos formas de mandar la misma corrección: dejarla EN ESPERA para revisar
+    // toda la clase y largar la cola de una vez, o arrancarla ya. Es el mismo par
+    // que tienen las tarjetas de Marcadores ("＋ Enviar a la cola" / "Generar").
+    var stageBtn = document.createElement("button");
+    stageBtn.type = "button"; stageBtn.className = "qbtn qbtn-stage";
+    stageBtn.textContent = "＋ Enviar a la cola";
+    stageBtn.title = "Deja la corrección en espera, sin empezar a procesarla. Arranca cuando toques “Iniciar cola”.";
+    actions.appendChild(stageBtn);
+
     // El botón grande de la ronda de feedback, igual que en la Cola y en las
     // tarjetas: es la acción de la fila, no un control más de la barra.
     var fixBtn = document.createElement("button");
     fixBtn.type = "button"; fixBtn.className = "qbtn qbtn-react";
     fixBtn.textContent = "↻ Regenerar";
-    fixBtn.title = "Rediseña sobre esa versión y devuelve el clip a " + formatTime(m.start) +
+    fixBtn.title = "Rediseña YA sobre esa versión y devuelve el clip a " + formatTime(m.start) +
       " de “" + destino + "”, con la misma duración, en una pista nueva y en amarillo.";
     actions.appendChild(fixBtn);
     actions.appendChild(state);
     row.appendChild(actions);
 
-    fixBtn.addEventListener("click", function () {
+    /** Los dos botones mandan lo mismo; cambia si la cola arranca o espera. */
+    function mandar(staged) {
       var text = box.value.trim();
       if (!text) {
         state.className = "corr-state is-error";
         state.textContent = "Escribí qué hay que corregir.";
         return;
       }
-      enqueueCorrection(m, chosenVersion(), text, state);
-    });
+      enqueueCorrection(m, chosenVersion(), text, state, staged);
+    }
+    stageBtn.addEventListener("click", function () { mandar(true); });
+    fixBtn.addEventListener("click", function () { mandar(false); });
 
     // El HTML de la versión, cargado del disco. Antes esto era una caja vacía
     // pidiendo que pegaras un HTML, lo cual no tenía sentido: la pestaña acaba de

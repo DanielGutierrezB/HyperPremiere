@@ -277,6 +277,11 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
   diferencia entre pedir "subí el título" sobre un gráfico que el modelo entiende y
   pedírselo a ciegas. Y **no se transcribe nada** para corregir: el corte viejo puede ya
   no existir en el proyecto, así que se usa lo que haya y la cola nunca se frena por eso.
+- **＋ Enviar a la cola** (al lado de Regenerar): la misma corrección, pero **en espera**.
+  Sirve para revisar la clase entera —ir fila por fila escribiendo qué está mal— y largar
+  todo junto con **Iniciar cola**, en vez de que la primera arranque mientras todavía estás
+  revisando el resto. Es el mismo par que en las tarjetas de Marcadores: *Enviar a la cola*
+  encola, *Regenerar* encola y arranca.
 - **Ver y editar el HTML**: el de la versión que tengas elegida, **traído del disco** (la
   pestaña ya encontró los archivos, no te los pide). Sirve para ver qué tiene el recurso
   antes de escribir la corrección, para retocarlo a mano y renderizarlo **sin gastar IA**,

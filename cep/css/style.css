@@ -1540,3 +1540,10 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
    marcador son. */
 .qj-ctrls { flex-wrap: wrap; justify-content: flex-end; flex-shrink: 1; }
 .qj-title { min-width: 120px; }
+
+/* v1.4.40 — "＋ Enviar a la cola" al lado de Regenerar, en la fila de
+   correcciones. Las dos acciones van juntas contra la derecha: el margen
+   automático lo toma la primera y Regenerar lo cede, si no el espacio libre se
+   reparte entre las dos y quedan separadas a los extremos. */
+.corr-actions .qbtn-stage { margin-left: auto; font-size: 12px; padding: 8px 14px; }
+.corr-actions .qbtn-stage ~ .qbtn-react { margin-left: 0; }

@@ -77,6 +77,8 @@ function montarPestana(opts) {
   const espia = {
     encolados: [], leidos: [], guardados: [], listados: [], saltos: [],
     controles: [], fbAbiertos: [], fbCerrados: [], transcriptsPedidos: [],
+    // Por cada encolado, si la cola arranca sola o queda esperando "Iniciar cola".
+    modos: [],
   };
 
   // El estado del panel es POR SECUENCIA: el mismo marcador tiene un objetivo y
@@ -134,7 +136,10 @@ function montarPestana(opts) {
         return el;
       },
     },
-    HPQueue: { add: function (job) { espia.encolados.push(job); } },
+    HPQueue: {
+      add: function (job) { espia.encolados.push(job); espia.modos.push('arranca'); },
+      addStaged: function (job) { espia.encolados.push(job); espia.modos.push('espera'); },
+    },
     HPStore: {
       GENERAL_KEY: '__general__',
       withContext: function (projectPath, sequenceName, fn) {
@@ -239,6 +244,15 @@ function regenerar(fila) {
   return b;
 }
 
+/** El otro botón de la fila: manda lo mismo, pero sin arrancar la cola. */
+function enviarACola(fila) {
+  const b = fila.buscar('qbtn qbtn-stage');
+  if (!b) throw new Error('la fila no ofrece enviar a la cola');
+  eq(b.textContent, '＋ Enviar a la cola', 'con el mismo nombre que en Marcadores');
+  b.click();
+  return b;
+}
+
 /** El botón de la fila que todavía no sabe dónde iba el recurso. */
 function guardarTramo(fila) {
   const b = fila.buscar('qbtn');
@@ -284,6 +298,65 @@ test('corregir encola un refinamiento con el tramo original', async function () 
   eq(j.payload.marker.guid, 'g-3');
   eq(j.payload.adjustment, 'el título tapa la cara, subilo');
   eq(j.correction, true, 'marcado como corrección: es lo que lo pinta de amarillo');
+  eq(p.espia.modos[0], 'arranca', 'Regenerar es "hacelo ya"');
+});
+
+// ── Juntar las correcciones y largarlas después ──────────────────────
+// Revisar la clase entera es ir fila por fila escribiendo qué está mal. Si cada
+// una arrancara al escribirla, la primera se estaría procesando mientras todavía
+// se está revisando el resto, y el editor no puede reordenar ni cambiar de idea.
+
+test('enviar a la cola deja la corrección en espera, sin arrancar', async function () {
+  const { p, fila } = await cargarFila(recurso());
+  fila.porTag('textarea')[0].value = 'el título tapa la cara, subilo';
+  enviarACola(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.encolados.length, 1, 'la corrección está en la cola');
+  eq(p.espia.modos[0], 'espera', 'pero la cola no arranca sola');
+  has(fila.buscar('corr-state is-ok').textContent, 'Iniciar cola',
+    'y la fila dice cómo se larga');
+});
+
+test('en espera o ya mismo, el job que se manda es el mismo', async function () {
+  // La única diferencia tiene que ser cuándo arranca. Si el camino "en espera"
+  // armara un payload distinto, el resultado dependería del botón que tocaste.
+  const ya = await cargarFila(recurso());
+  ya.fila.porTag('textarea')[0].value = 'subí el título';
+  regenerar(ya.fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const luego = await cargarFila(recurso());
+  luego.fila.porTag('textarea')[0].value = 'subí el título';
+  enviarACola(luego.fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(JSON.stringify(luego.p.espia.encolados[0]), JSON.stringify(ya.p.espia.encolados[0]),
+    'mismo job, mismo contexto');
+});
+
+test('sin instrucción tampoco se encola en espera', async function () {
+  const { p, fila } = await cargarFila(recurso());
+  enviarACola(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados.length, 0);
+  has(fila.buscar('corr-state is-error').textContent, 'Escribí qué hay que corregir');
+});
+
+test('varias filas se pueden dejar juntas antes de largar la cola', async function () {
+  const { p, filas } = await cargarFila(recurso(), {
+    listado: { markers: [recurso(), recurso({ slug: 'Marcador 8', start: 333, duration: 60 })] },
+  });
+  filas[0].porTag('textarea')[0].value = 'subí el título';
+  enviarACola(filas[0]);
+  filas[1].porTag('textarea')[0].value = 'el dato no se lee';
+  enviarACola(filas[1]);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.encolados.length, 2);
+  eq(p.espia.modos.join(), 'espera,espera', 'ninguna arrancó por su cuenta');
+  eq(p.espia.encolados[0].markerKey, 'Marcador 3');
+  eq(p.espia.encolados[1].markerKey, 'Marcador 8');
 });
 
 // ── El contexto que viaja con la corrección ──────────────────────────
