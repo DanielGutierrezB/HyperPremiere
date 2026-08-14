@@ -44,11 +44,84 @@
     return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   }
 
-  /** Compacto para etiquetas cortas (1234 -> "1,2k"). */
+  /**
+   * Compacto para etiquetas cortas (1234 -> "1,2k"; 3412905 -> "3,4M").
+   *
+   * El escalón de millones hace falta desde que la entrada se cuenta completa:
+   * una tanda de clases pasa los tres millones de tokens y "3.412.905" no cabe
+   * en una línea del panel.
+   */
   function fmtTokens(n) {
     n = Number(n) || 0;
+    if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(".", ",") + "M";
     if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(".", ",") + "k";
     return String(n);
+  }
+
+  /**
+   * El contador de uso de la sesión: la línea corta que se ve y el detalle que
+   * va en el tooltip. Devuelve { line, detail }.
+   *
+   * Vive acá y no en main.js porque cada número tiene una trampa y las tres se
+   * prueban (test/contador-uso.test.js):
+   *
+   *   - La ENTRADA es la suma de lo suelto más la caché leída más la escrita.
+   *     El campo `inputTokens` de los CLI de agente es solo el pedazo que no
+   *     estaba cacheado: un prompt de 20 caracteres reporta 2 de entrada y
+   *     31.823 escritos a caché. Mostrando solo el primero, una sesión de 164
+   *     generaciones marcaba 75.256 de entrada contra 2,3 M de salida.
+   *   - Cuánto de eso es CACHÉ va a la vista, porque es lo que explica que la
+   *     entrada real sea diez veces el prompt que armamos: es el contexto del
+   *     propio agente, releído en cada llamada.
+   *   - El COSTO no lo informan todos los proveedores (Cursor va por suscripción;
+   *     la API de Anthropic no lo devuelve en el body), así que se dice sobre
+   *     cuántas generaciones se juntó. Un "$15.37" pelado se lee como el costo de
+   *     la sesión entera cuando en realidad cubre doce de ciento sesenta y cuatro.
+   */
+  function sessionUsage(u) {
+    if (!u || !u.generations) {
+      return { line: 'sin generaciones todavía', detail: 'Uso acumulado en esta sesión' };
+    }
+    var cache = (u.cacheReadTokens || 0) + (u.cacheCreationTokens || 0);
+    var entrada = (u.inputTokens || 0) + cache;
+    var gens = u.generations;
+
+    var line = fmtTokens(entrada) + ' tokens de entrada' +
+      (cache ? ' (' + fmtTokens(cache) + ' de caché)' : '') +
+      ' · ' + fmtTokens(u.outputTokens || 0) + ' de salida';
+    // El "en N de M" solo si sabemos N. Un acumulado de antes del arreglo tiene
+    // dólares y ningún reparto: ahí decir "en 0 de 164" sería peor que callarse.
+    var reparto = u.costGenerations > 0 && u.costGenerations < gens;
+    if (u.costUsd > 0) {
+      line += ' · $' + u.costUsd.toFixed(2) +
+        (reparto ? ' en ' + u.costGenerations + ' de ' + gens : '');
+    }
+    line += ' · ' + gens + (gens === 1 ? ' generación' : ' generaciones');
+
+    var detail = 'Entrada: ' + addThousands(entrada) + ' tokens = ' +
+      addThousands(u.inputTokens || 0) + ' sin cachear + ' +
+      addThousands(u.cacheReadTokens || 0) + ' leídos de caché + ' +
+      addThousands(u.cacheCreationTokens || 0) + ' escritos a caché.';
+    if (cache > (u.inputTokens || 0)) {
+      detail += '\nCasi toda la entrada es caché: es el contexto que el agente vuelve a leer en cada llamada, ' +
+        'no el prompt que armamos nosotros.';
+    }
+    detail += '\nSalida: ' + addThousands(u.outputTokens || 0) + ' tokens.' +
+      '\nPor generación: ≈ ' + fmtTokens(Math.round(entrada / gens)) + ' de entrada · ≈ ' +
+      fmtTokens(Math.round((u.outputTokens || 0) / gens)) + ' de salida.';
+    if (u.costUsd > 0 && u.costGenerations > 0) {
+      detail += '\nCosto: $' + u.costUsd.toFixed(2) + ' informado por ' + u.costGenerations +
+        ' de ' + gens + ' generaciones (≈ $' + (u.costUsd / u.costGenerations).toFixed(2) + ' cada una).';
+    }
+    if (reparto) {
+      detail += '\nLas demás no informan costo: Cursor va por suscripción y la API de Anthropic no lo devuelve.';
+    }
+    if (u.legacyMix) {
+      detail += '\nOJO: parte de este acumulado se juntó cuando la entrada se contaba a medias ' +
+        '(sin los tokens de caché), así que el total de entrada queda corto. ' +
+        'Tocá "reiniciar" para empezar a medir limpio.';
+    }
+    return { line: line, detail: detail };
   }
 
   /**
@@ -168,6 +241,7 @@
     fmtDuration: fmtDuration,
     addThousands: addThousands,
     fmtTokens: fmtTokens,
+    sessionUsage: sessionUsage,
     shortenMiddle: shortenMiddle,
     distinguish: distinguish,
     updateBadge: updateBadge,

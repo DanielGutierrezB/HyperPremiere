@@ -207,19 +207,41 @@ function contractReminder() {
  * Los campos ausentes quedan en 0; costUsd es null cuando el proveedor no lo
  * reporta (Anthropic API) y 0 cuando es local (Ollama).
  *
+ * `totalInputTokens` es TODO lo que entró al modelo, y es el número que hay que
+ * mostrar. Existe porque `inputTokens` a secas engaña: en los dos CLI de agente
+ * es apenas el pedacito que NO estaba cacheado, y el prompt entero viaja por los
+ * campos de caché. Se comprobó con la llamada más chica posible —un prompt de 20
+ * caracteres a cursor-agent— y volvió así:
+ *
+ *   { inputTokens: 2, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 31823 }
+ *
+ * Esos 31.823 son el contexto del propio agente, escrito a la caché. En una
+ * generación de verdad los tres números conviven (2 sueltos, 46.919 leídos de
+ * caché, 48.257 escritos) y sumar solo el primero mostraba **4 tokens de
+ * entrada** para un marcador que consumió casi cien mil. Con 164 generaciones
+ * encima, el contador de la sesión marcaba 75.256 de entrada contra 2,3 M de
+ * salida: un overview que no describía nada.
+ *
+ * Los tres se suman porque los tres se consumieron. Van también por separado
+ * para poder decir cuánto fue caché, que es lo que explica la diferencia entre
+ * lo que pedimos y lo que se procesó (y cuesta distinto).
+ *
  * @param {string} provider
  * @param {string} model
  * @param {object} raw - { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd }
- * @returns {{ inputTokens:number, outputTokens:number, cacheReadTokens:number, cacheCreationTokens:number, costUsd:number|null, provider:string, model:string }}
  */
 function makeUsage(provider, model, raw) {
   raw = raw || {};
   const n = function (v) { v = Number(v); return Number.isFinite(v) ? v : 0; };
+  const entrada = n(raw.inputTokens);
+  const cacheLeida = n(raw.cacheReadTokens);
+  const cacheEscrita = n(raw.cacheCreationTokens);
   return {
-    inputTokens: n(raw.inputTokens),
+    inputTokens: entrada,
     outputTokens: n(raw.outputTokens),
-    cacheReadTokens: n(raw.cacheReadTokens),
-    cacheCreationTokens: n(raw.cacheCreationTokens),
+    cacheReadTokens: cacheLeida,
+    cacheCreationTokens: cacheEscrita,
+    totalInputTokens: entrada + cacheLeida + cacheEscrita,
     costUsd: (raw.costUsd === null || raw.costUsd === undefined || !Number.isFinite(Number(raw.costUsd)))
       ? (raw.costUsd === 0 ? 0 : null)
       : Number(raw.costUsd),

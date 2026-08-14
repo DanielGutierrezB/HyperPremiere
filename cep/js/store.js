@@ -389,10 +389,25 @@
     },
 
     // ── Uso de tokens de la sesión (GLOBAL, no por secuencia) ──────────
-    // Mide cuánto de la sesión de Claude se ha consumido en total.
+    // Cuánto se consumió en total desde que se reinició el contador.
+    //
+    // Lo que se acumula NO es "inputTokens": en los CLI de agente ese campo es
+    // solo el pedazo que no estaba cacheado (2, 4, 6 tokens) y el prompt entero
+    // viaja por los de caché. La entrada de verdad es la suma de los tres, que
+    // el motor ya manda calculada en `totalInputTokens` (ver makeUsage).
+    //
+    // El costo se lleva aparte, con CUÁNTAS generaciones lo informaron y cuánta
+    // entrada tuvieron: hay proveedores que no informan costo (Cursor va por
+    // suscripción, la API de Anthropic no lo devuelve en el body), así que un
+    // total de dólares suelto se leería como el costo de TODA la sesión cuando
+    // en realidad cubre unas cuantas. Y con esas dos cifras, el promedio por
+    // generación sale de las que de verdad costaron.
 
     getSessionUsage: function () {
-      var empty = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, generations: 0 };
+      var empty = {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+        costUsd: 0, costGenerations: 0, costInputTokens: 0, generations: 0, legacyMix: false
+      };
       try {
         var raw = global.localStorage.getItem(STORAGE_PREFIX + 'session-usage');
         if (!raw) return empty;
@@ -402,10 +417,33 @@
           inputTokens: Number(u.inputTokens) || 0,
           outputTokens: Number(u.outputTokens) || 0,
           cacheReadTokens: Number(u.cacheReadTokens) || 0,
+          cacheCreationTokens: Number(u.cacheCreationTokens) || 0,
           costUsd: Number(u.costUsd) || 0,
-          generations: Number(u.generations) || 0
+          costGenerations: Number(u.costGenerations) || 0,
+          costInputTokens: Number(u.costInputTokens) || 0,
+          generations: Number(u.generations) || 0,
+          // Lo que ya estaba en el disco cuando la entrada se contaba a medias.
+          // El total no se puede reparar hacia atrás (los tokens de caché de esas
+          // generaciones no los guardaba nadie), así que se lo carga la etiqueta:
+          // el editor tiene que saber que ese acumulado viene mezclado y que
+          // reiniciándolo ve un total limpio. Se pega y no se despega hasta el
+          // reinicio: sumarle generaciones nuevas bien contadas no arregla las viejas.
+          legacyMix: !!u.legacyMix || (Number(u.generations) > 0 && Number(u.rule) !== 2)
         };
       } catch (e) { return empty; }
+    },
+
+    /**
+     * Toda la entrada de un uso: lo suelto más la caché leída más la escrita.
+     * Vive acá porque la lee el contador, la etiqueta de cada recurso y el
+     * estimado de la cola, y tienen que contar lo mismo.
+     */
+    totalInput: function (usage) {
+      if (!usage) return 0;
+      if (typeof usage.totalInputTokens === 'number') return usage.totalInputTokens;
+      return (Number(usage.inputTokens) || 0) +
+        (Number(usage.cacheReadTokens) || 0) +
+        (Number(usage.cacheCreationTokens) || 0);
     },
 
     /** Suma un uso de tokens al acumulado de la sesión. */
@@ -415,8 +453,16 @@
       cur.inputTokens += Number(usage.inputTokens) || 0;
       cur.outputTokens += Number(usage.outputTokens) || 0;
       cur.cacheReadTokens += Number(usage.cacheReadTokens) || 0;
-      if (typeof usage.costUsd === 'number') cur.costUsd += usage.costUsd;
+      cur.cacheCreationTokens += Number(usage.cacheCreationTokens) || 0;
+      if (typeof usage.costUsd === 'number') {
+        cur.costUsd += usage.costUsd;
+        cur.costGenerations += 1;
+        cur.costInputTokens += this.totalInput(usage);
+      }
       cur.generations += 1;
+      // `rule` es con qué criterio se contó lo que hay guardado. Sin él, un
+      // acumulado es de antes de que la entrada incluyera la caché.
+      cur.rule = 2;
       try { global.localStorage.setItem(STORAGE_PREFIX + 'session-usage', JSON.stringify(cur)); } catch (e) {}
       return cur;
     },

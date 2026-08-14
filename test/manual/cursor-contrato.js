@@ -129,11 +129,14 @@ function armarPedido(htmlPrevio) {
 
 // Cuánto cuesta el cambio, contado acá y no en el `usage` del CLI.
 //
-// Cursor informa tokens de entrada que no son de este mundo (2 y 6 en corridas
-// con 15.000 caracteres de prompt): sirve para el conteo de salida, no para
-// medir lo que agregamos. Como el prompt lo armamos nosotros, el costo se
-// calcula exacto en caracteres y se estima en tokens a ~4 caracteres cada uno,
-// que para texto en español es una aproximación conservadora.
+// No es que el CLI cuente mal: cuenta otra cosa. Su `inputTokens` es solo el
+// pedazo que no estaba cacheado (2 y 6 con prompts de 15.000 caracteres) y la
+// entrada de verdad está en los campos de caché, dominada por el contexto del
+// propio agente: un prompt de veinte caracteres ya reporta 31.823 escritos a
+// caché. Con ese piso encima, mover 900 caracteres de prompt no se distingue del
+// ruido. Como el prompt lo armamos nosotros, el costo del cambio se calcula
+// exacto en caracteres y se estima en tokens a ~4 caracteres cada uno, que para
+// texto en español es una aproximación conservadora.
 const ENCABEZADOS = '# CÓMO SE COMPONE EN ESTE PROYECTO\n\n'.length +
   '\n\n# EL PEDIDO\n\n'.length;
 
@@ -246,7 +249,9 @@ async function unaCorrida(variante, i, opts) {
       ok: true,
       archivo: salida,
       chars: html.length,
-      inputTokens: (r.usage && r.usage.inputTokens) || 0,
+      // La entrada COMPLETA (con la caché, que es casi toda): en el resumen se
+      // ve el piso que trae el agente por su cuenta.
+      inputTokens: (r.usage && r.usage.totalInputTokens) || 0,
       outputTokens: (r.usage && r.usage.outputTokens) || 0,
       segundos: Math.round((Date.now() - t0) / 100) / 10,
     });
@@ -318,6 +323,7 @@ function tabla(porVariante, COSTO) {
     ['se NEGÓ a componer'].concat(R((r) => String(r.rechazos))),
     ['caracteres de prompt'].concat(nombres.map((v) => String(
       v === 'con' ? COSTO.despues : (v === 'antes' ? COSTO.antes : COSTO.antes + COSTO.encabezados)))),
+    ['tokens de entrada reales (prom.)'].concat(R((r) => String(r.inputTokensProm))),
     ['tokens de salida (prom.)'].concat(R((r) => String(r.outputTokensProm))),
     ['segundos por corrida (prom.)'].concat(R((r) => String(r.segundosProm))),
   ];
@@ -408,8 +414,9 @@ async function main() {
   console.log('    · recordatorio del contrato: ' + COSTO.recordatorio + ' caracteres');
   console.log('  OJO: con estas N, una diferencia de 1 o 2 puede ser ruido. Mirá también');
   console.log('  el desglose por corrida en resumen.json antes de sacar conclusiones.');
-  console.log('  (los tokens de ENTRADA que informa cursor-agent son basura —2 y 6 con un');
-  console.log('   prompt de 15.000 caracteres—, por eso el costo se cuenta en caracteres.)');
+  console.log('  (el costo se cuenta en caracteres porque la entrada que informa el CLI está');
+  console.log('   dominada por el contexto del propio agente —~32k tokens de piso, a la caché—');
+  console.log('   y 900 caracteres nuestros ahí adentro no se distinguen del ruido.)');
 
   const resumen = {
     fecha: new Date().toISOString(),

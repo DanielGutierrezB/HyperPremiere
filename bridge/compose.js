@@ -94,9 +94,13 @@ async function composeAnimation(a) {
   const onActivity = function (act) {
     try { report({ act: act }); } catch (e) { /* la vista no manda acá */ }
   };
+  // El uso de TODA la escalera junto: un recurso puede costar hasta tres
+  // llamadas y lo que el editor quiere saber es lo que salió el recurso.
+  // `totalInputTokens` es la entrada de verdad (ver makeUsage: el prompt viaja
+  // por los campos de caché, no por `inputTokens`).
   const usage = {
     inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
-    costUsd: null, calls: 0,
+    totalInputTokens: 0, costUsd: null, calls: 0,
   };
   function addUsage(u) {
     if (!u) return;
@@ -104,6 +108,9 @@ async function composeAnimation(a) {
     usage.outputTokens += Number(u.outputTokens) || 0;
     usage.cacheReadTokens += Number(u.cacheReadTokens) || 0;
     usage.cacheCreationTokens += Number(u.cacheCreationTokens) || 0;
+    usage.totalInputTokens += Number(u.totalInputTokens) ||
+      // Un proveedor de otra versión puede no traerlo: se recompone.
+      ((Number(u.inputTokens) || 0) + (Number(u.cacheReadTokens) || 0) + (Number(u.cacheCreationTokens) || 0));
     if (typeof u.costUsd === 'number') usage.costUsd = (usage.costUsd || 0) + u.costUsd;
     usage.calls += 1;
   }

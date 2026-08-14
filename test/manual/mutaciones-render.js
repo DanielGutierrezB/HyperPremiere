@@ -91,11 +91,64 @@ const MUTACIONES = [
     de: '  if (p.aprendido && p.workers === 1) {',
     a:  '  if (p.workers === 1) {',
   },
+  // El contador de tokens es el peor lugar para una regresión: sale un número
+  // más chico y no hay nada que falle. Estas son las cinco formas de perderlo.
+  {
+    nombre: 'la entrada vuelve a ser solo el pedazo sin cachear',
+    archivo: 'bridge/providers/index.js',
+    de: '    totalInputTokens: entrada + cacheLeida + cacheEscrita,',
+    a:  '    totalInputTokens: entrada,',
+  },
+  {
+    nombre: 'a Cursor le renombran el campo de caché y nadie se entera',
+    archivo: 'bridge/providers/cursor-cli.js',
+    de: '        cacheCreationTokens: u.cacheWriteTokens,',
+    a:  '        cacheCreationTokens: u.cacheCreationTokens,',
+  },
+  {
+    nombre: 'un proveedor sin el total deja la entrada en cero',
+    archivo: 'bridge/compose.js',
+    de: '    usage.totalInputTokens += Number(u.totalInputTokens) ||\n' +
+        '      // Un proveedor de otra versión puede no traerlo: se recompone.\n' +
+        '      ((Number(u.inputTokens) || 0) + (Number(u.cacheReadTokens) || 0) + (Number(u.cacheCreationTokens) || 0));',
+    a:  '    usage.totalInputTokens += Number(u.totalInputTokens) || 0;',
+  },
+  {
+    nombre: 'el panel deja de acumular la caché escrita',
+    archivo: 'cep/js/store.js',
+    de: '      cur.cacheCreationTokens += Number(usage.cacheCreationTokens) || 0;',
+    a:  '      void usage.cacheCreationTokens;',
+  },
+  {
+    nombre: 'las generaciones sin costo cuentan como si lo hubieran informado',
+    archivo: 'cep/js/store.js',
+    de: "      if (typeof usage.costUsd === 'number') {",
+    a:  '      if (true) {',
+  },
+  {
+    nombre: 'la línea de la sesión vuelve a mostrar la entrada a medias',
+    archivo: 'cep/js/util.js',
+    de: '    var entrada = (u.inputTokens || 0) + cache;',
+    a:  '    var entrada = (u.inputTokens || 0);',
+  },
+  {
+    nombre: 'el acumulado viejo pasa por bien contado',
+    archivo: 'cep/js/store.js',
+    de: '          legacyMix: !!u.legacyMix || (Number(u.generations) > 0 && Number(u.rule) !== 2)',
+    a:  '          legacyMix: false',
+  },
+  {
+    nombre: 'con dólares y sin repartos se muestra "en 0 de 164"',
+    archivo: 'cep/js/util.js',
+    de: '    var reparto = u.costGenerations > 0 && u.costGenerations < gens;',
+    a:  '    var reparto = u.costGenerations < gens;',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
 // ajena haría parecer que la mutación fue atrapada.
-const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz', 'rescate-composicion'];
+const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
+  'rescate-composicion', 'contador-uso'];
 
 function correrSuite() {
   const guion = "const {runAll,group}=require('./test/harness');" +

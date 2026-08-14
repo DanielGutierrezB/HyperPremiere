@@ -88,6 +88,18 @@ async function main() {
     process.stdout.write('panic: connection reset by peer\n');
     return;
   }
+  if (modo === 'usage-real') {
+    // El `usage` EXACTO que devolvió cursor-agent con el prompt más chico
+    // posible ("Decí solamente: hola"): 2 tokens de entrada y 31.823 escritos a
+    // caché, que es su propio contexto. Está acá para que se vea de una que
+    // contar `inputTokens` es contar nada.
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false,
+      result: '<html>ok</html>',
+      usage: { inputTokens: 2, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 31823 },
+    }) + '\n');
+    return;
+  }
   if (modo === 'plano') {
     // Un cierre limpio, como el de `--output-format json`: sirve para los tests
     // que no miran el estado en vivo sino QUÉ PROMPT recibió el CLI.

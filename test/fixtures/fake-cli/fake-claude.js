@@ -168,6 +168,25 @@ async function main() {
     return;
   }
 
+  if (modo === 'usage-real') {
+    // El `usage` con la forma y los órdenes de magnitud REALES de una
+    // generación: input_tokens es una miseria y la entrada de verdad está en los
+    // dos campos de caché. Los números salen de un job del proyecto de un editor
+    // (Marcador 1, log del 14/08).
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false,
+      result: '<html>ok</html>',
+      usage: {
+        input_tokens: 4,
+        output_tokens: 9252,
+        cache_read_input_tokens: 84015,
+        cache_creation_input_tokens: 49316,
+      },
+      total_cost_usd: 0.42,
+    }) + '\n');
+    return;
+  }
+
   if (modo === 'viejo' || modo === 'sin-sysfile') {
     process.stdout.write(JSON.stringify({
       type: 'result', subtype: 'success', is_error: false,

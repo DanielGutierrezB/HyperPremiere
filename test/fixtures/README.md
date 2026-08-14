@@ -36,3 +36,9 @@ caso: lo que se prueba sigue siendo formato real.
 Los modos `falla-*` de `fake-claude.js` son los que **sí** pasan seguido en la
 máquina de otro: cerrar con código 1 dejando `stderr` vacío y el motivo en
 `stdout`, que es como se porta el CLI de verdad con `--output-format json`.
+
+El modo `usage-real` de los dos trae el `usage` con la forma y los órdenes de
+magnitud de verdad, que es lo único que hace ver el problema: el campo de entrada
+en dos dígitos y la entrada completa en los de caché. El de Cursor es literal — el
+`usage` que devolvió `cursor-agent` con el prompt más chico posible ("Decí
+solamente: hola"), 2 tokens de entrada y 31.823 escritos a caché.

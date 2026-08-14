@@ -1722,22 +1722,29 @@
 
   // ── Contador de uso de la sesión (tokens) ───────────────────────────
   var suValue = document.getElementById("su-value");
+  var suBox = document.getElementById("session-usage");
   var suReset = document.getElementById("su-reset");
+  // La línea corta y el detalle del tooltip los arma HPUtil.sessionUsage, donde
+  // están las trampas de cada número explicadas y probadas.
   function updateSessionUsageBar() {
     if (!suValue) return;
-    var u = HPStore.getSessionUsage();
-    if (!u.generations) { suValue.textContent = "sin generaciones todavía"; return; }
-    var txt = HPUtil.addThousands(u.inputTokens) + " tokens de entrada · " +
-      HPUtil.addThousands(u.outputTokens) + " de salida";
-    if (u.costUsd > 0) txt += " · $" + u.costUsd.toFixed(3);
-    txt += " · " + u.generations + (u.generations === 1 ? " generación" : " generaciones");
-    suValue.textContent = txt;
+    var vista = HPUtil.sessionUsage(HPStore.getSessionUsage());
+    suValue.textContent = vista.line;
+    if (suBox) suBox.setAttribute("title", vista.detail);
   }
   if (suReset) suReset.addEventListener("click", function () {
     HPStore.resetSessionUsage();
     updateSessionUsageBar();
   });
   updateSessionUsageBar();
+  // El acumulado que quedó de antes cuenta la entrada a medias y eso no se puede
+  // reparar hacia atrás. Va al log una sola vez, al abrir: el tooltip lo dice
+  // también, pero hay que ir a buscarlo.
+  if (HPStore.getSessionUsage().legacyMix) {
+    hpLog("El contador de la sesión traía un acumulado de antes: la entrada de esas generaciones " +
+      "se contó sin los tokens de caché, así que el total queda corto. Tocá “reiniciar” al lado " +
+      "de Sesión para medir limpio de acá en adelante.", "WARN");
+  }
 
   // ── Actualización (⟳): versión, aviso de update y recarga del panel ──
   var btnUpdate = document.getElementById("btn-update");

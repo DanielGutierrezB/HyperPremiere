@@ -149,6 +149,46 @@ extra, solo cuando lo usás.
   marcador gastás **más por recurso pero en el correcto**: va uno entero (~3k tok) en vez
   de dos ajenos recortados a la mitad.
 
+## Qué dice el contador de la sesión
+
+La barra **Sesión** mostraba una fracción de lo que pasaba. Con 164 generaciones encima
+marcaba *75.256 tokens de entrada · 2.341.682 de salida*: 459 de entrada por generación,
+cuando cada una manda el objetivo de la clase, el fragmento del transcript, la instrucción
+y las imágenes. La salida estaba bien; la entrada no estaba mal calculada, estaba **mal
+leída**.
+
+Los CLI de agente parten la entrada en tres, y `inputTokens` —el que se estaba mostrando—
+es solo el pedazo que **no** estaba cacheado. El resto viaja por los campos de caché. Se
+ve mejor que en ninguna explicación en la llamada más chica que se puede hacer, un prompt
+de veinte caracteres a `cursor-agent`:
+
+```json
+{ "inputTokens": 2, "outputTokens": 4, "cacheReadTokens": 0, "cacheWriteTokens": 31823 }
+```
+
+Esos 31.823 son el contexto del propio agente. En una generación de verdad los tres
+conviven —4 sueltos, 84.015 leídos de caché, 49.316 escritos— y el contador mostraba **4**.
+
+Ahora la línea dice la entrada **completa**, y aparte cuánto de eso fue caché, que es lo
+que explica por qué la entrada real es diez veces el prompt que armamos: es contexto que el
+agente vuelve a leer en cada llamada, no algo que podamos recortar. El tooltip desarma los
+tres números, da el promedio por generación y aclara el **costo**, que también engañaba:
+Cursor va por suscripción y no informa costo, y la API de Anthropic no lo devuelve, así que
+un "$15.37" pelado se leía como el costo de la sesión entera cuando en realidad cubría doce
+de ciento sesenta y cuatro generaciones. Se dice: `$15.37 en 12 de 164`.
+
+Una advertencia para el día de la actualización: **el acumulado que ya tenías no se puede
+reparar hacia atrás** (los tokens de caché de esas generaciones no los guardaba nadie), así
+que queda marcado como mezclado —lo dice el ⬇ Log al abrir y el tooltip— hasta que toques
+**reiniciar**. De ahí en adelante, todo se cuenta igual.
+
+De paso se arregló el **estimado de la cola**, que se calibraba con esto. Dividía el costo
+acumulado por esos tokens de entrada de mentira, así que le salía una tarifa de cientos de
+dólares por millón. Ahora promedia **por generación** y solo sobre las que informaron
+costo, que son las únicas donde están las dos mitades de la cuenta. Y la línea de tokens de
+la cola dice lo que de verdad estima —**el prompt que mandamos nosotros**—, porque el
+contexto del agente no lo podemos prever.
+
 ## La cola
 
 - **Pipeline de 2 carriles (modelo ↔ render):** el **modelo (LLM)** corre **varios en
@@ -246,8 +286,9 @@ extra, solo cuando lo usás.
   job queda **esperando tokens** ⏳ con **↻ Reactivar** (individual o todos).
 - **Ver**: clic en el nombre del clip terminado → abre esa secuencia y salta a su marcador
   en la pestaña Marcadores.
-- **Estimado** al pie: tiempo, tokens y **costo** aproximados de lo pendiente (el tiempo se
-  auto-calibra con el uso real).
+- **Estimado** al pie: tiempo, tamaño del prompt y **costo** aproximados de lo pendiente
+  (el tiempo y el costo se auto-calibran con el uso real; ver **Qué dice el contador de la
+  sesión**).
 - **Persistencia por proyecto**: la cola se guarda en
   `<carpeta-del-.prproj>/HyperPremiere/queue.json` y se recarga al reabrir. El transcript
   va aparte, por secuencia, en `HyperPremiere/<secuencia>/transcript.json`.
@@ -470,8 +511,10 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   (pagan prioridad con más consumo), las `-none` (sin razonamiento) y la gama chica.
   Acá el nivel de pensamiento **va dentro del ID del modelo** (`…-thinking-high`,
   `-xhigh`), así que el selector de esfuerzo no aparece.
-  A tener en cuenta: cada generación arrastra ~30k tokens de contexto del propio
-  agente y tarda ~1,5–3 min, más que Claude directo. Lo que puede ver es un
+  A tener en cuenta: cada generación arrastra el contexto del propio agente —medido
+  con un prompt de veinte caracteres, **31.823 tokens** de piso, y por eso el
+  contador de la sesión marca una entrada mucho mayor que nuestro prompt— y tarda
+  ~1,5–3 min, más que Claude directo. Lo que puede ver es un
   **directorio temporal nuestro** —ahí dejamos las imágenes de referencia, nunca
   se le pasa la carpeta de tu proyecto— y va **sin permisos abiertos**, así que
   cualquier herramienta que necesite aprobación queda denegada. Lo que **no** hace
@@ -830,6 +873,15 @@ el camino normal, que el **conteo de tokens** que el CLI sí mandó **no se pier
 diferencia del stream cortado, donde sí se pierde y el aviso lo dice), que el aviso llegue
 al log como **advertencia** sin frenar nada, que Cursor tenga la misma red, y que cuando
 no hay nada que rescatar el error se entienda.
+
+Y el **contador de la sesión**, eslabón por eslabón, porque el número se puede perder en
+cualquiera y sin que nada falle: que el mapeo de cada CLI no deje la caché afuera (con el
+`usage` real de los dos, incluido el `cacheWriteTokens` de Cursor, que un rename pondría en
+cero calladito), que las hasta tres llamadas de un mismo recurso sumen su entrada completa,
+que un proveedor que no manda el total no lo deje en cero, que el panel acumule la caché y
+lleve el costo con **cuántas** generaciones lo informaron, que un acumulado guardado por
+una versión anterior siga sumando desde donde iba, y que la línea que se lee diga la
+entrada completa, cuánto fue caché y sobre cuántas generaciones se juntó ese costo.
 
 Y el **login de Claude**: que sin CLI se falle al instante en vez de esperar el minuto,
 que el timeout cuente qué encontró, que una versión vieja mande a actualizar, que un link

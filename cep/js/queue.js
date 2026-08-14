@@ -311,7 +311,12 @@
     // de las etapas (si no, el total quedaba más chico que una de sus partes).
     job._totalMs = Math.max(Date.now() - job.startedAt, (job._modelMs || 0) + (job._renderMs || 0));
     var dur = fmtDuration(job._totalMs / 1000);
-    var tok = job.usage ? " · " + addThousands(job.usage.inputTokens) + "↑ " + addThousands(job.usage.outputTokens) + "↓" : "";
+    // ↑ es la entrada COMPLETA (con la caché, que es casi toda): mostrar
+    // `inputTokens` a secas hacía que un recurso de cien mil tokens cerrara
+    // con "6↑".
+    var tok = job.usage
+      ? " · " + addThousands(HPStore.totalInput(job.usage)) + "↑ " + addThousands(job.usage.outputTokens) + "↓"
+      : "";
     job.status = "done"; job.pct = 100; job.act = null;
     job.msg = msgTxt + " (v" + job.version + ")" + tok + " · " + dur + stageBreakdown(job);
     hpLog("Job DONE [" + job.label + "] v" + job.version + " · " + msgTxt + " · " + dur);

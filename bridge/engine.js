@@ -846,7 +846,9 @@ async function prepareGeneration(body, mode, onProgress) {
   fs.writeFileSync(outPaths.html, html, 'utf8');
   report({
     pct: 55,
-    msg: 'HTML listo · Tokens: ↑' + usage.inputTokens + ' ↓' + usage.outputTokens,
+    // ↑ es la entrada COMPLETA, con la caché: `inputTokens` a secas es apenas lo
+    // que no estaba cacheado y este aviso mostraba "↑6" (ver makeUsage).
+    msg: 'HTML listo · Tokens: ↑' + usage.totalInputTokens + ' ↓' + usage.outputTokens,
     usage: usage,
   });
 

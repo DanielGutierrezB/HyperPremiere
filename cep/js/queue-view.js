@@ -245,13 +245,22 @@
     confirmAndClean(targets, "Limpiar versiones viejas", "🧹 No hay versiones viejas para limpiar.");
   }
 
-  // Costo estimado de la cola, auto-calibrado con el costo REAL ya acumulado en la
-  // sesión ($/token de entrada). Local = gratis; sin datos aún = se calcula al correr.
-  function estimateCostLabel(inputTokens) {
+  // Costo estimado de la cola, auto-calibrado con lo REAL de esta sesión.
+  //
+  // Se calibra por GENERACIÓN, no por token, y eso arregla dos cosas. La
+  // primera: el $/token salía de dividir el costo por `inputTokens`, que en los
+  // CLI de agente es el pedacito sin cachear —así que la tarifa daba cientos de
+  // dólares por millón y el estimado de la cola era un disparate—. La segunda:
+  // aunque se cuente la entrada completa, sumar los tokens de los proveedores
+  // que NO informan costo (Cursor por suscripción) contra los dólares de los que
+  // sí, mezcla dos cosas distintas. El promedio se saca solo de las generaciones
+  // que informaron costo, que es la única muestra con las dos mitades.
+  // Local = gratis; sin muestra todavía = se calcula al correr.
+  function estimateCostLabel(aiJobCount) {
     if (HPConfigUI.isLocalProvider()) return "gratis (local)";
     var u = HPStore.getSessionUsage();
-    if (u && u.costUsd > 0 && u.inputTokens > 0) {
-      var est = inputTokens * (u.costUsd / u.inputTokens);
+    if (u && u.costUsd > 0 && u.costGenerations > 0) {
+      var est = aiJobCount * (u.costUsd / u.costGenerations);
       return "≈ $" + (est < 0.1 ? est.toFixed(4) : est.toFixed(2));
     }
     return "s/d (se calcula al procesar)";
@@ -278,7 +287,14 @@
       " · tiempo ≈ " + fmtDuration(timeSec) + (HPQueue.timing.calibrated() ? "" : " (aprox.)");
     foot.appendChild(line1);
     var line2 = document.createElement("div"); line2.className = "qe-line qe-tok";
-    line2.textContent = "Tokens de entrada estimados: calculando…";
+    line2.textContent = "Tokens del prompt: calculando…";
+    // Lo que se puede estimar es NUESTRO prompt, porque lo armamos nosotros. La
+    // entrada real que después informa el contador es bastante mayor: los CLI de
+    // agente le suman su propio contexto (~30k tokens) y lo releen en cada
+    // llamada. Decirlo acá evita que los dos números parezcan contradecirse.
+    line2.setAttribute("title", "Es el tamaño de lo que le mandamos (objetivo, guion, " +
+      "instrucciones, imágenes). Con los CLI de agente, la entrada que termina contando el " +
+      "medidor de sesión es mayor: cada llamada arrastra el contexto del propio agente.");
     foot.appendChild(line2);
     panel.appendChild(foot);
 
@@ -292,8 +308,8 @@
       }).catch(function () { return 0; });
     })).then(function (vals) {
       var total = vals.reduce(function (a, b) { return a + (b || 0); }, 0);
-      line2.textContent = "Tokens de entrada estimados (toda la cola): ≈ " + addThousands(total) +
-        " · " + aiJobs.length + " llamada(s) a la IA · costo " + estimateCostLabel(total);
+      line2.textContent = "Tokens del prompt (toda la cola): ≈ " + addThousands(total) +
+        " · " + aiJobs.length + " llamada(s) a la IA · costo " + estimateCostLabel(aiJobs.length);
     }).catch(function () { line2.textContent = ""; });
   }
 
