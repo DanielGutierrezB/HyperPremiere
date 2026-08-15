@@ -32,10 +32,15 @@
  *   daño se propagaba. Componer una animación ES el entregable, así que el modo
  *   que corresponde es el normal. Se puede volver a forzar con `cursorMode`
  *   ('ask' | 'plan'), que es como se mide (test/manual/cursor-contrato.js
- *   --modo ask).
+ *   --modo ask). OJO con lo que este cambio NO prueba: medidos 4 contra 4, los
+ *   dos modos dieron composiciones impecables y ninguna negativa. Sacar `ask`
+ *   quita el motivo que el propio modelo dio, pero la negativa no se reproduce a
+ *   pedido, así que lo que protege al editor es la red de compose.js: que la
+ *   prosa se reconozca y NO se guarde como versión.
  * - El backend a veces responde "[unavailable]" de forma transitoria; ante eso
  *   se reintenta en vez de perder la generación.
- * - No informa costo en dólares (es suscripción), solo tokens.
+ * - No informa costo en dólares (es suscripción), solo tokens de entrada y salida
+ *   (la entrada, casi toda por los campos de caché: ver makeUsage).
  * - Si quien llama pasa `onActivity`, se usa `--output-format stream-json` (más
  *   `--stream-partial-output`): el CLI va contando qué herramienta usa y va
  *   mandando la respuesta a pedazos. El resultado se sigue leyendo del stdout

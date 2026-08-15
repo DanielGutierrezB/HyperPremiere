@@ -657,9 +657,12 @@ Qué cambió:
 1. **El modo.** Los dos que ofrece el CLI son de solo lectura y los dos son para otra
    cosa: `ask` es Q&A y `plan` es analizar y proponer. Componer **es** el entregable, así
    que va sin `--mode`. El aislamiento no dependía del modo y no cambia: el workspace
-   sigue siendo un temporal nuestro y sigue sin `--force`. Medido contra el CLI de verdad,
-   4 de 4 composiciones impecables y ni una negativa (`test/manual/cursor-contrato.js`,
-   que sabe forzar `--modo ask` para reproducir la corrida que falló).
+   sigue siendo un temporal nuestro y sigue sin `--force`. Medido contra el CLI de verdad
+   (`test/manual/cursor-contrato.js`, que sabe forzar `--modo ask`), el modo nuevo dio
+   **4 de 4 composiciones impecables**, sin negativas y ~14% más rápido (219s contra 253s
+   de promedio). Pero hay que decir lo otro: **`ask` también dio 4 de 4**. La negativa no
+   se reproduce a pedido — el modelo se planta cuando se planta, y por eso el arreglo que
+   de verdad protege al editor no es este punto sino los dos que siguen.
 2. **"Esto no es HTML" es un problema aparte.** No es lo mismo que un andamiaje
    incompleto: no hay nada que reparar. Se corta en la primera llamada, sin gastar la de
    estructura, y el mensaje trae **las palabras del modelo**, que suelen decir exactamente
