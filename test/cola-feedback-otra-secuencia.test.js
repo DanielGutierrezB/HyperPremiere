@@ -96,6 +96,7 @@ function dibujar(job) {
       hasActive: function () { return false; },
       hasQueued: function () { return false; },
       isUpgradable: function () { return false; },
+      needsPlacing: function () { return false; },
       regenerate: function (id, texto, idx) { espia.regenerados.push({ id: id, texto: texto, idx: idx }); },
       timing: { calibrated: function () { return true; }, estimateSec: function () { return 0; } },
     },

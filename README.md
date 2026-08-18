@@ -632,6 +632,42 @@ Tres cambios, en el orden en que actúan:
    una composición que no la declara. Ante un error de contenido corta en el primer
    intento y lo dice con todas las letras: *el problema no está en el hardware*.
 
+## Cuando el render salió bien pero el clip no entró
+
+Otro caso real (Marcador 3, 18/08). Tres minutos y tres cuartos de modelo, render impecable
+en 10,9s… y el clip afuera:
+
+> *el render salió bien pero el clip no entró: no se encontró la secuencia
+> "23_…_106595" (¿la cerraste?)*
+
+No la había cerrado. La secuencia estaba en el proyecto —se verificó leyendo el `.prproj`:
+ahí está, la última de sesenta y pico— y los marcadores se habían cargado de ella cinco
+minutos antes. El que se equivocaba era el panel: la búsqueda por nombre tenía el
+`try/catch` **alrededor del bucle**, así que la primera secuencia que no se dejara leer la
+cortaba, y todas las que venían después dejaban de existir. En silencio, y con un mensaje
+que mandaba a buscar la culpa del otro lado.
+
+Qué cambió:
+
+1. **La búsqueda aguanta.** El `try` va por ítem: una secuencia que se queja se cuenta y se
+   sigue con la que sigue. Si el nombre exacto no aparece, se acepta una **casi igual**
+   (espacios de más, otra caja) *solo si es única*: con dos candidatas no se adivina, porque
+   colocar en la clase equivocada sí le mueve el material al editor.
+2. **El "no la encontré" dice qué miró.** En qué proyecto buscó, cuántas secuencias pudo
+   leer, cuántas no se dejaron, y —lo más útil— si la secuencia está en **otro proyecto
+   abierto** (Premiere permite varios y `app.project` es el del frente; pasarse de proyecto
+   mientras la cola trabaja es lo más normal del mundo). Si no está en ninguno, ofrece el
+   nombre **más parecido**, que en una clase re-cortada suele ser el sospechoso: `…_106595`
+   contra `…_106595_01`.
+3. **📌 Colocar.** El render ya se pagó; que no entre tiene que costar un botón. En la fila
+   del recurso terminado aparece primero, con el `.mov` que ya está en el disco y el color
+   que le correspondía (una corrección sigue entrando en amarillo). Antes la única salida
+   era **✎ Feedback** —otra generación entera para repetir un archivo que ya existía— o
+   arrastrarlo a mano desde la carpeta. La marca **se guarda en `queue.json`**, porque la
+   causa típica se arregla reabriendo Premiere y para entonces el panel ya se reinició; y
+   si el job es viejo y no la trae —el del caso, por ejemplo— se lo reconoce por su
+   mensaje y el video se busca en la carpeta de la secuencia.
+
 ## Cuando el modelo contesta en vez de componer
 
 Otro caso real (Marcador 1, tres rondas seguidas). El panel corría el CLI de Cursor en
@@ -863,6 +899,19 @@ la secuencia que está al frente, así que un intento de agregar pistas sin acti
 nada, igual que en el Premiere de verdad. Y hay un test para la **red de seguridad sola**,
 con una pista nueva que viene ocupada (imposible en la vida real): la última comprobación
 antes de escribir tiene que frenar el clip igual.
+
+De la misma familia, **buscar la secuencia por nombre y poder colocar después**: que una
+secuencia ilegible en el medio de la lista no borre del mapa a las que siguen (con los
+nombres reales del proyecto donde pasó, y la del caso al final, que es lo que la hacía tan
+fácil de perder), que la del frente que no se deja leer no salga como "EvalScript error",
+que el "no la encontré" cuente cuántas miró y en qué proyecto, que se avise cuando está en
+**otro proyecto abierto**, que se ofrezca el nombre parecido sin inventar sospechosos, que
+un espacio de más no sea otra secuencia pero **dos** candidatas no se adivinen, y del lado
+del panel: que el recurso quede marcado con el `.mov` y el motivo textual de Premiere, que
+colocarlo después **no gaste ni una llamada** de IA ni de render, que conserve su color, que
+un segundo fallo no borre el motivo, que la marca sobreviva a cerrar el panel, y que un job
+guardado por una versión **anterior** —sin la marca y sin la ruta— se reconozca igual y
+encuentre su video en el disco (o lo diga, si ya no está).
 
 Cubren también el **estado en vivo**: el traductor de la salida de los CLI —con
 salidas **reales** capturadas de `claude` y `cursor-agent`, que están en

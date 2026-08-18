@@ -573,6 +573,16 @@
           // dar feedback y regenerar (retomando el mismo puesto en la cola).
           var dc = document.createElement("span"); dc.className = "qj-ctrls";
           // (El "Ver" ahora es clic en el nombre del clip — ver arriba.)
+          // Render hecho y clip afuera: lo único que falta es colocarlo, y va
+          // primero y destacado. Antes acá solo estaba ✎ Feedback, que gasta
+          // otra generación entera para repetir un .mov que ya está en disco.
+          if (HPQueue.needsPlacing(j)) {
+            var pb = iconBtn("📌 Colocar",
+              "El render ya está hecho: colocar el clip en “" + j.seqName + "” sin volver a generar. " +
+              "Si falló porque estabas en otro proyecto o la secuencia estaba cerrada, abrilos y probá de nuevo.",
+              (function (id) { return function () { HPQueue.placeAgain(id); }; })(j.id));
+            pb.className = "qbtn qbtn-react"; dc.appendChild(pb);
+          }
           // Render HQ SOLO tiene sentido en clips OPACOS (con fondo/mp4): ahí el
           // borrador usa JPEG 80 y HQ sube a 95. En clips con ALPHA el borrador ya
           // sale en PNG lossless → ProRes 4444 (máxima calidad), así que NO se ofrece.

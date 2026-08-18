@@ -136,13 +136,23 @@ function hp_makeSequenceActive(seq) {
 
 // Igual pero por nombre. Devuelve "ok" o "error: ...".
 function hp_activateSequence(seqName) {
-    var active = app.project.activeSequence;
-    // Si la que está al frente ya se llama así, es ésa: buscar por nombre podría
-    // devolver una tocaya y hacerle cambiar de timeline al editor al vacío.
-    if (active && active.name === seqName) return "ok";
-    var seq = hp_findSequenceByName(seqName);
-    if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\"";
-    return hp_makeSequenceActive(seq);
+    try {
+        var active = app.project.activeSequence;
+        // Si la que está al frente ya se llama así, es ésa: buscar por nombre podría
+        // devolver una tocaya y hacerle cambiar de timeline al editor al vacío.
+        // Leerle el nombre puede tirar (una secuencia recién cerrada, por
+        // ejemplo): eso no es "no está", es que hay que buscarla en la lista.
+        var nombreActivo = "";
+        try { nombreActivo = active ? String(active.name) : ""; } catch (eA) {}
+        if (nombreActivo && nombreActivo === seqName) return "ok";
+        var seq = hp_findSequenceByName(seqName);
+        if (!seq) return hp_seqNotFound(seqName);
+        return hp_makeSequenceActive(seq);
+    } catch (e) {
+        // Sin este catch la excepción salía del evalScript y el panel mostraba
+        // "EvalScript error", que no dice nada de nada.
+        return "error: " + e.toString();
+    }
 }
 
 // Abre/activa una secuencia por nombre y mueve el playhead a `seconds`.
@@ -456,15 +466,116 @@ function hp_ensureBin(parent, name) {
     try { return parent.createBin(name); } catch (e2) { return null; }
 }
 
-// Busca una secuencia del proyecto por nombre. Devuelve el objeto o null.
-function hp_findSequenceByName(name) {
+// Lo que vio la última búsqueda por nombre. Es lo que convierte un "no la
+// encontré" en algo diagnosticable (ver hp_seqNotFound).
+var HP_SEQ_SCAN = { proyecto: "", miradas: 0, ilegibles: 0, parecida: "", otroProyecto: "" };
+
+// Dos nombres que son "el mismo" salvo espacios de más o mayúsculas.
+function hp_looseName(name) {
+    return String(name || "").replace(/\s+/g, " ").replace(/^ +| +$/g, "").toLowerCase();
+}
+
+// Cuánto arrancan igual dos nombres. Los de clase se diferencian AL FINAL
+// ("…_106595" contra "…_106595_01"), así que el prefijo común alcanza para
+// señalar al sospechoso cuando el nombre exacto no aparece.
+function hp_commonPrefix(a, b) {
+    a = String(a); b = String(b);
+    var n = a.length < b.length ? a.length : b.length;
+    var i = 0;
+    while (i < n && a.charAt(i) === b.charAt(i)) i++;
+    return i;
+}
+
+// ¿La secuencia está en OTRO proyecto abierto? Devuelve el nombre del proyecto
+// o "". Premiere puede tener varios abiertos y `app.project` es el que está al
+// frente: si el editor se pasó a otro mientras la cola trabajaba, la secuencia
+// no desapareció, está al lado. NO se coloca ahí —sería escribir en un proyecto
+// que el editor no está mirando— pero decirlo cambia el diagnóstico entero.
+function hp_seqInOtherProject(want) {
     try {
-        var seqs = app.project.sequences;
-        for (var i = 0; i < seqs.numSequences; i++) {
-            if (seqs[i] && seqs[i].name === name) return seqs[i];
+        var actual = app.project;
+        var ps = app.projects;
+        var np = ps.numProjects;
+        for (var p = 0; p < np; p++) {
+            try {
+                var pr = ps[p];
+                if (!pr || pr === actual) continue;
+                var seqs = pr.sequences;
+                for (var i = 0; i < seqs.numSequences; i++) {
+                    try {
+                        if (seqs[i] && String(seqs[i].name) === want) return String(pr.name || "otro");
+                    } catch (eI) {}
+                }
+            } catch (eP) {}
         }
     } catch (e) {}
+    return "";
+}
+
+/**
+ * Busca una secuencia del proyecto por nombre. Devuelve el objeto o null.
+ *
+ * Recorre TODAS aunque alguna se queje, y ahí está el arreglo: el try va por
+ * ítem, no alrededor del bucle. Como estaba, una sola secuencia que no se
+ * dejara leer cortaba la búsqueda y todo lo que venía después dejaba de
+ * existir, en silencio. Fue el caso del 18/08: el render de [Marcador 3] salió
+ * bien, el clip no entró con un "no se encontró la secuencia (¿la cerraste?)"
+ * y la secuencia estaba en el proyecto, abierta, la última de sesenta y pico.
+ *
+ * Si el nombre exacto no aparece, se acepta una "casi igual" (espacios de más,
+ * otra caja) SOLO si es única: con dos candidatas no se adivina, porque colocar
+ * en la secuencia equivocada es peor que no colocar.
+ */
+function hp_findSequenceByName(name) {
+    var want = String(name || "");
+    HP_SEQ_SCAN = { proyecto: "", miradas: 0, ilegibles: 0, parecida: "", otroProyecto: "" };
+    try { HP_SEQ_SCAN.proyecto = String(app.project.name || ""); } catch (eN) {}
+
+    var seqs = null, total = 0;
+    try { seqs = app.project.sequences; total = seqs.numSequences; } catch (eC) { seqs = null; total = 0; }
+
+    var casi = null, cuantasCasi = 0;
+    for (var i = 0; i < total; i++) {
+        try {
+            var s = seqs[i];
+            if (!s) continue;
+            var nm = String(s.name);
+            HP_SEQ_SCAN.miradas++;
+            if (nm === want) return s;
+            if (hp_looseName(nm) === hp_looseName(want)) { casi = s; cuantasCasi++; }
+            if (hp_commonPrefix(nm, want) >= 8 &&
+                hp_commonPrefix(nm, want) > hp_commonPrefix(HP_SEQ_SCAN.parecida, want)) {
+                HP_SEQ_SCAN.parecida = nm;
+            }
+        } catch (eI) {
+            HP_SEQ_SCAN.ilegibles++;
+        }
+    }
+    if (casi && cuantasCasi === 1) return casi;
+    HP_SEQ_SCAN.otroProyecto = hp_seqInOtherProject(want);
     return null;
+}
+
+// El "no la encontré" contando QUÉ miró. Sin esto el mensaje mandaba a adivinar
+// ("¿la cerraste?") sobre una secuencia que podía estar ahí mismo, y no había
+// forma de saber si el problema era el nombre, el proyecto al frente o una
+// secuencia que no se dejó leer.
+function hp_seqNotFound(name) {
+    var s = HP_SEQ_SCAN;
+    var msg = "error: no encontré la secuencia \"" + name + "\"";
+    if (s.proyecto) msg += " en el proyecto \"" + s.proyecto + "\"";
+    msg += " (miré " + s.miradas + " secuencia(s)";
+    if (s.ilegibles) msg += "; " + s.ilegibles + " no se dejaron leer";
+    msg += ")";
+    if (s.otroProyecto) {
+        msg += ". Está en OTRO proyecto abierto: \"" + s.otroProyecto +
+            "\" — pasate a ese proyecto y volvé a colocar.";
+    } else if (s.parecida) {
+        msg += ". Lo más parecido que hay es \"" + s.parecida + "\": ¿la renombraste?";
+    } else {
+        msg += ". ¿La cerraste o la renombraste?";
+    }
+    return msg;
 }
 
 // ¿Alguna pista de AUDIO de la secuencia está libre en [start, end)? Solo se
@@ -594,7 +705,7 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
         var active = app.project.activeSequence;
         // Si la que está al frente ya se llama así, es ésa (puede haber tocayas).
         var seq = (active && active.name === seqName) ? active : hp_findSequenceByName(seqName);
-        if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\" (¿la cerraste?)";
+        if (!seq) return hp_seqNotFound(seqName);
 
         var f = new File(movPath);
         if (!f.exists) return "error: no existe el archivo: " + movPath;
@@ -765,7 +876,7 @@ function hp_recolorClipAt(seqName, atSeconds, colorLabel, mediaPath) {
     try {
         var seq = (app.project.activeSequence && app.project.activeSequence.name === seqName)
             ? app.project.activeSequence : hp_findSequenceByName(seqName);
-        if (!seq) return "error: no se encontró la secuencia \"" + seqName + "\"";
+        if (!seq) return hp_seqNotFound(seqName);
         var cl = Number(colorLabel);
         if (isNaN(cl) || cl < 0) return "error: color inválido";
         var want = String(mediaPath || "");

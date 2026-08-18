@@ -143,12 +143,61 @@ const MUTACIONES = [
     de: '    var reparto = u.costGenerations > 0 && u.costGenerations < gens;',
     a:  '    var reparto = u.costGenerations < gens;',
   },
+  // Buscar la secuencia y, si no entró, poder colocarla después.
+  {
+    nombre: 'una secuencia ilegible vuelve a cortar la búsqueda',
+    archivo: 'cep/jsx/host.jsx',
+    de: '        } catch (eI) {\n            HP_SEQ_SCAN.ilegibles++;\n        }',
+    a:  '        } catch (eI) { return null; }',
+  },
+  {
+    nombre: 'con dos candidatas parecidas se elige una al azar',
+    archivo: 'cep/jsx/host.jsx',
+    de: '    if (casi && cuantasCasi === 1) return casi;',
+    a:  '    if (casi) return casi;',
+  },
+  {
+    nombre: 'no se avisa que la secuencia está en otro proyecto abierto',
+    archivo: 'cep/jsx/host.jsx',
+    de: '    HP_SEQ_SCAN.otroProyecto = hp_seqInOtherProject(want);',
+    a:  '    HP_SEQ_SCAN.otroProyecto = "";',
+  },
+  {
+    nombre: 'un render que no entró no queda marcado para colocarse',
+    archivo: 'cep/js/queue.js',
+    de: '      job.notPlaced = true;\n      job._movPath = res.movPath;',
+    a:  '      job.notPlaced = false;\n      job._movPath = res.movPath;',
+  },
+  {
+    nombre: 'la marca de "sin colocar" no se guarda y muere al cerrar el panel',
+    archivo: 'cep/js/queue.js',
+    de: '      notPlaced: j.notPlaced, _movPath: j._movPath, _placeColor: j._placeColor,',
+    a:  '',
+  },
+  {
+    nombre: 'un recurso sin colocar de una versión anterior del panel no se reconoce',
+    archivo: 'cep/js/queue.js',
+    de: '    return /NO lo coloqu/.test(String(job.msg || ""));',
+    a:  '    return false;',
+  },
+  {
+    nombre: 'el video no se busca en el disco cuando el job no trae la ruta',
+    archivo: 'cep/js/queue.js',
+    de: '      if (r && r.ok && r.movPath) { job._movPath = r.movPath; return r.movPath; }',
+    a:  '      if (false) { return ""; }',
+  },
+  {
+    nombre: 'al recolocar, el color de la corrección se pierde',
+    archivo: 'cep/js/queue.js',
+    de: '      return hostPlace(job, mov, job._placeColor || COLOR_MAGENTA).then(function (place) {',
+    a:  '      return hostPlace(job, mov, COLOR_MAGENTA).then(function (place) {',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
 // ajena haría parecer que la mutación fue atrapada.
 const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
-  'rescate-composicion', 'contador-uso'];
+  'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada'];
 
 function correrSuite() {
   const guion = "const {runAll,group}=require('./test/harness');" +

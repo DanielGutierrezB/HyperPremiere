@@ -117,6 +117,11 @@
       // Cuánto tardó cada etapa: el mensaje ya lo dice, pero guardar los números
       // deja que la vista los vuelva a componer sin parsear texto.
       _modelMs: j._modelMs, _renderMs: j._renderMs,
+      // Un recurso renderizado que no se pudo colocar tiene que seguir
+      // ofreciendo "Colocar" mañana: la causa (estabas en otro proyecto, la
+      // secuencia estaba cerrada) suele arreglarse abriendo Premiere de nuevo,
+      // y para entonces el panel ya se reinició.
+      notPlaced: j.notPlaced, _movPath: j._movPath, _placeColor: j._placeColor,
       _failedStage: j._failedStage, payload: p
     };
   }
@@ -359,12 +364,87 @@
     var color = job.correction ? COLOR_YELLOW : (isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA);
     job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
     return hostPlace(job, res.movPath, color).then(function (place) {
-      if (place === "ok") { markDone(job, "✓ Listo y colocado"); return; }
+      if (place === "ok") { job.notPlaced = false; markDone(job, "✓ Listo y colocado"); return; }
       // El host NUNCA pisa material del editor: si no había lugar seguro, no
       // colocó nada y explicó por qué. Va al log como ERROR además de a la fila,
       // porque es lo único que queda por hacer a mano en un job que salió bien.
+      //
+      // Y se guarda CON QUÉ reintentar. El render está hecho y pagado: el que
+      // no entre tiene que costar un botón, no otra generación. Sin esto, la
+      // única salida era ✎ Feedback —cuatro minutos de modelo para repetir un
+      // .mov que ya estaba en el disco— o arrastrarlo a mano desde la carpeta.
+      job.notPlaced = true;
+      job._movPath = res.movPath;
+      job._placeColor = color;
       hpLog("Job SIN COLOCAR [" + job.label + "] · el render salió bien pero el clip no entró: " + place, "ERROR");
       markDone(job, "⚠ Render OK pero NO lo coloqué (no se tocó tu timeline): " + place);
+    });
+  }
+
+  /**
+   * ¿Este recurso está renderizado y sin colocar?
+   *
+   * La marca es `notPlaced`, pero un job guardado por una versión anterior del
+   * panel no la tiene y su MENSAJE sí. Y ése es justo el recurso que quedó
+   * afuera por el bug de la búsqueda de secuencias: sería absurdo que fuera el
+   * único que no puede usar el botón.
+   */
+  function needsPlacing(job) {
+    if (!job || job.status !== "done") return false;
+    if (job.notPlaced) return true;
+    return /NO lo coloqu/.test(String(job.msg || ""));
+  }
+
+  /**
+   * Qué archivo colocar: el que quedó del intento que falló, o —si el job viene
+   * de otra sesión y no lo tiene— el que esté en la carpeta de la secuencia.
+   * Un job restaurado de queue.json pierde lo que no se serializa, y el .mov
+   * está ahí igual: buscarlo cuesta una lectura de disco y ahorra una
+   * generación entera.
+   */
+  function movToPlace(job) {
+    if (job._movPath) return Promise.resolve(job._movPath);
+    return HPEngine.call("findRenderedVideo", {
+      projectPath: job.projectPath, sequenceName: job.seqName,
+      markerSlug: job.markerKey, version: job.version || 0
+    }).then(function (r) {
+      if (r && r.ok && r.movPath) { job._movPath = r.movPath; return r.movPath; }
+      return "";
+    }).catch(function () { return ""; });
+  }
+
+  /**
+   * Coloca de nuevo un recurso que ya está renderizado (botón "📌 Colocar").
+   *
+   * No vuelve a llamar al modelo ni al render. Tampoco recalcula el tiempo del
+   * job —el reloj de aquel recurso ya cerró— así que no pasa por markDone: solo
+   * cambia el mensaje.
+   */
+  function placeAgain(id) {
+    var job = null;
+    for (var i = 0; i < jobs.length; i++) if (jobs[i].id === id) job = jobs[i];
+    if (!job) return Promise.resolve("error: ese recurso ya no está en la cola");
+    var antes = job.msg;
+    job.msg = "Colocando en " + job.seqName + "…"; emit();
+    return movToPlace(job).then(function (mov) {
+      if (!mov) {
+        var falta = "error: no encontré el video de " + job.label + " en la carpeta de la secuencia";
+        job.msg = antes; emit();
+        hpLog("Job SIGUE SIN COLOCAR [" + job.label + "]: " + falta, "ERROR");
+        return falta;
+      }
+      return hostPlace(job, mov, job._placeColor || COLOR_MAGENTA).then(function (place) {
+        if (place === "ok") {
+          job.notPlaced = false;
+          job.msg = "✓ Colocado (el render ya estaba hecho)";
+          hpLog("Job COLOCADO a pedido [" + job.label + "] · sin gastar IA ni render");
+        } else {
+          job.msg = antes;
+          hpLog("Job SIGUE SIN COLOCAR [" + job.label + "]: " + place, "ERROR");
+        }
+        emit();
+        return place;
+      });
     });
   }
 
@@ -871,6 +951,9 @@
       });
       emit();
     },
+    // Colocar en Premiere un recurso YA renderizado que no pudo entrar.
+    placeAgain: placeAgain,
+    needsPlacing: needsPlacing,
     clearFinished: function () {
       // Conserva los activos, los en cola y los "waiting" (esos el usuario los
       // quiere reactivar cuando tenga tokens); limpia solo done/error.

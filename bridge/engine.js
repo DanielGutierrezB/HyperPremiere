@@ -2044,6 +2044,39 @@ function saveQueue(body) {
     return { ok: true, path: file, count: jobs.length };
   } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
 }
+/**
+ * El video ya renderizado de un recurso: `{ ok, movPath }`, o `{ ok:false }` si
+ * no hay ninguno en el disco.
+ *
+ * Es para volver a colocar en Premiere algo que se renderizó y no entró. El
+ * panel se guarda la ruta cuando eso pasa, pero un job que quedó de una sesión
+ * ANTERIOR —o de una versión del panel que todavía no la guardaba— no la tiene,
+ * y el archivo está ahí igual: sin esto habría que gastar otra generación
+ * entera por un `.mov` que ya existe.
+ *
+ * Tolera que la extensión no sea la esperada (un recurso con fondo sale .mp4).
+ */
+function findRenderedVideo(body) {
+  try {
+    body = body || {};
+    const markerSlug = String(body.markerSlug || '').trim();
+    if (!markerSlug) return { ok: false, error: 'falta markerSlug' };
+    // Solo lectura: no crear la carpeta por preguntar.
+    const baseDir = outputDirPath(body.projectPath, body.sequenceName);
+    if (!fs.existsSync(baseDir)) return { ok: false, error: 'no existe la carpeta ' + baseDir };
+    let version = Number(body.version) || 0;
+    if (!version) {
+      const videos = listVersions(baseDir, markerSlug, '.mov').concat(listVersions(baseDir, markerSlug, '.mp4'));
+      if (!videos.length) return { ok: false, error: 'no hay video de ' + markerSlug };
+      version = videos.map((v) => v.version).sort((a, b) => b - a)[0];
+    }
+    const movPath = versionFile(baseDir, markerSlug, version, '.mov') ||
+      versionFile(baseDir, markerSlug, version, '.mp4');
+    if (!movPath) return { ok: false, error: 'no hay video de ' + markerSlug + ' v' + version };
+    return { ok: true, movPath, version };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+
 function loadQueue(body) {
   try {
     const file = path.join(projectQueueRoot(body && body.projectPath), 'queue.json');
@@ -2064,6 +2097,8 @@ module.exports = {
   renderManualHtml,
   saveQueue,
   loadQueue,
+  // Para volver a colocar en Premiere un recurso que ya está renderizado.
+  findRenderedVideo,
   cleanOldVersions,
   listOldVersions,
   cleanupPreview,
