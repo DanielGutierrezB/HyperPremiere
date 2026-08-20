@@ -218,10 +218,16 @@ const MUTACIONES = [
     a:  '      if (false) { return; }',
   },
   {
-    nombre: 'desde cero se lleva puesto el feedback escrito sin preguntar',
+    nombre: 'desde cero vuelve a dispararse de una, sin preguntar',
     archivo: 'cep/js/queue-view.js',
-    de: '      if (t) {\n        HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {',
-    a:  '      if (false) {\n        HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {',
+    de: '      }, "Regenerar desde cero", function () { closeFeedback(j.id); HPQueue.regenerateFresh(j.id); });',
+    a:  '      }, "Regenerar desde cero", function () {});\n      closeFeedback(j.id); HPQueue.regenerateFresh(j.id);',
+  },
+  {
+    nombre: 'la confirmación no aclara que el feedback escrito no se usa',
+    archivo: 'cep/js/queue-view.js',
+    de: '        if (t) {\n          var q = document.createElement("p");',
+    a:  '        if (false) {\n          var q = document.createElement("p");',
   },
   {
     nombre: 'rediseñar desde cero arrastra la versión previa',

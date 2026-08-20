@@ -293,7 +293,9 @@ contexto del agente no lo podemos prever.
   marcador: **↻ Refinar** ajusta sobre la última versión con lo que escribiste, y
   **⟲ Regenerar desde cero** la descarta y vuelve a diseñar con la instrucción y el
   material de hoy. Refinar **con el cuadro vacío avisa** en vez de rediseñar por su cuenta,
-  y desde cero **pregunta** si había feedback escrito, que ahí no se usa.
+  y desde cero **pregunta siempre** —están pegados y las dos palabras se parecen, así que
+  errarle es esperable y un clic de más tiraría una animación que estaba bien—, aclarando
+  además que el feedback escrito ahí no se usa.
 - **Ver solo esta secuencia**: filtro en la cabecera, cuando la cola tiene marcadores de
   más de una. Solo cambia lo que se dibuja —los contadores de arriba siguen siendo de toda
   la cola y todo se procesa igual— y se recuerda entre sesiones.
@@ -1061,8 +1063,8 @@ Y **mirar y rehacer desde la Cola**, apretando los botones de verdad sobre la co
 dibujada: que el clic en el nombre lleve al timeline y **no** arrastre el panel a otra
 pestaña (y que a Marcadores se siga llegando por "Editar HTML"), que refinar con el cuadro
 vacío **avise** en vez de rediseñar por su cuenta —que era lo que pasaba antes y se
-descubría viendo el resultado—, que desde cero pregunte si había feedback escrito y no
-arrastre **nada** de la ronda anterior (ni HTML previo, ni el ajuste, ni la selección de
+descubría viendo el resultado—, que desde cero **pregunte siempre** (y que la pregunta
+aclare que el feedback escrito no se usa) y no arrastre **nada** de la ronda anterior (ni HTML previo, ni el ajuste, ni la selección de
 imágenes), que el "📌 Colocar" del intento viejo deje de ofrecerse al reencolar, y del
 filtro: que solo aparezca cuando hay más de una secuencia, que oculte sin tocar la cola
 —los contadores siguen siendo del total—, que diga cuántos quedaron afuera y que se

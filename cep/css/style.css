@@ -1424,6 +1424,17 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 }
 .qj-fb-input:focus { outline: none; border-color: var(--accent); }
 .qj-feedback .qbtn-react { flex: none; align-self: stretch; }
+/* "Regenerar desde cero", al lado de Refinar: misma caja y mismo alto, para que
+   no parezca un control menor de la barra. Apagado a propósito —descarta trabajo
+   y es la salida menos frecuente—, y con confirmación, que es lo que de verdad
+   protege del clic errado entre dos botones tan parecidos. */
+.qj-feedback .qbtn-fresh {
+  flex: none; align-self: stretch; font-size: 11px; padding: 2px 10px;
+  color: var(--text-secondary); border-color: var(--border, rgba(255,255,255,0.18));
+}
+.qj-feedback .qbtn-fresh:hover {
+  color: var(--text-primary); border-color: var(--text-secondary); background: rgba(255,255,255,0.06);
+}
 .qj-fb-hint {
   margin-top: 6px; font-size: 10px; line-height: 1.35;
   color: var(--text-secondary, rgba(255,255,255,0.6));

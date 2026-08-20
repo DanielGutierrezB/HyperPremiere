@@ -373,26 +373,28 @@
       HPQueue.regenerate(j.id, t, sendIdx);
     });
     inRow.appendChild(go);
-    var fresh = document.createElement("button"); fresh.type = "button"; fresh.className = "qbtn"; fresh.textContent = "⟲ Regenerar desde cero";
+    var fresh = document.createElement("button"); fresh.type = "button"; fresh.className = "qbtn qbtn-fresh"; fresh.textContent = "⟲ Regenerar desde cero";
     fresh.title = "Descarta el diseño anterior y vuelve a diseñar con la instrucción y el material de hoy. " +
-      "No usa el texto de este cuadro.";
+      "No usa el texto de este cuadro. Pregunta antes.";
+    // SIEMPRE pregunta. Está pegado a Refinar y las dos palabras se parecen, así
+    // que el error de puntería es esperable: sin confirmación, un clic de más
+    // tira una animación que estaba bien y arranca una generación entera.
     fresh.addEventListener("click", function (e) {
       e.stopPropagation();
       var t = (feedbackDraft[j.id] || "").trim();
-      // Con texto escrito, rediseñar desde cero lo tiraría a la basura sin
-      // decir nada: es el único caso donde vale interrumpir para preguntar.
-      if (t) {
-        HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {
-          var p = document.createElement("p");
-          p.textContent = "Desde cero no usa el feedback que escribiste: se descarta el diseño anterior y " +
-            "se vuelve a diseñar con la instrucción del marcador y el material de hoy. " +
-            "Si querés que ese texto se use, cerrá esto y dale “↻ Refinar”.";
-          body.appendChild(p);
-        }, "Regenerar desde cero", function () { closeFeedback(j.id); HPQueue.regenerateFresh(j.id); });
-        return;
-      }
-      closeFeedback(j.id);
-      HPQueue.regenerateFresh(j.id);
+      HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {
+        var p = document.createElement("p");
+        p.textContent = "¿Seguro querés generar esta animación desde cero? " +
+          "Se descarta el diseño anterior y se vuelve a diseñar con la instrucción del marcador " +
+          "y el material de hoy — es una generación completa, con su costo y su espera.";
+        body.appendChild(p);
+        if (t) {
+          var q = document.createElement("p");
+          q.textContent = "El feedback que escribiste NO se usa: desde cero no parte de la versión previa. " +
+            "Si lo que querés es aplicarlo, cerrá esto y dale “↻ Refinar”.";
+          body.appendChild(q);
+        }
+      }, "Regenerar desde cero", function () { closeFeedback(j.id); HPQueue.regenerateFresh(j.id); });
     });
     inRow.appendChild(fresh);
     fb.appendChild(inRow);

@@ -95,10 +95,15 @@ function dibujar(jobs, opts) {
     },
     HPLog: { log: function () {} },
     HPWidgets: {
-      // El overlay de confirmación: se anota y se ejecuta el "sí" solo si el
-      // test lo pide, que es como se distingue avisar de hacer.
-      confirmOverlay: function (titulo, cuerpo, boton, onOk) {
-        espia.confirmaciones.push({ titulo: titulo, boton: boton, aceptar: onOk });
+      // El overlay de confirmación: se anota (con lo que le escribe adentro, que
+      // es lo que el editor lee antes de decidir) y el "sí" se ejecuta solo si
+      // el test lo pide, que es como se distingue avisar de hacer.
+      confirmOverlay: function (titulo, armarCuerpo, boton, onOk) {
+        const body = elemento('div');
+        if (armarCuerpo) armarCuerpo(body);
+        espia.confirmaciones.push({
+          titulo: titulo, boton: boton, cuerpo: body.texto(), aceptar: onOk,
+        });
       },
     },
     HPEngine: { call: function () { return Promise.resolve({ ok: true }); } },
@@ -218,27 +223,35 @@ test('refinar sin escribir nada avisa, en vez de rediseñar por su cuenta', func
   eq(d.espia.salidas[0].esError, true);
 });
 
-test('desde cero, con el cuadro vacío, va directo', function () {
+test('desde cero pregunta siempre: está pegado a Refinar y se le apunta mal', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
   d.panel.porTexto('⟲ Regenerar desde cero').click();
 
-  eq(d.espia.desdeCero.length, 1);
+  eq(d.espia.desdeCero.length, 0, 'un clic no arranca nada');
+  eq(d.espia.confirmaciones.length, 1);
+  has(d.espia.confirmaciones[0].cuerpo, '¿Seguro querés generar esta animación desde cero?');
+  d.espia.confirmaciones[0].aceptar();
+  eq(d.espia.desdeCero.length, 1, 'recién con el sí');
   eq(d.espia.desdeCero[0], 'j1');
-  eq(d.espia.confirmaciones.length, 0, 'sin preguntas: no hay nada que perder');
   eq(d.espia.regenerados.length, 0, 'y no es un refinamiento disfrazado');
 });
 
-test('desde cero, con feedback escrito, pregunta antes de tirarlo', function () {
+test('con feedback escrito, la confirmación avisa que ese texto no se usa', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
   d.panel.buscar('qj-fb-input').listeners.input[0]({ target: { value: 'el fondo tapa el texto' } });
   d.panel.porTexto('⟲ Regenerar desde cero').click();
 
-  eq(d.espia.desdeCero.length, 0, 'todavía no hizo nada');
-  eq(d.espia.confirmaciones.length, 1, 'avisa que ese texto no se va a usar');
-  d.espia.confirmaciones[0].aceptar();
-  eq(d.espia.desdeCero.length, 1, 'y recién ahí rediseña');
+  has(d.espia.confirmaciones[0].cuerpo, 'NO se usa');
+  has(d.espia.confirmaciones[0].cuerpo, 'Refinar', 'y dice cuál es el botón que sí lo usa');
+});
+
+test('los dos botones se ven como hermanos, no como acción y control menor', function () {
+  const d = dibujar([terminado()]);
+  abrirFeedback(d);
+  eq(d.panel.porTexto('↻ Refinar').className, 'qbtn qbtn-react');
+  eq(d.panel.porTexto('⟲ Regenerar desde cero').className, 'qbtn qbtn-fresh');
 });
 
 // ── 3. Ver solo esta secuencia ───────────────────────────────────────
