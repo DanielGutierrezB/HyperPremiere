@@ -1710,7 +1710,11 @@
         // entran al panel.
         var limpio = HPUtil.withoutFrameIoMarkers(data);
         if (limpio.ignored) {
-          hpLog("Marcadores: ignorados " + limpio.ignored + " de Frame.io (comentarios de revisión)");
+          // Con nombre y segundo de cada uno: el filtro reconoce el sello que
+          // Frame.io le pone al comentario, y si alguna vez se llevara puesto un
+          // marcador de animación, acá se ve.
+          hpLog("Marcadores: ignorados " + limpio.ignored + " de Frame.io (comentarios de revisión) · " +
+            HPUtil.describeIgnored(limpio.ignoredMarkers));
         }
 
         renderMarkers(limpio.markers, limpio.ignored);

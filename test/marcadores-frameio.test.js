@@ -43,9 +43,58 @@ const panel = cargarPanel();
 const U = panel.HPUtil;
 
 /** Marcador como lo entrega hp_getMarkers(). */
-function marcador(index, name, guid) {
-  return { index: index, guid: guid || '', name: name, comment: '', start: index * 10, duration: 5, end: index * 10 + 5 };
+function marcador(index, name, guid, comment) {
+  return {
+    index: index, guid: guid || '', name: name, comment: comment || '',
+    start: index * 10, duration: 5, end: index * 10 + 5,
+  };
 }
+
+// Los DOS comentarios de Frame.io tal como estaban guardados en el .prproj de
+// un editor (2607_bi-deep-research-ai, 18/08). Se fueron a buscar ahí porque el
+// filtro por nombre no atrapaba ninguno y no se entendía por qué: el nombre del
+// marcador es QUIÉN comentó, y de Frame.io no dice nada. La marca está al final
+// del comentario.
+const REAL_1 = {
+  name: 'Cande',
+  comment: 'Texto listado:\n- Abrir navegador\n- Descargar archivos\n- Ejecutar código\n' +
+    '- Crear documentos\n- Manipular interfaces\n\n' +
+    'Frame.io Comment ID: bba94422-efc7-4389-afbd-23a4cb72f65a',
+};
+const REAL_2 = {
+  name: 'Candela',
+  comment: '¿No convendría que primero mencione el tipo de error "entremos" y ahí sí veamos la ' +
+    'descripción de lo que implica cada uno?\n\n' +
+    'Frame.io Comment ID: 37029c8b-202a-4212-998a-60b349082ce6',
+};
+
+// ── El caso real, con los datos reales ───────────────────────────────
+
+test('reconoce los comentarios REALES de Frame.io, que no nombran a Frame.io en el nombre', function () {
+  // La regresión de la v1.4.32: se filtraba por nombre ("Frame.io:") y ninguno
+  // de estos dos lo tiene, así que el editor seguía viendo una tarjeta por
+  // comentario de la revisión.
+  ok(U.isFrameIoMarker(REAL_1), 'el comentario de "Cande"');
+  ok(U.isFrameIoMarker(REAL_2), 'el de "Candela"');
+  eq(/frame\.io\s*:/i.test(REAL_1.name), false, 'y se confirma: por el nombre no había con qué');
+});
+
+test('la marca se reconoce escrita de cualquier forma', function () {
+  ok(U.isFrameIoMarker({ comment: 'nota\n\nFrame.io Comment ID: abc' }), 'como viene');
+  ok(U.isFrameIoMarker({ comment: 'frameio comment id: abc' }), 'sin punto y en minúscula');
+  ok(U.isFrameIoMarker({ comment: 'Frame.io  Comment  ID : abc' }), 'con espacios de más');
+  ok(U.isFrameIoMarker({ name: 'Frame.io Comment ID: abc' }), 'y si algún día la mueven al nombre');
+});
+
+test('un marcador de animación que MENCIONA Frame.io es trabajo, no un comentario', function () {
+  // El riesgo del filtro nuevo: mira el comentario, y el comentario del marcador
+  // es justo donde el editor escribe la instrucción. Solo el sello con "Comment
+  // ID" descarta; nombrar a Frame.io al pasar, no.
+  eq(U.isFrameIoMarker({ name: 'Gráfico', comment: 'esto lo pidieron por Frame.io: subir el contraste' }), false);
+  eq(U.isFrameIoMarker({ name: 'Intro', comment: 'ver el comentario de Cande en frame.io' }), false);
+  eq(U.isFrameIoMarker({ name: 'Cierre', comment: 'ID del comentario: 123' }), false);
+  eq(U.isFrameIoMarker({ name: 'Barras', comment: '' }), false);
+});
 
 // ── Reconocer el marcador ────────────────────────────────────────────
 
@@ -110,8 +159,45 @@ test('una secuencia sin comentarios pasa igual, y una vacía no rompe', function
   const r = U.withoutFrameIoMarkers([marcador(0, 'Intro'), marcador(1, 'Cierre')]);
   eq(r.ignored, 0);
   eq(r.markers.length, 2);
-  deepEq(U.withoutFrameIoMarkers([]), { markers: [], ignored: 0 });
-  deepEq(U.withoutFrameIoMarkers(null), { markers: [], ignored: 0 });
+  deepEq(U.withoutFrameIoMarkers([]), { markers: [], ignored: 0, ignoredMarkers: [] });
+  deepEq(U.withoutFrameIoMarkers(null), { markers: [], ignored: 0, ignoredMarkers: [] });
+});
+
+test('la clase que volvió de revisión queda limpia', function () {
+  // Cómo se ve de verdad: dos animaciones del editor y los dos comentarios de la
+  // revisión, intercalados por tiempo.
+  const r = U.withoutFrameIoMarkers([
+    marcador(0, 'Intro'),
+    marcador(1, REAL_1.name, 'g-fio-1', REAL_1.comment),
+    marcador(2, 'Gráfico de barras'),
+    marcador(3, REAL_2.name, 'g-fio-2', REAL_2.comment),
+  ]);
+  eq(r.ignored, 2);
+  deepEq(r.markers.map(function (m) { return m.name; }), ['Intro', 'Gráfico de barras']);
+  deepEq(r.markers.map(function (m) { return m.index; }), [0, 1], 'y sin huecos en la numeración');
+});
+
+test('el log dice CUÁLES se ignoraron, con nombre y minuto', function () {
+  // Es la red por si el filtro se pasa de listo: un marcador de animación que
+  // desaparezca tiene que poder verse en el log, no adivinarse.
+  const r = U.withoutFrameIoMarkers([
+    marcador(0, 'Intro'),
+    marcador(15, REAL_1.name, 'g-fio-1', REAL_1.comment),
+    marcador(20, REAL_2.name, 'g-fio-2', REAL_2.comment),
+  ]);
+  const linea = U.describeIgnored(r.ignoredMarkers);
+  ok(linea.indexOf('Cande') !== -1, 'quién comentó');
+  ok(linea.indexOf('2:30') !== -1, 'y en qué minuto: 150s');
+  ok(linea.indexOf('Candela') !== -1);
+});
+
+test('con una revisión entera encima, la lista del log no se desborda', function () {
+  const muchos = [];
+  for (let i = 0; i < 12; i++) muchos.push(marcador(i, 'Revisor ' + i, 'g-' + i, REAL_1.comment));
+  const r = U.withoutFrameIoMarkers(muchos);
+  eq(r.ignored, 12);
+  const linea = U.describeIgnored(r.ignoredMarkers);
+  ok(linea.indexOf('y 6 más') !== -1, 'se nombran los primeros y se cuenta el resto');
 });
 
 // ── Lo que de verdad importa: la numeración ──────────────────────────

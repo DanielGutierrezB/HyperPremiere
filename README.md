@@ -18,11 +18,13 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
 
 1. Ponés **marcadores nativos con duración** en tu secuencia donde querés un recurso y
    pulsás **Cargar marcadores** → una **tarjeta** por marcador.
-   Los **comentarios que volvés a importar de Frame.io** (marcadores cuyo nombre lleva
-   `Frame.io:`) se **ignoran**: son notas para vos, no trabajo para la herramienta. El
-   panel te dice cuántos salteó. Importante que no entren, porque si se colaran
+   Los **comentarios que volvés a importar de Frame.io** se **ignoran**: son notas para
+   vos, no trabajo para la herramienta. Se reconocen por el sello que Frame.io le pega al
+   final del comentario —`Frame.io Comment ID: <uuid>`— y el panel te dice **cuáles**
+   salteó, con nombre y minuto. Importante que no entren, porque si se colaran
    **correrían la numeración** y "Marcador 3" pasaría a ser otro marcador distinto del
-   que tiene los archivos ya generados.
+   que tiene los archivos ya generados. (Ver **Los comentarios de Frame.io no dicen
+   Frame.io**.)
 2. Le das **contexto**: el **Objetivo de la clase** y el transcript. Lo más directo es
    **🎙 Transcribir esta secuencia**: Premiere exporta el audio de la secuencia a un
    **.wav temporal** (mono 16 kHz), lo transcribe con tu **Whisper local** (sin nube ni
@@ -632,6 +634,31 @@ Tres cambios, en el orden en que actúan:
    una composición que no la declara. Ante un error de contenido corta en el primer
    intento y lo dice con todas las letras: *el problema no está en el hardware*.
 
+## Los comentarios de Frame.io no dicen Frame.io
+
+El filtro que se hizo para ignorarlos miraba el **nombre** del marcador y pedía
+`Frame.io:`. Parecía razonable y no atrapó ni uno: el editor seguía viendo una tarjeta por
+comentario de la revisión. Hubo que abrir el `.prproj` de un editor para entender por qué.
+Los dos comentarios que había ahí estaban guardados así:
+
+```
+nombre  = "Cande"
+comment = "Texto listado:\n- Abrir navegador\n- Descargar archivos…\n
+           \nFrame.io Comment ID: bba94422-efc7-4389-afbd-23a4cb72f65a"
+```
+
+El **nombre es quién comentó**. De Frame.io no dice nada, y nunca iba a decirlo. La marca
+está al final del **comentario**, y es un sello que no aparece por casualidad: se reconoce
+eso, escrito como venga (con o sin punto, con espacios de más, en el comentario o en el
+nombre por si algún día lo mueven).
+
+Lo que **no** se hace es descartar por la palabra "Frame.io" suelta en un comentario. El
+comentario del marcador es justo donde el editor escribe la instrucción, así que un
+marcador que diga *"esto lo pidieron por Frame.io: subir el contraste"* es trabajo de
+verdad. Y como el filtro ahora mira ahí, el log dice **cuáles** ignoró con nombre y minuto
+(*"Cande 2:26 · Candela 3:24"*): si alguna vez se lleva puesto un marcador de animación,
+eso se ve en vez de adivinarse.
+
 ## Cuando el render salió bien pero el clip no entró
 
 Otro caso real (Marcador 3, 18/08). Tres minutos y tres cuartos de modelo, render impecable
@@ -996,7 +1023,12 @@ Y los **marcadores de Frame.io**, donde el riesgo no es la tarjeta de más sino 
 tiene archivos generados (con la contraprueba de cómo se veía el bug), que se reconozca el
 nombre venga como venga, que no se lleve puesto un marcador del editor que se parezca
 ("Frames por segundo", "Frame final"), y que en un Premiere sin `guid` la numeración de
-respaldo siga saliendo bien.
+respaldo siga saliendo bien. Los dos comentarios **reales** del proyecto de un editor están
+ahí como fixture, con su texto tal cual: son los que demuestran que el nombre no alcanzaba
+—se llaman "Cande" y "Candela"— y son los que hoy se reconocen por el sello del comentario.
+Con ellos se prueba también el otro lado: que un marcador de animación que **menciona**
+Frame.io en su instrucción sobreviva, y que el log liste los ignorados sin desbordarse
+cuando la revisión trae doce.
 
 Y la pestaña **Corrections**, que trabaja sin los marcadores: que agrupe por marcador y
 tome la última versión, que el **tramo** se recupere por las tres fuentes en orden y que

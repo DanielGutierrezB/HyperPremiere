@@ -175,6 +175,18 @@ const MUTACIONES = [
     a:  '',
   },
   {
+    nombre: 'los comentarios de Frame.io se vuelven a buscar solo por el nombre',
+    archivo: 'cep/js/util.js',
+    de: '    if (FRAMEIO_COMMENT_ID.test(comment) || FRAMEIO_COMMENT_ID.test(name)) return true;',
+    a:  '',
+  },
+  {
+    nombre: 'el filtro de Frame.io se pasa de listo y mira la palabra suelta',
+    archivo: 'cep/js/util.js',
+    de: '  var FRAMEIO_COMMENT_ID = /frame\\.?io[\\s_-]*comment[\\s_-]*id\\s*:/i;',
+    a:  '  var FRAMEIO_COMMENT_ID = /frame\\.?io/i;',
+  },
+  {
     nombre: 'un recurso sin colocar de una versión anterior del panel no se reconoce',
     archivo: 'cep/js/queue.js',
     de: '    return /NO lo coloqu/.test(String(job.msg || ""));',
@@ -197,7 +209,8 @@ const MUTACIONES = [
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
 // ajena haría parecer que la mutación fue atrapada.
 const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
-  'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada'];
+  'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada',
+  'marcadores-frameio'];
 
 function correrSuite() {
   const guion = "const {runAll,group}=require('./test/harness');" +

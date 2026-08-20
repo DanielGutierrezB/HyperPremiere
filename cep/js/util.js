@@ -169,16 +169,40 @@
   }
 
   /**
+   * La marca dura de un comentario importado: Frame.io le pega al FINAL del
+   * comentario su propio identificador —"Frame.io Comment ID: <uuid>"—, y eso
+   * no aparece por casualidad.
+   *
+   * Es el reconocimiento bueno, y hubo que ir a buscarlo al .prproj de un
+   * editor para encontrarlo. Los dos comentarios que había ahí se ven así:
+   *
+   *   nombre  = "Cande"        (el nombre es QUIÉN comentó)
+   *   comment = "Texto listado:\n- Abrir navegador…\n\nFrame.io Comment ID: bba94422-…"
+   *
+   * O sea: en el nombre no hay ni rastro de Frame.io. Por eso el filtro por
+   * nombre no veía ninguno y el editor seguía teniendo una tarjeta por
+   * comentario de la revisión.
+   */
+  var FRAMEIO_COMMENT_ID = /frame\.?io[\s_-]*comment[\s_-]*id\s*:/i;
+
+  /**
    * ¿Es un marcador de comentario importado de Frame.io?
    *
    * Al volver de revisión, Frame.io deja un marcador por comentario y quedan
    * mezclados con los de animación. No son trabajo para la herramienta: son
-   * notas para el editor. Se piden los dos puntos ("Frame.io:") y no solo el
-   * nombre suelto, para no llevarse puesto un marcador que el editor haya
-   * llamado "frames" o "Frame final".
+   * notas para el editor.
+   *
+   * Se mira el identificador (en el comentario o en el nombre, por si algún día
+   * lo mueven) y, además, se sigue aceptando el nombre con dos puntos
+   * ("Frame.io: …") porque hay quien los renombra a mano así. Lo que NO se hace
+   * es descartar por la sola palabra "Frame.io" suelta en un comentario: un
+   * marcador de animación que diga "esto lo pidieron por Frame.io" es trabajo
+   * de verdad, y perderlo en silencio es peor que una tarjeta de más.
    */
   function isFrameIoMarker(marker) {
-    var name = (marker && marker.name) || "";
+    var name = String((marker && marker.name) || "");
+    var comment = String((marker && marker.comment) || "");
+    if (FRAMEIO_COMMENT_ID.test(comment) || FRAMEIO_COMMENT_ID.test(name)) return true;
     return /frame\.io\s*:/i.test(name);
   }
 
@@ -189,19 +213,41 @@
    * ese campo es el respaldo de la numeración cuando Premiere no expone el
    * guid del marcador, así que si quedara con los huecos de los descartados,
    * los marcadores se numerarían salteado.
+   *
+   * `ignoredMarkers` son los descartados, con nombre y segundo. Van para que el
+   * log diga CUÁLES se fueron: si algún día el filtro se lleva puesto un
+   * marcador de animación, tiene que poder verse, no adivinarse.
    */
   function withoutFrameIoMarkers(markers) {
     var kept = [];
-    var ignored = 0;
+    var dropped = [];
     for (var i = 0; i < (markers || []).length; i++) {
       var m = markers[i];
-      if (isFrameIoMarker(m)) { ignored++; continue; }
+      if (isFrameIoMarker(m)) {
+        dropped.push({ name: String((m && m.name) || "(sin nombre)"), start: (m && m.start) || 0 });
+        continue;
+      }
       var copy = {};
       for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) copy[k] = m[k];
       copy.index = kept.length;
       kept.push(copy);
     }
-    return { markers: kept, ignored: ignored };
+    return { markers: kept, ignored: dropped.length, ignoredMarkers: dropped };
+  }
+
+  /**
+   * Los descartados, en una línea para el log: "Cande 2:26 · Candela 3:24".
+   * Se cortan en 6: con una clase entera revisada pueden ser docenas y la idea
+   * es poder reconocerlos de un vistazo, no leer la lista completa.
+   */
+  function describeIgnored(dropped) {
+    dropped = dropped || [];
+    var partes = [];
+    for (var i = 0; i < dropped.length && i < 6; i++) {
+      partes.push(dropped[i].name + " " + formatTime(dropped[i].start));
+    }
+    if (dropped.length > partes.length) partes.push("y " + (dropped.length - partes.length) + " más");
+    return partes.join(" · ");
   }
 
   /**
@@ -246,6 +292,7 @@
     distinguish: distinguish,
     updateBadge: updateBadge,
     isFrameIoMarker: isFrameIoMarker,
-    withoutFrameIoMarkers: withoutFrameIoMarkers
+    withoutFrameIoMarkers: withoutFrameIoMarkers,
+    describeIgnored: describeIgnored
   };
 })(typeof window !== "undefined" ? window : this);
