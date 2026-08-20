@@ -382,6 +382,21 @@
   }
 
   /**
+   * Deja un job listo para volver a correr en su MISMO puesto: borra todo lo que
+   * era de la corrida anterior (versión, uso, tiempos, estado en vivo) y lo pone
+   * en cola. Lo comparten refinar y rediseñar desde cero, que solo se
+   * diferencian en lo que le dejan en el payload.
+   */
+  function resetForRequeue(job, msg) {
+    job.status = "queued"; job.pct = 0; job.msg = msg;
+    job.prepared = null; job._usageCounted = false; job.version = undefined;
+    job.startedAt = 0; job.usage = null; job._modelMs = 0; job._renderMs = 0; job.act = null;
+    // Viene una versión nueva: el .mov que quedó sin colocar es de la vieja y
+    // ofrecer "📌 Colocar" pondría en el timeline lo que se está reemplazando.
+    job.notPlaced = false; job._movPath = "";
+  }
+
+  /**
    * ¿Este recurso está renderizado y sin colocar?
    *
    * La marca es `notPlaced`, pero un job guardado por una versión anterior del
@@ -907,10 +922,36 @@
           else delete j.payload.stillsSend;
         }
         else { j.payload.mode = "generate"; j.kind = "generate"; delete j.payload.stillsSend; }
-        j.status = "queued"; j.pct = 0;
-        j.msg = txt ? "Reencolado con feedback, esperando turno…" : "Reencolado, esperando turno…";
-        j.prepared = null; j._usageCounted = false; j.version = undefined;
-        j.startedAt = 0; j.usage = null; j._modelMs = 0; j._renderMs = 0; j.act = null;
+        resetForRequeue(j, txt ? "Reencolado con feedback, esperando turno…" : "Reencolado, esperando turno…");
+        break;
+      }
+      paused = false; emit(); pump();
+    },
+    /**
+     * Rediseña DESDE CERO un job ya terminado, en su mismo puesto: descarta el
+     * diseño anterior y vuelve a diseñar con la instrucción y el material que
+     * haya hoy.
+     *
+     * Es el "Regenerar desde cero" de la tarjeta del marcador, disponible sin
+     * salir de la Cola. Va en modo `regen` —el mismo que usa la tarjeta— y no
+     * en `generate`: para el motor son el mismo camino, pero `regen` es el que
+     * hace que el panel diga "desde cero" mientras trabaja en vez de parecer
+     * una generación cualquiera.
+     */
+    regenerateFresh: function (id) {
+      for (var i = 0; i < jobs.length; i++) {
+        var j = jobs[i];
+        if (j.id !== id) continue;
+        if (j.kind !== "generate" && j.kind !== "feedback") return; // solo IA
+        j.payload = j.payload || {};
+        // Nada del pasado viaja: ni la versión previa, ni el feedback de la
+        // ronda anterior, ni la selección de imágenes de esa ronda. Si alguno
+        // quedara, esto no sería desde cero.
+        delete j.payload.previousHtml;
+        delete j.payload.adjustment;
+        delete j.payload.stillsSend;
+        j.payload.mode = "regen"; j.kind = "feedback";
+        resetForRequeue(j, "Reencolado para rediseñar desde cero, esperando turno…");
         break;
       }
       paused = false; emit(); pump();

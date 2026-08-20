@@ -286,8 +286,17 @@ contexto del agente no lo podemos prever.
 - **Enviar a la cola** (staging sin arrancar), **Agregar listos a la cola**, **Generar listos**.
 - **Reactivar sin tokens**: si una generación falla por límite/cuota (429, usage limit), el
   job queda **esperando tokens** ⏳ con **↻ Reactivar** (individual o todos).
-- **Ver**: clic en el nombre del clip terminado → abre esa secuencia y salta a su marcador
-  en la pestaña Marcadores.
+- **Ver**: clic en el nombre del clip terminado → abre esa secuencia y **para el cursor
+  donde está el recurso**, y nada más. Es para mirarlo: el panel se queda en la Cola. (A
+  la pestaña Marcadores se llega con **✎ Editar HTML**, que es el que la necesita.)
+- **✎ Feedback** abre la ronda ahí mismo, con las **dos salidas** de la tarjeta del
+  marcador: **↻ Refinar** ajusta sobre la última versión con lo que escribiste, y
+  **⟲ Regenerar desde cero** la descarta y vuelve a diseñar con la instrucción y el
+  material de hoy. Refinar **con el cuadro vacío avisa** en vez de rediseñar por su cuenta,
+  y desde cero **pregunta** si había feedback escrito, que ahí no se usa.
+- **Ver solo esta secuencia**: filtro en la cabecera, cuando la cola tiene marcadores de
+  más de una. Solo cambia lo que se dibuja —los contadores de arriba siguen siendo de toda
+  la cola y todo se procesa igual— y se recuerda entre sesiones.
 - **Estimado** al pie: tiempo, tamaño del prompt y **costo** aproximados de lo pendiente
   (el tiempo y el costo se auto-calibran con el uso real; ver **Qué dice el contador de la
   sesión**).
@@ -1047,6 +1056,17 @@ el recurso se escriba en la carpeta de **origen** mientras el clip va a la secue
 segundo **no** mueva el tramo del transcript que lee el modelo; y que los dos nombres —45
 caracteres iguales salvo el sufijo— se muestren recortados a **lo que los diferencia**, que
 es lo único que evita corregir el corte equivocado.
+
+Y **mirar y rehacer desde la Cola**, apretando los botones de verdad sobre la cola
+dibujada: que el clic en el nombre lleve al timeline y **no** arrastre el panel a otra
+pestaña (y que a Marcadores se siga llegando por "Editar HTML"), que refinar con el cuadro
+vacío **avise** en vez de rediseñar por su cuenta —que era lo que pasaba antes y se
+descubría viendo el resultado—, que desde cero pregunte si había feedback escrito y no
+arrastre **nada** de la ronda anterior (ni HTML previo, ni el ajuste, ni la selección de
+imágenes), que el "📌 Colocar" del intento viejo deje de ofrecerse al reencolar, y del
+filtro: que solo aparezca cuando hay más de una secuencia, que oculte sin tocar la cola
+—los contadores siguen siendo del total—, que diga cuántos quedaron afuera y que se
+recuerde entre sesiones.
 
 Aparte, dos scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué

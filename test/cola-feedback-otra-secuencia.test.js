@@ -170,7 +170,7 @@ test('regenerar manda los índices de las imágenes que quedaron activas', funct
   const ta = d.panel.buscar('qj-fb-input');
   ok(ta, 'hay dónde escribir el ajuste');
   ta.listeners.input[0]({ target: { value: 'subí el título' } });
-  d.panel.porTexto('↻ Regenerar').click();
+  d.panel.porTexto('↻ Refinar').click();
 
   eq(d.espia.regenerados.length, 1);
   eq(d.espia.regenerados[0].texto, 'subí el título');

@@ -856,6 +856,19 @@ textarea:focus {
 /* Variante destructiva (vaciar cola) en rojo suave. */
 .queue-clear.is-danger { color: var(--error, #e08a8a); border-color: rgba(224,138,138,0.4); background: rgba(224,138,138,0.08); }
 .queue-clear.is-danger:hover { color: var(--error, #e08a8a); border-color: var(--error, #e08a8a); background: rgba(224,138,138,0.16); }
+/* Filtro "ver solo esta secuencia": va en la cabecera, con los botones. */
+.queue-filter {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; text-transform: none; letter-spacing: 0;
+  color: var(--text-secondary); cursor: pointer; user-select: none;
+  padding: 4px 8px; border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px;
+}
+.queue-filter:hover { color: var(--text-primary); border-color: var(--accent); }
+.queue-filter input { margin: 0; cursor: pointer; }
+/* Por qué la lista está más corta de lo que dicen los contadores de arriba. */
+.queue-filter-note {
+  font-size: 10px; color: var(--text-muted); font-style: italic; padding: 2px 0 4px;
+}
 .queue-seq {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;

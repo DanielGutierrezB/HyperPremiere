@@ -87,7 +87,10 @@
   HPStills.init({ onGeneralChanged: function () { updateGeneralSummary(); } });
   HPQueueView.init({
     goToJobMarker: function (job, openEditor) { goToJobMarker(job, openEditor); },
+    showJobInTimeline: showJobInTimeline,
     setOutput: setOutput,
+    // Con qué secuencia comparar para el filtro "ver solo esta secuencia".
+    currentSequence: function () { return currentSequenceName; },
     // Nombre de la secuencia cuyo contexto se está preparando, para que la cola
     // diga "esperando el transcript" en vez de un "En cola…" sin explicación.
     preparingSequence: function () { return prepSequence; },
@@ -1220,6 +1223,23 @@
       if (job) c._applyJob(job);
       else if (c._clearJob) c._clearJob(); // sin job (ej. borrado de la cola) → re-habilitar
     }
+  }
+
+  /**
+   * Llevar el timeline al recurso y NADA MÁS (clic en el nombre, en la Cola).
+   *
+   * Antes ese clic hacía el viaje completo —abrir la secuencia, cambiar a la
+   * pestaña Marcadores y recargarla— y para ver un clip de cinco segundos se
+   * perdía la cola de vista. Ir a Marcadores sigue estando, pero en el botón
+   * que de verdad lo necesita: "✎ Editar HTML".
+   */
+  function showJobInTimeline(job) {
+    if (!job) return;
+    HPHost.openSequenceAndSeek(job.seqName, job.markerStart, function (res) {
+      var txt = String(res || "");
+      if (txt.indexOf("ok") === 0) return;
+      setOutput("No pude llevarte a “" + job.seqName + "”: " + (txt || "sin respuesta de Premiere"), true);
+    });
   }
 
   // "Ver" (clic en el nombre del clip): abre la secuencia + salta al marcador en

@@ -1046,6 +1046,47 @@ test('la segunda ronda de feedback refina la versión NUEVA, no la que se eligi�
   eq(c.espia.preparados[1].adjustment, 'ahora corré el subtítulo');
 });
 
+test('rediseñar desde cero no arrastra nada de la ronda anterior', async function () {
+  // Es la salida cuando refinar ya no alcanza: lo que hay no se arregla, se
+  // tira. Si viajara el HTML previo o el feedback de antes, el modelo seguiría
+  // atado a ese diseño y "desde cero" sería una promesa incumplida.
+  const c = montarCola();
+  c.ctx.HPQueue.add(jobBase({ correction: true, payload: {
+    projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14', mode: 'adjust',
+    markerSlug: 'Marcador 3', previousHtml: '<div id="stage">v3</div>',
+    adjustment: 'subí el título', stillsSend: [1],
+  } }));
+  await dejarCorrer();
+
+  c.ctx.HPQueue.regenerateFresh(c.ctx.HPQueue.jobs()[0].id);
+  await dejarCorrer();
+
+  const segunda = c.espia.preparados[1];
+  eq(segunda.mode, 'regen', 'el modo que el panel muestra como “desde cero”');
+  eq(segunda.previousHtml, undefined, 'sin la versión previa');
+  eq(segunda.adjustment, undefined, 'sin el feedback de antes');
+  eq(segunda.stillsSend, undefined, 'y con todas las imágenes, como una generación nueva');
+  eq(c.espia.colocados.length, 2, 'el clip nuevo llegó al timeline');
+});
+
+test('al reencolar, el “Colocar” del intento anterior deja de ofrecerse', async function () {
+  // Si un render quedó sin colocar y después se rediseña, ese .mov es de la
+  // versión que se está reemplazando: colocarlo pondría lo viejo en el timeline.
+  const c = montarCola();
+  c.ctx.HPQueue.add(jobBase());
+  await dejarCorrer();
+  // Cómo queda un job cuyo render salió bien y cuya secuencia no se encontró.
+  const j = c.ctx.HPQueue.jobs()[0];
+  j.status = 'done'; j.notPlaced = true; j._movPath = '/p/HyperPremiere/clase-14/Marcador 3 v5.mov';
+  ok(c.ctx.HPQueue.needsPlacing(j), 'quedó pendiente de colocar');
+
+  c.ctx.HPQueue.regenerateFresh(j.id);
+  const re = c.ctx.HPQueue.jobs()[0];
+  eq(c.ctx.HPQueue.needsPlacing(re), false, 'reencolado, no hay nada que colocar');
+  eq(re.notPlaced, false, 'la marca del intento viejo se borra');
+  eq(re._movPath, '', 'y con ella la ruta de ese render');
+});
+
 test('las imágenes a incrustar no se escriben en el archivo de la cola', async function () {
   // Son base64: guardarlas hacía un queue.json de megas por un dato que se
   // vuelve a leer del marcador antes de correr.

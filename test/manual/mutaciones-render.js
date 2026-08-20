@@ -204,13 +204,56 @@ const MUTACIONES = [
     de: '      return hostPlace(job, mov, job._placeColor || COLOR_MAGENTA).then(function (place) {',
     a:  '      return hostPlace(job, mov, COLOR_MAGENTA).then(function (place) {',
   },
+  // ── Mirar y rehacer desde la Cola (v1.4.45) ────────────────────────
+  {
+    nombre: 'el clic en el nombre vuelve a arrastrar el panel a Marcadores',
+    archivo: 'cep/js/queue-view.js',
+    de: 'top.addEventListener("click", (function (job) { return function (e) { e.stopPropagation(); deps.showJobInTimeline(job); }; })(j));',
+    a:  'top.addEventListener("click", (function (job) { return function (e) { e.stopPropagation(); deps.goToJobMarker(job); }; })(j));',
+  },
+  {
+    nombre: 'refinar con el cuadro vacío vuelve a rediseñar sin avisar',
+    archivo: 'cep/js/queue-view.js',
+    de: '      if (!t) {\n        deps.setOutput("Escribí qué ajustar para refinar, o usá “Regenerar desde cero”.", true);\n        return;\n      }',
+    a:  '      if (false) { return; }',
+  },
+  {
+    nombre: 'desde cero se lleva puesto el feedback escrito sin preguntar',
+    archivo: 'cep/js/queue-view.js',
+    de: '      if (t) {\n        HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {',
+    a:  '      if (false) {\n        HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {',
+  },
+  {
+    nombre: 'rediseñar desde cero arrastra la versión previa',
+    archivo: 'cep/js/queue.js',
+    de: '        delete j.payload.previousHtml;\n        delete j.payload.adjustment;\n        delete j.payload.stillsSend;\n        j.payload.mode = "regen";',
+    a:  '        j.payload.mode = "regen";',
+  },
+  {
+    nombre: 'al reencolar queda ofreciéndose el “Colocar” del render viejo',
+    archivo: 'cep/js/queue.js',
+    de: '    job.notPlaced = false; job._movPath = "";',
+    a:  '    job.pct = 0;',
+  },
+  {
+    nombre: 'el filtro de la cola muestra igual las otras secuencias',
+    archivo: 'cep/js/queue-view.js',
+    de: '      visibles = jobs.filter(function (j) { return j.seqName === actual; });',
+    a:  '      visibles = jobs;',
+  },
+  {
+    nombre: 'la preferencia del filtro no se recuerda',
+    archivo: 'cep/js/queue-view.js',
+    de: '    try { global.localStorage.setItem(ONLY_CURRENT_KEY, v ? "1" : "0"); } catch (e) {}',
+    a:  '    try { void v; } catch (e) {}',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
 // ajena haría parecer que la mutación fue atrapada.
 const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
   'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada',
-  'marcadores-frameio'];
+  'marcadores-frameio', 'cola-mirar-y-rehacer', 'correcciones-encolar'];
 
 function correrSuite() {
   const guion = "const {runAll,group}=require('./test/harness');" +

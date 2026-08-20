@@ -6,6 +6,8 @@
  * Solo DOM: el estado vive en HPQueue (y la selección de imágenes de
  * feedback en HPStills). Deps de main vía init(deps):
  *   goToJobMarker(job, openEditor) → abrir secuencia + enfocar la tarjeta
+ *   showJobInTimeline(job)        → llevar el timeline al recurso, y nada más
+ *   currentSequence()             → la secuencia abierta, para el filtro
  *   setOutput(text, isError)      → mensaje en la barra de salida del panel
  *
  * Vanilla JS, sin ES modules: se expone como window.HPQueueView.
@@ -23,6 +25,17 @@
   // (id → texto), para que sobreviva a los re-render frecuentes de la cola.
   var feedbackOpen = {};
   var feedbackDraft = {};
+
+  // Filtro "ver solo esta secuencia". Es una preferencia de cómo MIRAR la cola,
+  // no un estado del trabajo, así que vive en localStorage y no en queue.json:
+  // se recuerda entre sesiones y no viaja con el proyecto.
+  var ONLY_CURRENT_KEY = "hyperpremiere::queue-only-current";
+  function onlyCurrentSeq() {
+    try { return global.localStorage.getItem(ONLY_CURRENT_KEY) === "1"; } catch (e) { return false; }
+  }
+  function setOnlyCurrentSeq(v) {
+    try { global.localStorage.setItem(ONLY_CURRENT_KEY, v ? "1" : "0"); } catch (e) {}
+  }
 
   // ── Reloj y estado en vivo de los jobs activos ───────────────────────
   // Dos cosas cambian cuando la cola NO emite: el tiempo, que corre solo, y lo
@@ -313,8 +326,16 @@
     }).catch(function () { line2.textContent = ""; });
   }
 
-  // Caja de feedback inline de un job terminado: texto + regenerar + control de
-  // imágenes con selección de reenvío.
+  // Cerrar la caja y olvidar lo que había: se llama al mandar, por cualquiera de
+  // los dos caminos.
+  function closeFeedback(id) {
+    feedbackOpen[id] = false;
+    feedbackDraft[id] = "";
+    HPStills.fbClear(id);
+  }
+
+  // Caja de feedback inline de un job terminado: texto + refinar/regenerar +
+  // control de imágenes con selección de reenvío.
   function buildFeedbackBox(j) {
     var fb = document.createElement("div"); fb.className = "qj-feedback-wrap";
     var inRow = document.createElement("div"); inRow.className = "qj-feedback";
@@ -324,8 +345,6 @@
     ta.addEventListener("input", function (e) { feedbackDraft[j.id] = e.target.value; });
     ta.addEventListener("click", function (e) { e.stopPropagation(); });
     inRow.appendChild(ta);
-    var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Regenerar";
-    go.title = "Regenerar con tu feedback (retoma el mismo puesto en la cola)";
     // Sobre qué secuencia trabaja el material de este marcador. Es la del job,
     // NO la que el editor tenga abierta: con la cola de varias clases, o
     // corrigiendo algo generado en el corte anterior, no coinciden.
@@ -333,15 +352,49 @@
       fbJobId: j.id, projectPath: j.projectPath,
       sequenceName: j.storeSeqName || j.seqName
     };
+    // Las DOS salidas de una ronda de feedback, las mismas que ofrece la tarjeta
+    // del marcador: refinar sobre lo que hay, o tirarlo y rediseñar. Antes acá
+    // había un solo botón que hacía una cosa o la otra según si el cuadro tenía
+    // texto, y para rediseñar desde cero había que irse a la pestaña Marcadores.
+    var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Refinar";
+    go.title = "Ajusta sobre la última versión con tu feedback (mantiene lo que funciona y retoma el mismo puesto en la cola)";
     go.addEventListener("click", function (e) {
       e.stopPropagation();
-      var t = feedbackDraft[j.id] || "";
+      var t = (feedbackDraft[j.id] || "").trim();
+      // Sin texto no hay refinamiento posible: antes esto salía como una
+      // regeneración total y el editor se enteraba al ver el resultado.
+      if (!t) {
+        deps.setOutput("Escribí qué ajustar para refinar, o usá “Regenerar desde cero”.", true);
+        return;
+      }
       // Índices de las imágenes que el usuario dejó activas (📤) para reenviar.
       var sendIdx = HPStills.fbCollect(j.id, j.markerKey, stillsOpts);
-      feedbackOpen[j.id] = false; feedbackDraft[j.id] = ""; HPStills.fbClear(j.id);
+      closeFeedback(j.id);
       HPQueue.regenerate(j.id, t, sendIdx);
     });
     inRow.appendChild(go);
+    var fresh = document.createElement("button"); fresh.type = "button"; fresh.className = "qbtn"; fresh.textContent = "⟲ Regenerar desde cero";
+    fresh.title = "Descarta el diseño anterior y vuelve a diseñar con la instrucción y el material de hoy. " +
+      "No usa el texto de este cuadro.";
+    fresh.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var t = (feedbackDraft[j.id] || "").trim();
+      // Con texto escrito, rediseñar desde cero lo tiraría a la basura sin
+      // decir nada: es el único caso donde vale interrumpir para preguntar.
+      if (t) {
+        HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {
+          var p = document.createElement("p");
+          p.textContent = "Desde cero no usa el feedback que escribiste: se descarta el diseño anterior y " +
+            "se vuelve a diseñar con la instrucción del marcador y el material de hoy. " +
+            "Si querés que ese texto se use, cerrá esto y dale “↻ Refinar”.";
+          body.appendChild(p);
+        }, "Regenerar desde cero", function () { closeFeedback(j.id); HPQueue.regenerateFresh(j.id); });
+        return;
+      }
+      closeFeedback(j.id);
+      HPQueue.regenerateFresh(j.id);
+    });
+    inRow.appendChild(fresh);
     fb.appendChild(inRow);
     // Imágenes/elementos para el feedback — mismo control que la tarjeta
     // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
@@ -402,6 +455,28 @@
     title.textContent = "Cola" + (pending ? " · " + pending + " en proceso/espera" : " · sin pendientes")
       + (waiting ? " · " + waiting + " esperando tokens ⏳" : "");
     head.appendChild(title);
+    // Filtro "ver solo esta secuencia". La cola junta varias clases a propósito
+    // —así se deja trabajando y se va— pero cuando estás sentado en una, lo de
+    // las otras es ruido. No toca la cola: solo deja de dibujarlo, y los
+    // contadores de al lado siguen siendo de todo.
+    var actual = (deps && deps.currentSequence) ? String(deps.currentSequence() || "") : "";
+    var otras = 0;
+    for (i = 0; i < jobs.length; i++) if (jobs[i].seqName !== actual) otras++;
+    var filtrando = false;
+    if (actual && otras > 0) {
+      filtrando = onlyCurrentSeq();
+      var lab = document.createElement("label"); lab.className = "queue-filter";
+      lab.title = "Muestra solo los marcadores de “" + actual + "”. No cambia la cola: " +
+        "los de las otras secuencias siguen ahí y se procesan igual.";
+      var cbx = document.createElement("input"); cbx.type = "checkbox"; cbx.checked = filtrando;
+      cbx.addEventListener("change", function () {
+        setOnlyCurrentSeq(cbx.checked);
+        render(HPQueue.jobs());
+      });
+      lab.appendChild(cbx);
+      lab.appendChild(document.createTextNode(" ver solo esta secuencia"));
+      head.appendChild(lab);
+    }
     // Reactivar todos: aparece cuando hay jobs pausados por falta de tokens.
     if (waiting) {
       var reactAll = document.createElement("button"); reactAll.type = "button"; reactAll.className = "queue-react";
@@ -459,10 +534,20 @@
     head.appendChild(cleanBtn);
     panel.appendChild(head);
 
+    var visibles = jobs;
+    if (filtrando) {
+      visibles = jobs.filter(function (j) { return j.seqName === actual; });
+      var nota = document.createElement("div"); nota.className = "queue-filter-note";
+      nota.textContent = visibles.length
+        ? "Filtrado por “" + actual + "” · " + otras + " marcador(es) de otras secuencias ocultos"
+        : "No hay nada de “" + actual + "” en la cola · " + otras + " marcador(es) de otras secuencias ocultos";
+      panel.appendChild(nota);
+    }
+
     // Agrupar por secuencia preservando el orden de proceso.
     var groups = [], map = {};
-    for (i = 0; i < jobs.length; i++) {
-      var jj = jobs[i];
+    for (i = 0; i < visibles.length; i++) {
+      var jj = visibles[i];
       if (!map[jj.seqName]) { map[jj.seqName] = { seqName: jj.seqName, jobs: [] }; groups.push(map[jj.seqName]); }
       map[jj.seqName].jobs.push(jj);
     }
@@ -526,12 +611,15 @@
         var top = document.createElement("div"); top.className = "qj-title";
         var dot = (j.status === "running") ? "▶ " : (j.status === "modeling") ? "✎ " : (j.status === "ready") ? "◔ " : (j.status === "queued") ? "• " : (j.status === "done") ? "✓ " : (j.status === "waiting") ? "⏳ " : "⚠ ";
         top.textContent = dot + j.label;
-        // El nombre del clip terminado es clickeable = "Ver": abre la secuencia,
-        // salta al marcador y lo carga/enfoca en la pestaña Marcadores.
+        // El nombre del clip terminado lleva al timeline y nada más: abre su
+        // secuencia y para el cursor donde está el recurso, para poder verlo.
+        // Antes también cambiaba a la pestaña Marcadores y la recargaba, y eso
+        // era un viaje de ida: por mirar un clip de cinco segundos se perdía la
+        // cola. A Marcadores se sigue llegando con "✎ Editar HTML".
         if (j.status === "done") {
           top.classList.add("qj-title-link");
-          top.setAttribute("title", "Ver: abrir esta secuencia, saltar al marcador y cargarlo en Marcadores");
-          top.addEventListener("click", (function (job) { return function (e) { e.stopPropagation(); deps.goToJobMarker(job); }; })(j));
+          top.setAttribute("title", "Ver en el timeline: abre “" + j.seqName + "” y lleva el cursor a este punto");
+          top.addEventListener("click", (function (job) { return function (e) { e.stopPropagation(); deps.showJobInTimeline(job); }; })(j));
         }
         line.appendChild(top);
         if (j.status === "queued") {
