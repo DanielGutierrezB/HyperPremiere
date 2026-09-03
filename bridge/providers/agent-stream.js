@@ -387,6 +387,78 @@ function assistantText(stdout) {
 }
 
 /**
+ * Rutas que el agente ABRIÓ de verdad, sacadas de la salida stream-json.
+ *
+ * Existe por el modo de falla más mudo que tiene esto: el prompt le dice "abrí
+ * la imagen 1" con su ruta absoluta, el modelo no la abre —porque se la
+ * saltea, porque el permiso no llegó— y diseña igual. Sale una animación
+ * presentable que no tiene nada que ver con el cuadro que el editor eligió, y
+ * el editor no se enteraba hasta verla. Con el stream se puede COMPROBAR, y
+ * decirlo cuesta una línea.
+ *
+ * Se leen los mensajes COMPLETOS del asistente y no los `stream_event`: en un
+ * evento parcial el bloque `tool_use` llega sin argumentos (el input viaja
+ * después, en pedacitos de JSON), mientras que el mensaje completo lo trae
+ * entero. Se entienden los dos dialectos —Claude manda `tool_use` con
+ * `input.file_path`; Cursor, un `tool_call` con `args.path`— porque los dos
+ * proveedores dejan las imágenes en disco y a los dos les puede pasar.
+ *
+ * @returns {string[]} rutas sin repetir, tal como las pidió el modelo
+ */
+function filesRead(stdout) {
+  const out = [];
+  const add = (p) => {
+    const s = String(p || '').trim();
+    if (s && out.indexOf(s) === -1) out.push(s);
+  };
+
+  String(stdout || '').split('\n').forEach((line) => {
+    const s = line.trim();
+    if (!s || s.charAt(0) !== '{') return;
+    let o;
+    try { o = JSON.parse(s); } catch (e) { return; }
+    if (!o) return;
+
+    if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {
+      o.message.content.forEach((b) => {
+        if (!b || b.type !== 'tool_use') return;
+        if (normalizeToolName(b.name) !== 'read') return;
+        const inp = b.input || {};
+        add(inp.file_path || inp.path || inp.filePath || inp.target_file);
+      });
+      return;
+    }
+
+    if (o.type === 'tool_call' && o.tool_call) {
+      const key = Object.keys(o.tool_call).find((k) => /ToolCall$/.test(k));
+      if (!key || normalizeToolName(key) !== 'read') return;
+      const args = (o.tool_call[key] && o.tool_call[key].args) || {};
+      add(args.path || args.file || args.file_path);
+    }
+  });
+
+  return out;
+}
+
+/**
+ * ¿Cuáles de estos archivos NO abrió?
+ *
+ * La comparación es por nombre de archivo y no por ruta completa a propósito:
+ * el modelo escribe la ruta como quiere —relativa al workspace, con el
+ * separador de la otra plataforma, con un `./` adelante— y lo que se está
+ * preguntando es si miró ESA imagen, no si la escribió igual que nosotros.
+ *
+ * @param {string[]} esperados rutas que el prompt mandó abrir
+ * @param {string[]} abiertos lo que devolvió filesRead()
+ * @returns {string[]} los esperados que no aparecen, en su orden original
+ */
+function filesMissing(esperados, abiertos) {
+  const base = (p) => String(p || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+  const vistos = (abiertos || []).map(base);
+  return (esperados || []).filter((e) => vistos.indexOf(base(e)) === -1);
+}
+
+/**
  * El aviso que queda escrito en el log cuando la composición hubo que
  * rescatarla. Vive acá, al lado de `assistantText`, porque los dos proveedores
  * rescatan igual y el editor no tiene por qué leer dos redacciones de lo mismo.
@@ -433,5 +505,6 @@ function isUnsupportedFlag(text) {
 module.exports = {
   createActivityReader, finalResult, assistantText, rescueWarning,
   isUnsupportedFlag, envDisabled, describe,
+  filesRead, filesMissing,
   normalizeToolName, tail, nf, MIN_INTERVAL_MS,
 };

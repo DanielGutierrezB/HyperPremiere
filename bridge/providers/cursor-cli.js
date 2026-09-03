@@ -309,6 +309,25 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         if (attempt < MAX_ATTEMPTS) { lastErr = 'respuesta vacía'; await sleep(RETRY_DELAY_MS); continue; }
         throw new Error('cursor-cli: la respuesta vino vacía');
       }
+
+      // ¿Miró las imágenes de referencia? Mismo control que en claude-cli y por
+      // el mismo motivo: el prompt las manda abrir, el agente puede saltearse
+      // la lectura y la composición sale igual de presentable. Solo se puede
+      // comprobar con el stream, que es de donde salen las herramientas que usó.
+      if (ws.names.length && streaming) {
+        const faltan = agentStream.filesMissing(ws.names, agentStream.filesRead(r.out));
+        if (faltan.length) {
+          warning = (warning ? warning + '\n' : '') +
+            'OJO: el agente ' + (faltan.length === ws.names.length
+              ? 'NO abrió ' + (ws.names.length === 1 ? 'la imagen de referencia'
+                : 'ninguna de las ' + ws.names.length + ' imágenes de referencia')
+              : 'abrió solo ' + (ws.names.length - faltan.length) + ' de las ' + ws.names.length +
+                ' imágenes de referencia (le faltó: ' + faltan.join(', ') + ')') +
+            ', así que diseñó sin verla' + (ws.names.length === 1 ? '' : 's') +
+            '. Qué hacer: volvé a generar.';
+        }
+      }
+
       return { text: html, usage, warning };
     }
 
@@ -340,6 +359,19 @@ function familyOf(id) {
   return null;
 }
 
+/**
+ * El nivel de razonamiento que trae el ID, si trae alguno.
+ * 'claude-sonnet-5-thinking-xhigh' → 'xhigh' · 'composer-2.5' → ''
+ *
+ * Sale de acá y no del panel porque acá está la tabla de familias, y porque el
+ * panel lo necesita para ofrecer el nivel como un desplegable aparte —igual que
+ * con Claude— en vez de esconderlo dentro del nombre del modelo.
+ */
+function effortOf(id, family) {
+  const rest = id.slice(family.length).replace(/^-/, '').replace(/^thinking-?/, '');
+  return EFFORT_ORDER.indexOf(rest) === -1 ? '' : rest;
+}
+
 function rankOf(id, family) {
   const rest = id.slice(family.length).replace(/^-/, '').replace(/^thinking-?/, '');
   const idx = EFFORT_ORDER.indexOf(rest);
@@ -367,14 +399,23 @@ function curateModels(models) {
     if (d !== 0) return d;
     return rankOf(a.id, fa) - rankOf(b.id, fb);
   });
-  return auto.concat(usable);
+  // Cada modelo sale con su familia y su nivel ya separados: el panel los
+  // agrupa para mostrar "modelo" y "pensamiento" en dos desplegables, como en
+  // Claude, en vez de una lista de IDs donde el nivel había que adivinarlo.
+  return auto.concat(usable).map((m) => {
+    const fam = familyOf(m.id);
+    return Object.assign({}, m, {
+      family: fam || m.id,
+      effort: fam ? effortOf(m.id, fam) : '',
+    });
+  });
 }
 
 /**
  * Modelos que la cuenta de Cursor tiene DE VERDAD (`cursor-agent --list-models`),
  * ya curados y ordenados.
- * Devuelve { ok, models: [{ id, name }] } y no lanza: si falla, el panel se
- * queda con su lista de respaldo.
+ * Devuelve { ok, models: [{ id, name, family, effort }] } y no lanza: si falla,
+ * el panel se queda con su lista de respaldo.
  */
 async function listModels(config) {
   const cfg = config || {};

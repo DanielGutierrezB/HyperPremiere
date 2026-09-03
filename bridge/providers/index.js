@@ -126,11 +126,17 @@ function imageFileName(n, mediaType) {
 function imagesAsFilesNote(refs) {
   const list = Array.isArray(refs) ? refs : [];
   if (!list.length) return '';
+  const cuantas = list.length === 1
+    ? 'es UN archivo en disco'
+    : 'son ' + list.length + ' archivos en disco';
   return '\n\n## Dónde están las imágenes de referencia\n' +
-    'No van adjuntas a este mensaje: son archivos en disco.\n' +
+    'No van adjuntas a este mensaje: ' + cuantas + '. Abrilos con tu herramienta de ' +
+    'lectura ANTES de diseñar.\n' +
     list.map((r, i) => '- imagen ' + (i + 1) + ' → ' + r).join('\n') +
-    '\nAbrilas antes de diseñar. Es la única forma de ver el cuadro sobre el que se ' +
-    'va a superponer tu composición.';
+    (list.length > 1 ? '\nAbrí las ' + list.length + ': con una sola no alcanza.' : '') +
+    '\nEs la única forma de ver el cuadro sobre el que se va a superponer tu composición, ' +
+    'y se comprueba: si alguna queda sin abrir, el editor recibe el aviso de que ' +
+    'diseñaste sin verla.';
 }
 
 /**

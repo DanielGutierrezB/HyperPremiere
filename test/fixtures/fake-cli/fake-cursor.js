@@ -58,7 +58,30 @@ function sinCierre() {
     .join('\n') + '\n';
 }
 
+// Lo que contesta `cursor-agent --list-models`: una línea "<id> - <nombre>".
+// La muestra es de una cuenta real, recortada, y a propósito trae de todo: las
+// variantes "-fast" (pagan prioridad con más consumo), la "-none" (sin
+// razonamiento), la gama chica y los niveles de pensamiento metidos en el ID.
+// Todo eso es lo que el motor tiene que separar para que el panel muestre dos
+// desplegables entendibles.
+const LISTA_MODELOS = [
+  'auto - Auto',
+  'claude-sonnet-5 - Claude Sonnet 5',
+  'claude-sonnet-5-thinking-none - Claude Sonnet 5 No Thinking',
+  'claude-sonnet-5-thinking-high - Claude Sonnet 5 1M Thinking',
+  'claude-sonnet-5-thinking-xhigh - Claude Sonnet 5 1M Extra High Thinking',
+  'claude-sonnet-5-thinking-high-fast - Claude Sonnet 5 1M Thinking (Fast)',
+  'claude-opus-5-thinking-high - Claude Opus 5 Thinking',
+  'composer-2.5 - Composer 2.5',
+  'gemini-3.1-flash - Gemini 3.1 Flash',
+].join('\n');
+
 async function main() {
+  if (args.indexOf('--list-models') !== -1) {
+    process.stdout.write(LISTA_MODELOS + '\n');
+    return;
+  }
+
   const stdin = await leerStdin();
   // El prompt por argumento va pegado a `-p` (el proveedor lo mete en la
   // posición 1); todo lo demás son flags o valores de flag.

@@ -31,6 +31,11 @@
  * lectura ("Path is outside allowed working directories") y en headless no hay
  * a quién preguntarle, así que la deniega y el modelo diseña sin ver el cuadro.
  * Ver `dirsPermitidos`.
+ *
+ * Que el permiso esté no garantiza que MIRE: el modelo puede saltearse la
+ * lectura y diseñar igual. Por eso el toolset queda en solo-lectura (ver TOOLS)
+ * y, cuando hay estado en vivo, se COMPRUEBA contra el stream que cada imagen
+ * se haya abierto; si no, se avisa. Es la única forma de que se note.
  */
 
 const fs = require('fs');
@@ -42,8 +47,58 @@ const { run } = require('../exec');
 const agentStream = require('./agent-stream');
 const cliErrors = require('./cli-errors');
 const doctor = require('../claude-doctor');
+const claudeSession = require('../claude-session');
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas y se demora)
+
+/**
+ * Las únicas herramientas que este trabajo necesita.
+ *
+ * Lo que el modelo tiene que hacer afuera de su respuesta es LEER: las
+ * imágenes de referencia y los recursos que subió el editor. La composición
+ * vuelve en el texto, no en un archivo.
+ *
+ * Acotar el juego de herramientas arregla algo que se vio en el log de la
+ * máquina de otro editor: con todas disponibles el modelo hace lo que haría en
+ * un repositorio —intentar GUARDAR la composición en disco— y ese Write se
+ * deniega, porque en headless no hay a quién pedirle permiso. Aparecía en cada
+ * generación. Sin la herramienta no hay intento, y el turno se va entero en
+ * diseñar.
+ *
+ * El mismo nombre va en --allowedTools para que leer no PREGUNTE: --add-dir
+ * dice DÓNDE puede leer; esto, que no hace falta consultarlo.
+ */
+const TOOLS = 'Read';
+
+/**
+ * El aviso de las imágenes que el modelo no llegó a abrir.
+ *
+ * Vive en su propia función porque es un texto que el editor LEE y decide qué
+ * hacer con él: conviene poder leerlo de una y no rearmarlo mentalmente entre
+ * ternarios. El próximo paso es siempre volver a generar; el segundo, cambiar
+ * de proveedor, y no da lo mismo cuál: la API de Anthropic manda las imágenes
+ * ADENTRO del mensaje (bloques base64), así que ahí no depende de que el modelo
+ * se acuerde de abrir un archivo.
+ *
+ * @param {number} total cuántas imágenes viajaron
+ * @param {string[]} faltan las que no aparecen entre las que abrió
+ */
+function avisoDeImagenSinAbrir(total, faltan) {
+  let cabeza;
+  if (faltan.length < total) {
+    cabeza = 'OJO: el modelo abrió solo ' + (total - faltan.length) + ' de las ' + total +
+      ' imágenes de referencia (le faltó: ' +
+      faltan.map((p) => path.basename(p)).join(', ') + ').';
+  } else if (total === 1) {
+    cabeza = 'OJO: el modelo NO abrió la imagen de referencia, así que diseñó sin verla.';
+  } else {
+    cabeza = 'OJO: el modelo NO abrió ninguna de las ' + total +
+      ' imágenes de referencia, así que diseñó sin verlas.';
+  }
+  return cabeza + ' Qué hacer: volvé a generar. Si se repite, cambiá el proveedor a la ' +
+    'API de Claude en Configuración: ahí las imágenes viajan dentro del mensaje y no ' +
+    'dependen de que el modelo abra un archivo.';
+}
 
 /**
  * Guarda los data URLs como archivos temporales.
@@ -268,7 +323,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
   // `viejo` es el plan B para un CLI anterior a --append-system-prompt-file
   // (existe desde claude 2.1.x) o a --add-dir: se arma la llamada como antes,
   // con el system prompt pegado al mensaje de usuario. Es peor, pero genera.
-  function buildArgs(streaming, viejo) {
+  function buildArgs(streaming, viejo, sinTools) {
     const args = streaming
       ? ['-p', '--output-format', 'stream-json', '--verbose']
       : ['-p', '--output-format', 'json'];
@@ -278,6 +333,10 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     // que es la palanca de calidad. Un valor desconocido el CLI solo lo advierte
     // y sigue con el default, no rompe la generación.
     if (cfg.effort) args.push('--effort', String(cfg.effort));
+    // Solo leer, y leer sin preguntar (ver TOOLS). Los dos flags son
+    // variádicos como --add-dir, así que cada uno lleva UN nombre y lo que
+    // sigue es siempre otro flag.
+    if (!viejo && !sinTools) args.push('--tools', TOOLS, '--allowedTools', TOOLS);
     // OJO con el orden: --add-dir es VARIÁDICO ("--add-dir <directories...>"),
     // así que se come todo lo que le siga hasta el próximo flag. Comprobado
     // contra el CLI: `--add-dir /tmp hola` se traga "hola" y el CLI corta con
@@ -301,17 +360,19 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
   }
 
   try {
-    // Token OAuth de suscripción: desde config (botón "Iniciar sesión") o del entorno.
-    const childEnv = Object.assign({}, process.env);
-    var oauth = cfg.oauthToken || cfg.apiKey || process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    if (oauth) childEnv.CLAUDE_CODE_OAUTH_TOKEN = oauth;
+    // Token OAuth de suscripción: desde config (botón "Iniciar sesión") o del
+    // entorno. Y si no hay ninguno, no se toca nada: el CLI resuelve con SU
+    // propia sesión, la de `claude auth login`. Armarlo acá a mano fue el
+    // origen del cartel mentiroso —el panel afirmaba sobre una corrida que no
+    // era ésta—, así que la definición es una sola y la comparten los dos.
+    const childEnv = claudeSession.envParaClaude(cfg);
 
-    function attempt(streaming, viejo) {
+    function attempt(streaming, viejo, sinTools) {
       const reader = streaming
         ? agentStream.createActivityReader('claude', onActivity, { partial })
         : { onData: null };
       // shell solo en Windows (shim .cmd); en mac/Linux args por array sin shell.
-      return run(bin, buildArgs(streaming, viejo), {
+      return run(bin, buildArgs(streaming, viejo, sinTools), {
         timeoutMs, env: childEnv, input: buildInput(viejo),
         shell: process.platform === 'win32',
         onData: reader.onData || undefined,
@@ -328,17 +389,30 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       return res.code !== 0 && !res.timedOut &&
         agentStream.isUnsupportedFlag((res.err || '') + '\n' + (res.out || ''));
     }
+    /** ¿Lo que rechazó fue el acotado de herramientas? El CLI nombra el flag. */
+    function rechazoDeTools(res) {
+      return /--(tools|allowed-?tools)/i.test((res.err || '') + '\n' + (res.out || ''));
+    }
 
     let streaming = live;
     let viejo = false;
-    let r = await attempt(streaming, viejo);
+    let sinTools = false;
+    let r = await attempt(streaming, viejo, sinTools);
+    // El acotado de herramientas se suelta PRIMERO y solo, porque es lo que
+    // menos cuesta perder: un CLI sin --tools puede seguir con estado en vivo y
+    // con system prompt de verdad. Sin este escalón, un CLI viejo perdía las
+    // tres cosas por el mismo cartelito.
+    if (!sinTools && rechazoDeFlag(r) && rechazoDeTools(r)) {
+      sinTools = true;
+      r = await attempt(streaming, viejo, sinTools);
+    }
     if (streaming && rechazoDeFlag(r)) {
       streaming = false;
-      r = await attempt(streaming, viejo);
+      r = await attempt(streaming, viejo, sinTools);
     }
     if (!viejo && rechazoDeFlag(r)) {
       viejo = true;
-      r = await attempt(streaming, viejo);
+      r = await attempt(streaming, viejo, sinTools);
     }
     if (r.timedOut) {
       throw new Error(`claude-cli: timeout tras ${timeoutMs}ms`);
@@ -399,22 +473,47 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       warning = agentStream.rescueWarning(!!usage);
     }
 
+    // ¿ABRIÓ las imágenes de referencia? El editor las elige a propósito —el
+    // cuadro sobre el que se superpone la animación, la paleta de la clase— y
+    // si el modelo diseña sin mirarlas el resultado igual se ve presentable,
+    // así que nadie se enteraba. Se comprueba contra lo que el stream dice que
+    // leyó; sin stream no hay con qué comprobarlo y no se inventa un aviso.
+    if (imagePaths.length && streaming) {
+      const faltan = agentStream.filesMissing(imagePaths, agentStream.filesRead(stdout));
+      if (faltan.length) {
+        warning = (warning ? warning + '\n' : '') +
+          avisoDeImagenSinAbrir(imagePaths.length, faltan);
+      }
+    }
+
     // Permisos que el CLI pidió y nadie le pudo dar. En headless no hay a quién
-    // preguntarle, así que una lectura denegada no falla: sale igual, con el
-    // modelo diseñando sin haber visto la imagen de referencia o el documento
-    // que el editor subió a propósito. Es el modo de falla más mudo que tiene
-    // esto, y la única forma de que se note es decirlo.
+    // preguntarle, así que una herramienta denegada no falla: la corrida sale
+    // igual. Lo que cambia es CUÁNTO importa, y hasta ahora el aviso los metía
+    // todos en la misma bolsa diciendo "el modelo diseñó sin eso": en el log de
+    // otra máquina lo denegado era Write —el modelo queriendo guardar la
+    // composición, que ya nos había devuelto entera— y el editor leía que su
+    // animación se había hecho a ciegas. Leer es lo único que cambia lo que el
+    // modelo VIO; el resto es su costumbre de trabajar en un repositorio.
     const negados = (parsed && Array.isArray(parsed.permission_denials))
       ? parsed.permission_denials : [];
     if (negados.length) {
-      const que = negados
+      const nombres = negados
         .map((d) => (d && (d.tool_name || d.tool)) || 'una herramienta')
-        .filter((v, i, a) => a.indexOf(v) === i)
-        .join(', ');
-      warning = (warning ? warning + '\n' : '') +
-        'OJO: el CLI necesitó permiso para usar ' + que + ' (' + negados.length +
-        ' vez/veces) y no lo tuvo, así que el modelo diseñó sin eso. Suele ser una ' +
-        'imagen de referencia o un recurso que quedó fuera de las carpetas que el CLI puede leer.';
+        .filter((v, i, a) => a.indexOf(v) === i);
+      const deLectura = nombres.filter((n) => /^(read|glob|grep|notebookread)$/i.test(n));
+      const otras = nombres.filter((n) => deLectura.indexOf(n) === -1);
+      const avisos = [];
+      if (deLectura.length) {
+        avisos.push('OJO: el CLI necesitó permiso para LEER (' + deLectura.join(', ') +
+          ') y no lo tuvo, así que el modelo diseñó sin ver eso. Suele ser una imagen de ' +
+          'referencia o un recurso que quedó fuera de las carpetas que el CLI puede leer.');
+      }
+      if (otras.length) {
+        avisos.push('Nota: el CLI quiso usar ' + otras.join(', ') + ' y no lo dejamos. Eso es a ' +
+          'propósito: acá solo tiene que leer las referencias y devolver la composición en su ' +
+          'respuesta. No afecta al diseño.');
+      }
+      warning = (warning ? warning + '\n' : '') + avisos.join('\n');
     }
 
     const html = stripHtmlFence(text);

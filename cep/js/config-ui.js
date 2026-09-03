@@ -18,7 +18,14 @@
   // Estado del proveedor activo (lo consultan la cola y el estimador de costo).
   var providerIsLocal = false;
   var modelNameValue = ""; // para el log de diagnóstico
-  var currentHasSession = false;
+  // Sesión de Claude: TRES valores, no dos. "?" es "todavía no se sabe", y con
+  // eso NO se avisa nada. El cartel de "falta iniciar sesión" salía de mirar si
+  // el panel tenía un token guardado, y ése es apenas uno de los caminos: el
+  // CLI puede tener su propia sesión (`claude auth login`) y generar sin token
+  // nuestro. Había editores generando perfecto con el cartel puesto — pasó de
+  // verdad. Quien contesta ahora es el CLI (ver bridge/claude-session.js).
+  var currentSession = "?"; // "si" | "no" | "?"
+  var currentSessionWarn = "iniciá sesión en Claude";
 
   var cfgProviderSel = null;
   var cfgModelSel = null;
@@ -51,12 +58,17 @@
   // listCursorModels() del motor (cursor-agent --list-models), ya curada: fuera
   // las variantes "-fast" (pagan prioridad con más consumo, justo lo que se
   // quiere evitar), las "-none" (sin razonamiento) y la gama chica.
+  //
+  // `family` y `effort` vienen del motor y son lo que permite mostrar el nivel
+  // de pensamiento como un desplegable aparte, igual que en Claude (ver
+  // cursorGroups). En el respaldo van a mano.
   var CURSOR_MODELS = [
-    { v: "claude-sonnet-5-thinking-high", t: "Sonnet 5 Thinking" },
-    { v: "claude-opus-5-thinking-high", t: "Opus 5 Thinking" },
-    { v: "claude-fable-5-thinking-high", t: "Fable 5 Thinking" },
-    { v: "composer-2.5", t: "Composer 2.5" },
-    { v: "auto", t: "Auto (que elija Cursor)" }
+    { v: "claude-sonnet-5-thinking-high", t: "Claude Sonnet 5 1M Thinking", family: "claude-sonnet-5", effort: "high" },
+    { v: "claude-sonnet-5-thinking-xhigh", t: "Claude Sonnet 5 1M Extra High Thinking", family: "claude-sonnet-5", effort: "xhigh" },
+    { v: "claude-opus-5-thinking-high", t: "Claude Opus 5 Thinking", family: "claude-opus-5", effort: "high" },
+    { v: "claude-fable-5-thinking-high", t: "Claude Fable 5 Thinking", family: "claude-fable-5", effort: "high" },
+    { v: "composer-2.5", t: "Composer 2.5", family: "composer-2.5", effort: "" },
+    { v: "auto", t: "Auto (que elija Cursor)", family: "auto", effort: "" }
   ];
   var MODELS = {
     "claude-cli": CLAUDE_MODELS,
@@ -92,8 +104,167 @@
     if (el) el.setAttribute("data-hidden", show ? "false" : "true");
   }
 
+  // ── Cursor: el mismo selector que Claude ──────────────────────────────
+  //
+  // Cursor no tiene flag de esfuerzo: el nivel viene DENTRO del ID del modelo
+  // (claude-sonnet-5-thinking-high, -xhigh…). Mientras eso se mostraba tal
+  // cual, el editor tenía que saber leer el ID para elegir cuánto piensa el
+  // modelo — y en la máquina de otro editor la conclusión fue la obvia: "no me
+  // deja elegir bien la exigencia". Estaba, pero disfrazada de modelo.
+  //
+  // Acá las variantes se agrupan por familia: el desplegable de modelo muestra
+  // "Claude Sonnet 5 · 1M" y el de pensamiento, los niveles que esa familia
+  // tiene. Al guardar se vuelve a armar el ID real, así que el motor y la
+  // config no cambian una línea. El nombre sale del que pone Cursor, para que
+  // el "1M" del contexto largo llegue tal como él lo escribe.
+  var FAM = "fam:";
+  var cursorGroups = [];
+
+  /** Las palabras que estos nombres tienen en común, desde el principio. */
+  function commonWords(names) {
+    if (!names.length) return [];
+    var parts = names.map(function (n) { return String(n || "").trim().split(/\s+/); });
+    var out = [];
+    for (var i = 0; i < parts[0].length; i++) {
+      var w = parts[0][i];
+      for (var j = 1; j < parts.length; j++) if (parts[j][i] !== w) return out;
+      out.push(w);
+    }
+    return out;
+  }
+
+  function familyLabel(family, names, tieneNiveles) {
+    var label = commonWords(names).join(" ");
+    // "Thinking" lo dice el desplegable de al lado; repetirlo es ruido.
+    if (tieneNiveles) label = label.replace(/\s+thinking$/i, "");
+    // El "1M" es la única razón por la que alguien elige estas variantes: si el
+    // recorte se lo llevó, se vuelve a poner.
+    if (/\b1m\b/i.test(names.join(" ")) && !/\b1M\b/i.test(label)) label += " · 1M";
+    return label.trim() || family;
+  }
+
+  // OJO con una consecuencia: en una familia que tiene niveles, la variante
+  // PELADA (claude-sonnet-5, la que no razona) queda fuera del alcance, porque
+  // el desplegable de niveles solo ofrece los que existen. Es a propósito y es
+  // la misma política que ya venía: las variantes "-none" se filtran en el
+  // motor porque para diseñar una animación son la herramienta equivocada.
+  function buildCursorGroups(list) {
+    var groups = [];
+    var byFamily = {};
+    (list || []).forEach(function (m) {
+      var id = m.v;
+      if (!id) return;
+      // Un modelo sin familia (o el "auto") es su propio grupo, sin niveles.
+      var fam = m.family || id;
+      var g = byFamily[fam];
+      if (!g) {
+        g = byFamily[fam] = { family: fam, names: [], byEffort: {}, plain: "" };
+        groups.push(g);
+      }
+      g.names.push(m.t || id);
+      if (!m.effort) { if (!g.plain) g.plain = id; }
+      else if (!g.byEffort[m.effort]) g.byEffort[m.effort] = id;
+    });
+    groups.forEach(function (g) {
+      var niveles = 0;
+      for (var k in g.byEffort) if (g.byEffort.hasOwnProperty(k)) niveles++;
+      g.label = familyLabel(g.family, g.names, niveles > 0);
+    });
+    return groups;
+  }
+
+  function cursorGroupBy(family) {
+    for (var i = 0; i < cursorGroups.length; i++) {
+      if (cursorGroups[i].family === family) return cursorGroups[i];
+    }
+    return null;
+  }
+
+  /** El grupo que está elegido en el desplegable ahora mismo. */
+  function currentCursorGroup() {
+    var v = String(cfgModelSel.value || "");
+    if (v.indexOf(FAM) !== 0) return cursorGroups[0] || null;
+    return cursorGroupBy(v.slice(FAM.length)) || cursorGroups[0] || null;
+  }
+
+  /**
+   * De familia + nivel al ID que hay que pedirle a Cursor.
+   * Si el nivel exacto no existe en esa familia se baja al vecino de abajo y,
+   * si tampoco, se sube: es mejor el nivel de al lado que un modelo que no es
+   * el que el editor eligió.
+   */
+  function cursorIdFor(g, effort) {
+    if (!g) return "";
+    var order = EFFORT_LEVELS.map(function (o) { return o.v; });
+    function primero() {
+      for (var k = 0; k < order.length; k++) if (g.byEffort[order[k]]) return g.byEffort[order[k]];
+      return "";
+    }
+    if (!effort) return g.plain || primero();
+    if (g.byEffort[effort]) return g.byEffort[effort];
+    var i = order.indexOf(effort);
+    for (var d = i - 1; d >= 0; d--) if (g.byEffort[order[d]]) return g.byEffort[order[d]];
+    for (var u = i + 1; u < order.length; u++) if (g.byEffort[order[u]]) return g.byEffort[order[u]];
+    return g.plain || primero();
+  }
+
+  /** El camino de vuelta: de un ID guardado, qué familia y qué nivel es. */
+  function cursorPick(id) {
+    if (!id) return null;
+    for (var i = 0; i < cursorGroups.length; i++) {
+      var g = cursorGroups[i];
+      if (g.plain === id) return { group: g, effort: "" };
+      for (var e in g.byEffort) {
+        if (g.byEffort.hasOwnProperty(e) && g.byEffort[e] === id) return { group: g, effort: e };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Niveles del desplegable de pensamiento. En Claude son todos; en Cursor,
+   * solo los que la familia elegida tiene de verdad — ofrecer un "Máximo" que
+   * se resuelve calladamente a otra cosa es mentirle al editor.
+   */
+  function populateEfforts(selected) {
+    if (!cfgEffortSel) return;
+    var disponibles = EFFORT_LEVELS;
+    if (cfgProviderSel.value === "cursor-cli") {
+      var g = currentCursorGroup();
+      var niveles = g ? g.byEffort : {};
+      disponibles = EFFORT_LEVELS.filter(function (o) { return !!niveles[o.v]; });
+      if (!disponibles.length) {
+        cfgEffortSel.setOptions([{ value: "", label: "No aplica — este modelo no ofrece niveles" }], "");
+        return;
+      }
+    }
+    var val = selected;
+    var hay = false;
+    for (var i = 0; i < disponibles.length; i++) if (disponibles[i].v === val) hay = true;
+    if (!hay) {
+      // El que se venía usando no existe acá: se queda el más alto que haya, que
+      // es el criterio con el que se eligió "high" como default.
+      val = disponibles[disponibles.length - 1].v;
+    }
+    cfgEffortSel.setOptions(disponibles.map(function (o) {
+      return { value: o.v, label: o.t };
+    }), val);
+  }
+
   // Rellena el desplegable de modelos según el proveedor y marca el activo.
   function populateModels(provider, selected) {
+    if (provider === "cursor-cli") {
+      cursorGroups = buildCursorGroups(MODELS["cursor-cli"]);
+      var pick = cursorPick(selected);
+      var g = pick ? pick.group : cursorGroups[0];
+      cfgModelSel.setOptions(cursorGroups.map(function (x) {
+        return { value: FAM + x.family, label: x.label };
+      }), FAM + (g ? g.family : ""));
+      // El nivel que manda es el del ID guardado: es el que se venía usando de
+      // verdad. Si el ID no traía ninguno, se respeta lo elegido en el panel.
+      populateEfforts(pick && pick.effort ? pick.effort : (cfgEffortSel ? cfgEffortSel.value : "high"));
+      return;
+    }
     var list = MODELS[provider] || CLAUDE_MODELS;
     var matched = false;
     for (var i = 0; i < list.length; i++) if (list[i].v === selected) matched = true;
@@ -112,12 +283,23 @@
   }
 
   // Modelo efectivo: el del desplegable, o el texto libre si eligió "Otro".
+  // En Cursor el desplegable tiene la FAMILIA, así que el ID se arma con el
+  // nivel de pensamiento elegido (ver cursorIdFor).
   function effectiveModel() {
     if (cfgModelSel.value === "__custom__") return (cfgModelCustom.value || "").trim();
+    if (String(cfgModelSel.value || "").indexOf(FAM) === 0) {
+      return cursorIdFor(currentCursorGroup(), cfgEffortSel ? cfgEffortSel.value : "");
+    }
     return cfgModelSel.value;
   }
 
   function modelLabel(id) {
+    // Un mismo ID puede existir en dos catálogos (Cursor también ofrece
+    // "claude-sonnet-5"), así que primero manda el proveedor activo.
+    if (cfgProviderSel.value === "cursor-cli") {
+      var pick = cursorPick(id);
+      if (pick) return pick.group.label;
+    }
     for (var p in MODELS) {
       for (var i = 0; i < MODELS[p].length; i++) {
         if (MODELS[p][i].v === id) return MODELS[p][i].t.replace(/ —.*$/, "").replace(/\s*·.*$/, " ").trim() || id;
@@ -135,9 +317,10 @@
     showRow("row-apikey", p === "claude-api" || p === "openai-compat");
     showRow("row-baseurl", p === "openai-compat" || p === "ollama");
     showRow("row-model-custom", cfgModelSel.value === "__custom__");
-    // El nivel de pensamiento es un flag aparte solo en Claude. En Cursor viene
-    // dentro del ID del modelo (…-thinking-high, -xhigh), así que sobra la fila.
-    showRow("row-effort", isClaude);
+    // El nivel de pensamiento se elige igual en los dos: en Claude es un flag
+    // (--effort) y en Cursor está dentro del ID del modelo, pero eso es asunto
+    // nuestro (ver cursorGroups). El editor ve el mismo control.
+    showRow("row-effort", isClaude || isCursor);
     if (modelsHint) modelsHint.setAttribute("data-hidden", (isClaude || isCursor) ? "false" : "true");
     var hintEl = document.getElementById("baseurl-hint");
     if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
@@ -170,15 +353,15 @@
     var p = cfgProviderSel.value;
     var model = effectiveModel();
     var ok = true, warn = "";
-    if (p === "claude-cli" && !currentHasSession) { ok = false; warn = "iniciá sesión en Claude"; }
+    if (p === "claude-cli" && currentSession === "no") { ok = false; warn = currentSessionWarn; }
     if (p === "claude-api" && !(cfgApiKey.value.trim() || cfgApiKey.getAttribute("data-has") === "1")) { ok = false; warn = "falta API key"; }
     if (p === "openai-compat" && !cfgBaseUrl.value.trim()) { ok = false; warn = "falta Base URL"; }
     if (!model) { ok = false; warn = "falta el modelo"; }
     if (ok) {
       // El nivel de pensamiento pesa tanto como el modelo en el resultado, así
-      // que va en el resumen (solo Claude, que es quien lo tiene).
-      var isClaude = (p === "claude-cli" || p === "claude-api");
-      var effortTxt = (isClaude && cfgEffortSel && cfgEffortSel.value)
+      // que va en el resumen. Vale para los dos proveedores que lo tienen.
+      var tieneEsfuerzo = (p === "claude-cli" || p === "claude-api" || p === "cursor-cli");
+      var effortTxt = (tieneEsfuerzo && cfgEffortSel && cfgEffortSel.value)
         ? " · pensamiento " + cfgEffortSel.value : "";
       cfgSummary.textContent = "✓ " + (PROVIDER_LABEL[p] || p) + " · " + modelLabel(model) + effortTxt;
       cfgSummary.className = "cfg-summary is-ok";
@@ -200,7 +383,12 @@
     cfgSummary.className = "cfg-summary is-warn";
     hpCall("testProvider")
       .then(function (r) {
-        if (r && r.ok) {
+        if (r && r.ok && r.unknown) {
+          // Ni sí ni no. Decirlo como cualquiera de los dos es peor que decirlo
+          // como lo que es (el mismo criterio que el botón ⟳ de actualizar).
+          cfgSummary.textContent = "· " + (r.detail || "no pude comprobarlo");
+          cfgSummary.className = "cfg-summary is-warn";
+        } else if (r && r.ok) {
           cfgSummary.textContent = "✓ Probado y funciona" + (r.detail ? " — " + r.detail : "");
           cfgSummary.className = "cfg-summary is-ok";
         } else {
@@ -217,6 +405,10 @@
   function autoSave() {
     var body = { provider: cfgProviderSel.value, model: effectiveModel() };
     if (cfgEffortSel) body.effort = cfgEffortSel.value;
+    // El log de diagnóstico lee esto para decir con qué se generó cada
+    // marcador. Sin refrescarlo acá se quedaba con el modelo que había al abrir
+    // el panel, y en el log de otra máquina eso es lo primero que se mira.
+    if (body.model) modelNameValue = body.model;
     if (cfgApiKey.value.trim()) body.apiKey = cfgApiKey.value.trim();
     if (cfgBaseUrl.value.trim()) body.baseUrl = cfgBaseUrl.value.trim();
     if (!body.model) { updateSummary(); return; }
@@ -279,7 +471,13 @@
           }
           return;
         }
-        MODELS["cursor-cli"] = r.models.map(function (m) { return { v: m.id, t: m.name || m.id }; });
+        MODELS["cursor-cli"] = r.models.map(function (m) {
+          // family/effort los separa el motor (cursor-cli.js). Un modelo que
+          // llegue sin ellos —Cursor renombró todo y el filtro no reconoció
+          // nada— queda como su propia familia sin niveles: se sigue pudiendo
+          // elegir, que es lo que importa.
+          return { v: m.id, t: m.name || m.id, family: m.family || m.id, effort: m.effort || "" };
+        });
         if (modelsHint) modelsHint.textContent = r.models.length + " modelos de tu cuenta de Cursor" + (r.cached ? "" : " · al día");
         if (cfgProviderSel.value === "cursor-cli") {
           populateModels("cursor-cli", selected || effectiveModel());
@@ -317,7 +515,10 @@
     if (cfg.provider) cfgProviderSel.value = cfg.provider;
     providerIsLocal = (cfg.provider === "ollama");
     modelNameValue = cfg.model || "";
-    currentHasSession = Boolean(cfg.hasSession);
+    // Provisorio: con token guardado ya sabemos que sí; sin token NO sabemos
+    // nada todavía, así que "?" y no "no". La respuesta buena la trae
+    // refreshClaudeSession() un cuarto de segundo después.
+    currentSession = cfg.hasSession ? "si" : "?";
     cfgBaseUrl.value = cfg.baseUrl || "";
     cfgApiKey.value = "";
     if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
@@ -331,6 +532,35 @@
     if (cfgProviderSel.value === "ollama") refreshOllamaModels(cfg.model);
     if (cfgProviderSel.value === "claude-cli" || cfgProviderSel.value === "claude-api") refreshClaudeModels(cfg.model);
     if (cfgProviderSel.value === "cursor-cli") refreshCursorModels(cfg.model);
+    if (cfgProviderSel.value === "claude-cli") refreshClaudeSession();
+  }
+
+  // Le pregunta al motor si el CLI de Claude puede autenticarse acá (él se lo
+  // pregunta al CLI: gratis, sin red y en un cuarto de segundo). Es lo ÚNICO
+  // que puede afirmar que falta la sesión. Si no se pudo averiguar, queda en
+  // "?" y el resumen no dice nada: asustar sin motivo manda al editor a
+  // "arreglar" algo que le venía funcionando.
+  function refreshClaudeSession() {
+    hpCall("claudeSessionStatus")
+      .then(function (s) {
+        if (!s || cfgProviderSel.value !== "claude-cli") return;
+        if (s.estado === "con-sesion") {
+          currentSession = "si";
+        } else if (s.estado === "sin-sesion") {
+          currentSession = "no"; currentSessionWarn = "iniciá sesión en Claude";
+        } else if (s.estado === "sin-cli") {
+          currentSession = "no"; currentSessionWarn = "falta el CLI de Claude";
+        } else {
+          currentSession = "?";
+        }
+        if (loginStatus && s.resumen) {
+          loginStatus.textContent = s.resumen + (s.detalle ? "\n" + s.detalle : "");
+          loginStatus.className = "muted " +
+            (currentSession === "si" ? "login-ok" : (currentSession === "no" ? "login-err" : ""));
+        }
+        updateSummary();
+      })
+      .catch(function () { /* sin motor no se sabe, y no saber no es un problema */ });
   }
 
   function loadConfig() {
@@ -400,11 +630,17 @@
         .catch(function (e) { configStatus.textContent = "Error: " + ((e && e.message) || ""); });
     };
     cfgModelSel.onChange = function () {
+      // En Cursor, cambiar de familia puede cambiar los niveles disponibles
+      // (no todas ofrecen los mismos), así que el desplegable de al lado se
+      // rearma antes de guardar: lo que se guarda es el ID que sale de los dos.
+      if (cfgProviderSel.value === "cursor-cli") {
+        populateEfforts(cfgEffortSel ? cfgEffortSel.value : "high");
+      }
       applyProviderUI();
       autoSave();
     };
 
-    // Nivel de pensamiento (solo Claude): se guarda solo al cambiarlo.
+    // Nivel de pensamiento: se guarda solo al cambiarlo.
     if (cfgEffortSel) {
       cfgEffortSel.setOptions(EFFORT_LEVELS.map(function (o) {
         return { value: o.v, label: o.t };
@@ -438,7 +674,7 @@
       loginStatus.className = "muted login-ok";
       if (loginCodeRow) loginCodeRow.setAttribute("data-hidden", "true");
       cfgProviderSel.value = "claude-cli";
-      currentHasSession = true;
+      currentSession = "si";
       populateModels(cfgProviderSel.value, effectiveModel());
       applyProviderUI();
       autoSave();
@@ -526,6 +762,19 @@
     /** true si el proveedor activo corre en esta máquina (Ollama). */
     isLocalProvider: function () { return providerIsLocal; },
     /** Nombre del modelo activo (para el log de diagnóstico). */
-    modelName: function () { return modelNameValue; }
+    modelName: function () { return modelNameValue; },
+    /**
+     * Nivel de pensamiento activo, o '' si el proveedor no tiene ninguno.
+     *
+     * Va al log junto con el modelo porque es la otra mitad de "con qué se
+     * generó esto": dos corridas con el mismo modelo y distinto nivel dan
+     * resultados distintos, y sin este dato el log de otra máquina no alcanza
+     * para comparar contra la propia.
+     */
+    effortName: function () {
+      var p = cfgProviderSel && cfgProviderSel.value;
+      if (p !== "claude-cli" && p !== "claude-api" && p !== "cursor-cli") return "";
+      return (cfgEffortSel && cfgEffortSel.value) || "";
+    }
   };
 })(typeof window !== "undefined" ? window : this);

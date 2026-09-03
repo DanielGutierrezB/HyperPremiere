@@ -28,6 +28,8 @@ const { whisperInstallPlan, installWhisper, cancelWhisperInstall } = require('./
 const claudeLogin = require('./claude-login');
 // Dónde está el CLI de Claude y qué versión es (diagnóstico para el editor).
 const claudeDoctor = require('./claude-doctor');
+// Si el CLI puede autenticarse acá y ahora: lo que mira el cartel de ⚙.
+const claudeSession = require('./claude-session');
 const { buildUserPrompt } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition, renderLanes } = require('./render/hyperframes');
@@ -125,6 +127,10 @@ function defaultModelFor(provider) {
 
 // Proveedores donde el esfuerzo es un flag aparte. En Cursor no: viene en el ID
 // del modelo, así que el selector de esfuerzo no aplica y el panel lo esconde.
+// ¿El nivel de pensamiento viaja como FLAG aparte? Solo en Claude. En Cursor el
+// nivel existe igual, pero va dentro del ID del modelo, así que el panel lo
+// ofrece por su cuenta (ver cursorGroups en config-ui.js): esto no dice "no
+// tiene esfuerzo", dice "no se manda por este canal".
 function usesEffortFlag(provider) {
   return provider === 'claude-cli' || provider === 'claude-api';
 }
@@ -237,17 +243,22 @@ function getConfig() {
 // del panel (que solo mira si hay algo guardado), esto verifica de verdad:
 //   - claude-api: llamada mínima (max_tokens:1) al endpoint → distingue key mala (401)
 //     de modelo inexistente (404) de key OK (200).
-//   - claude-cli: comprueba que haya sesión/token OAuth guardado.
-// Devuelve { ok, error?, detail? } y nunca lanza.
+//   - claude-cli: le pregunta al CLI si puede autenticarse (`claude auth status`).
+// Devuelve { ok, error?, detail?, unknown? } y nunca lanza.
 async function testProvider() {
   const cfg = loadConfig();
   const provider = cfg.provider;
   try {
     if (provider === 'claude-cli') {
-      if (!cfg.oauthToken) {
-        return { ok: false, error: 'No hay sesión de Claude. Tocá "Iniciar sesión" para autorizar.' };
-      }
-      return { ok: true, detail: 'Sesión de Claude activa.' };
+      // No alcanza con mirar si NOSOTROS guardamos un token: el CLI puede tener
+      // su propia sesión (`claude auth login` en la terminal) y generar sin el
+      // nuestro. Se le pregunta a él, con el entorno con el que va a generar.
+      const s = await claudeSession.estadoDeSesion(cfg);
+      if (s.estado === 'con-sesion') return { ok: true, detail: s.resumen.replace(/^✓\s*/, '') };
+      // "No pude averiguarlo" no es ni un sí ni un no, y decirlo como si fuera
+      // cualquiera de los dos es peor que decirlo como lo que es.
+      if (s.estado === 'no-se-sabe') return { ok: true, unknown: true, detail: s.resumen };
+      return { ok: false, error: s.resumen + '\n' + s.detalle };
     }
 
     if (provider === 'cursor-cli') {
@@ -1038,6 +1049,13 @@ function loginClaudeCancel() {
 // que el editor pueda mandárnosla por captura sin tener que fallar primero.
 function claudeCliStatus() {
   return claudeDoctor.diagnose();
+}
+
+// Lo que mira el cartel de sesión de ⚙. Es una pregunta al CLI, no a nuestra
+// config: el editor puede estar logueado por la terminal y generar bien sin
+// que nosotros tengamos ningún token guardado (ver claude-session.js).
+function claudeSessionStatus() {
+  return claudeSession.estadoDeSesion(loadConfig());
 }
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -2133,6 +2151,7 @@ module.exports = {
   loginClaudeToken,
   loginClaudeCancel,
   claudeCliStatus,
+  claudeSessionStatus,
   getVersion,
   checkUpdate,
   selfUpdate,

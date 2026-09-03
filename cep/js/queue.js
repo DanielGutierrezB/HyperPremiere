@@ -565,7 +565,9 @@
     }
     rehydratePayload(job); emit();
     var method = job.kind === "generate" ? "prepareGenerate" : "prepareFeedback";
-    hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?") + " · en paralelo=" + modelRunning);
+    var pensamiento = (HPConfigUI.effortName && HPConfigUI.effortName()) || "";
+    hpLog("Job MODELO [" + job.label + "] · " + method + " · modelo=" + (HPConfigUI.modelName() || "?") +
+      (pensamiento ? " · pensamiento=" + pensamiento : "") + " · en paralelo=" + modelRunning);
     HPEngine.callProg(method, job.payload, onP(job)).then(function (prep) {
       modelRunning--;
       if (job._cancelled) { hpLog("Job CANCELADO [" + job.label + "] tras modelo — descartado."); emit(); pump(); return; }

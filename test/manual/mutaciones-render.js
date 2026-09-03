@@ -253,13 +253,156 @@ const MUTACIONES = [
     de: '    try { global.localStorage.setItem(ONLY_CURRENT_KEY, v ? "1" : "0"); } catch (e) {}',
     a:  '    try { void v; } catch (e) {}',
   },
+  // ── El cartel de "falta iniciar sesión" cuando la sesión está ──────
+  // Todas estas mutaciones tienen el mismo final: un editor que puede generar
+  // recibe igual el cartel. Es el modo de falla más caro de los que hay acá,
+  // porque no rompe nada — manda a arreglar algo que funciona, y a distancia.
+  {
+    nombre: 'no saber si hay sesión vuelve a contarse como no tenerla',
+    archivo: 'bridge/claude-session.js',
+    de: "  return {\n    estado: 'no-se-sabe',\n    metodo: '',\n    como: '',\n    porQue: 'el CLI contestó algo que no supe leer'",
+    a:  "  return {\n    estado: 'sin-sesion',\n    metodo: '',\n    como: '',\n    porQue: 'el CLI contestó algo que no supe leer'",
+  },
+  {
+    nombre: 'un CLI viejo, que ni conoce el comando, pasa por máquina sin sesión',
+    archivo: 'bridge/claude-session.js',
+    de: "  if (NO_CONOCE_RE.test(crudo)) {\n    return { estado: 'no-se-sabe'",
+    a:  "  if (NO_CONOCE_RE.test(crudo)) {\n    return { estado: 'sin-sesion'",
+  },
+  {
+    nombre: 'faltar el CLI se confunde con faltar la sesión',
+    archivo: 'bridge/claude-session.js',
+    de: "      estado: 'sin-cli',\n      metodo: '',",
+    a:  "      estado: 'sin-sesion',\n      metodo: '',",
+  },
+  {
+    nombre: 'el token guardado deja de valer cuando el CLI no sabe contestar',
+    archivo: 'bridge/claude-session.js',
+    de: '  if (hayToken) {',
+    a:  '  if (false) {',
+  },
+  {
+    nombre: 'el JSON se busca en el stdout entero y un aviso arriba lo tapa',
+    archivo: 'bridge/claude-session.js',
+    de: "  const llave = crudo.indexOf('{');",
+    a:  '  const llave = 0;',
+  },
+  {
+    nombre: 'sin token propio igual se pisa la variable, y el CLI pierde SU sesión',
+    archivo: 'bridge/claude-session.js',
+    de: '  if (oauth) env.CLAUDE_CODE_OAUTH_TOKEN = oauth;',
+    a:  "  env.CLAUDE_CODE_OAUTH_TOKEN = oauth || '';",
+  },
+  {
+    nombre: 'el panel vuelve a avisar cuando todavía no sabe nada (el bug original)',
+    archivo: 'cep/js/config-ui.js',
+    de: '    if (p === "claude-cli" && currentSession === "no") { ok = false; warn = currentSessionWarn; }',
+    a:  '    if (p === "claude-cli" && currentSession !== "si") { ok = false; warn = currentSessionWarn; }',
+  },
+  {
+    nombre: 'sin token guardado el panel arranca dando por hecho que falta la sesión',
+    archivo: 'cep/js/config-ui.js',
+    de: '    currentSession = cfg.hasSession ? "si" : "?";',
+    a:  '    currentSession = cfg.hasSession ? "si" : "no";',
+  },
+  // ── La imagen de referencia que el modelo no miró ──────────────────
+  // El modo de falla más mudo del proyecto: la composición sale presentable y
+  // no tiene nada que ver con el cuadro que el editor eligió. Estas mutaciones
+  // apagan, una por una, las cosas que lo hacen visible.
+  {
+    nombre: 'el CLI vuelve a arrancar con todas las herramientas',
+    archivo: 'bridge/providers/claude-cli.js',
+    de: "    if (!viejo && !sinTools) args.push('--tools', TOOLS, '--allowedTools', TOOLS);",
+    a:  '    if (false) args.push();',
+  },
+  {
+    nombre: 'leer vuelve a quedar pendiente de un permiso que nadie puede dar',
+    archivo: 'bridge/providers/claude-cli.js',
+    de: "args.push('--tools', TOOLS, '--allowedTools', TOOLS);",
+    a:  "args.push('--tools', TOOLS);",
+  },
+  {
+    nombre: 'una imagen sin abrir no se avisa',
+    archivo: 'bridge/providers/claude-cli.js',
+    de: '    if (imagePaths.length && streaming) {',
+    a:  '    if (false) {',
+  },
+  {
+    nombre: 'se avisa igual cuando el modelo SÍ las abrió todas',
+    archivo: 'bridge/providers/agent-stream.js',
+    de: '  return (esperados || []).filter((e) => vistos.indexOf(base(e)) === -1);',
+    a:  '  return (esperados || []);',
+  },
+  {
+    nombre: 'la ruta se compara entera, así que ./imagen-1.png parece otra imagen',
+    archivo: 'bridge/providers/agent-stream.js',
+    de: "  const base = (p) => String(p || '').replace(/\\\\/g, '/').split('/').pop().toLowerCase();",
+    a:  "  const base = (p) => String(p || '');",
+  },
+  {
+    nombre: 'lo que leyó se busca en los eventos parciales, que llegan sin la ruta',
+    archivo: 'bridge/providers/agent-stream.js',
+    de: "    if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {\n      o.message.content.forEach((b) => {\n        if (!b || b.type !== 'tool_use') return;",
+    a:  "    if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) {\n      o.message.content.forEach((b) => {\n        if (true) return;",
+  },
+  {
+    nombre: 'denegar Write vuelve a decirle al editor que se diseñó a ciegas',
+    archivo: 'bridge/providers/claude-cli.js',
+    de: "      const deLectura = nombres.filter((n) => /^(read|glob|grep|notebookread)$/i.test(n));",
+    a:  "      const deLectura = nombres;",
+  },
+  {
+    nombre: 'un CLI sin --tools se lleva puesto el estado en vivo por el mismo cartelito',
+    archivo: 'bridge/providers/claude-cli.js',
+    de: '    if (!sinTools && rechazoDeFlag(r) && rechazoDeTools(r)) {',
+    a:  '    if (false) {',
+  },
+  // ── Elegir cuánto piensa el modelo, con Cursor ─────────────────────
+  {
+    nombre: 'el nivel de pensamiento vuelve a esconderse en Cursor',
+    archivo: 'cep/js/config-ui.js',
+    de: '    showRow("row-effort", isClaude || isCursor);',
+    a:  '    showRow("row-effort", isClaude);',
+  },
+  {
+    nombre: 'el ID se guarda pelado y Cursor se queda sin el nivel elegido',
+    archivo: 'cep/js/config-ui.js',
+    de: '      return cursorIdFor(currentCursorGroup(), cfgEffortSel ? cfgEffortSel.value : "");',
+    a:  '      return currentCursorGroup() ? currentCursorGroup().family : "";',
+  },
+  {
+    nombre: 'se ofrecen niveles que la cuenta no tiene',
+    archivo: 'cep/js/config-ui.js',
+    de: '      disponibles = EFFORT_LEVELS.filter(function (o) { return !!niveles[o.v]; });',
+    a:  '      disponibles = EFFORT_LEVELS;',
+  },
+  {
+    nombre: 'el nivel del ID guardado se pierde y queda el del panel',
+    archivo: 'cep/js/config-ui.js',
+    de: '      populateEfforts(pick && pick.effort ? pick.effort : (cfgEffortSel ? cfgEffortSel.value : "high"));',
+    a:  '      populateEfforts(cfgEffortSel ? cfgEffortSel.value : "high");',
+  },
+  {
+    nombre: 'el motor deja de separar el nivel y el panel no puede agrupar nada',
+    archivo: 'bridge/providers/cursor-cli.js',
+    de: "      effort: fam ? effortOf(m.id, fam) : '',",
+    a:  "      effort: '',",
+  },
+  {
+    nombre: 'el log se queda con el modelo que había al abrir el panel',
+    archivo: 'cep/js/config-ui.js',
+    de: '    if (body.model) modelNameValue = body.model;',
+    a:  '    if (false) modelNameValue = body.model;',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
 // ajena haría parecer que la mutación fue atrapada.
 const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
   'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada',
-  'marcadores-frameio', 'cola-mirar-y-rehacer', 'correcciones-encolar'];
+  'marcadores-frameio', 'cola-mirar-y-rehacer', 'correcciones-encolar',
+  'claude-session', 'panel-cartel-sesion', 'imagen-de-referencia',
+  'selector-pensamiento'];
 
 function correrSuite() {
   const guion = "const {runAll,group}=require('./test/harness');" +
@@ -276,8 +419,16 @@ function correrSuite() {
   }
 }
 
+// Un filtro por nombre para cuando se toca UNA parte: correr las cuarenta y
+// pico para ver dos es media hora de espera.
+//   node test/manual/mutaciones-render.js sesión
+const filtro = String(process.argv[2] || '').toLowerCase();
+const elegidas = filtro
+  ? MUTACIONES.filter((m) => m.nombre.toLowerCase().indexOf(filtro) !== -1)
+  : MUTACIONES;
+
 let sobrevivientes = 0;
-for (const mut of MUTACIONES) {
+for (const mut of elegidas) {
   const p = path.join(raiz, mut.archivo);
   const original = fs.readFileSync(p, 'utf8');
   if (original.indexOf(mut.de) === -1) {
@@ -299,5 +450,5 @@ for (const mut of MUTACIONES) {
   }
 }
 
-console.log('\n' + (MUTACIONES.length - sobrevivientes) + '/' + MUTACIONES.length + ' mutaciones atrapadas');
+console.log('\n' + (elegidas.length - sobrevivientes) + '/' + elegidas.length + ' mutaciones atrapadas');
 process.exitCode = sobrevivientes ? 1 : 0;

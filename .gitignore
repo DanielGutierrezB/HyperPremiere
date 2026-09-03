@@ -1,4 +1,5 @@
 node_modules/
+.cursor/
 .DS_Store
 ._*
 *.log

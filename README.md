@@ -492,6 +492,11 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
     botón "Diagnóstico"), y porque así el login puede empezar sabiendo con qué binario
     habla en vez de descubrirlo cuando ya perdió un minuto. El doctor **no toca nada**:
     `which`/`where`, las rutas donde cada instalador deja el ejecutable, y `--version`.
+    El tercero de la familia es `bridge/claude-session.js`, que contesta la otra pregunta
+    —**¿puede autenticarse acá y ahora?**— preguntándosela al CLI (`claude auth status`) con
+    el mismo entorno con el que se genera. Es dueño de ese entorno para los dos, que es lo
+    que evita que el cartel opine sobre una corrida que no es la que hace (ver **Cuando el
+    panel dice que falta iniciar sesión y no falta**).
 
 ## Distribución (autocontenido)
 
@@ -515,7 +520,8 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
 - **Nivel de pensamiento (⚙):** cuánto razona el modelo antes de diseñar — `bajo`,
   `medio`, `alto` (default), `muy alto` o `máximo`. Es la palanca de **calidad**: diseñar
   una animación es trabajo de razonamiento, así que subirlo mejora el resultado a costa
-  de tiempo y tokens. Aplica a los dos proveedores Claude (CLI y API).
+  de tiempo y tokens. Aplica a los dos proveedores Claude (CLI y API) y **también a
+  Cursor** (ver **Elegir cuánto piensa el modelo, con los dos proveedores**).
 - **Cursor (⚙):** genera con tu **suscripción de Cursor** en vez de la de Claude — útil
   cuando el cupo de Claude se agota. Requiere el CLI en cada máquina:
   `curl https://cursor.com/install -fsS | bash` y después `cursor-agent login`
@@ -523,7 +529,10 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   (`cursor-agent --list-models`) y se **cura**: quedan fuera las variantes `-fast`
   (pagan prioridad con más consumo), las `-none` (sin razonamiento) y la gama chica.
   Acá el nivel de pensamiento **va dentro del ID del modelo** (`…-thinking-high`,
-  `-xhigh`), así que el selector de esfuerzo no aparece.
+  `-xhigh`), pero eso es asunto nuestro: el panel lo muestra en el **mismo desplegable
+  de "Nivel de pensamiento"** que Claude y vuelve a armar el ID al guardar (ver
+  **Elegir cuánto piensa el modelo, con los dos proveedores**). Las variantes de
+  **1M de contexto** son las que Cursor nombra así, y el selector lo dice.
   A tener en cuenta: cada generación arrastra el contexto del propio agente —medido
   con un prompt de veinte caracteres, **31.823 tokens** de piso, y por eso el
   contador de la sesión marca una entrada mucho mayor que nuestro prompt— y tarda
@@ -539,6 +548,9 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   `claude` instalado. Alternativa universal: pegá directamente el token (`sk-ant-oat…`)
   en "…o pegá el token directamente" (corré `claude setup-token` en tu terminal y copialo).
   **Cuando no anda, ahora dice por qué** (ver **Cuando el login de Claude falla**).
+  Y si ya te logueaste por la terminal con `claude auth login`, **no hace falta hacer nada
+  acá**: el panel lo detecta solo y te dice con qué credencial entrás (ver **Cuando el
+  panel dice que falta iniciar sesión y no falta**).
 - **Transcripción local (🎙, opcional):** lo más cómodo es el botón **Instalar Whisper**
   del panel (ver la sección siguiente). A mano: en **Mac (Apple Silicon)**,
   `pip install mlx-whisper` (usa la GPU, es lo más rápido); en **Windows**, bajá
@@ -809,6 +821,176 @@ la URL de autorización ahora se reconoce por ser **de Claude**, porque algunos 
 CLI traen un link adentro y el panel abría esa página ajena a pedir un código que no
 existía.
 
+## Cuando el panel dice que falta iniciar sesión y no falta
+
+Un editor en mac, con el panel v1.4.46 y Claude por suscripción, mandó la captura del
+cartel: *iniciá sesión en Claude*. Su log de diagnóstico, del mismo rato, dice otra cosa —
+tres generaciones seguidas con `claude-sonnet-5`, las tres terminadas y colocadas:
+
+```
+[14:45:29] Job DONE [Marcador 1] v1 · ✓ Listo y colocado · 1m 50s
+[14:51:38] Job DONE [Marcador 1] v2 · ✓ Listo y colocado · 2m 05s
+[14:54:34] Job DONE [Marcador 1] v3 · ✓ Listo y colocado · 1m 45s
+```
+
+O sea que la sesión estaba y el que mentía era el cartel. Es el peor tipo de bug de los que
+hay acá: no rompe nada, no aparece en ningún error, y manda a **arreglar algo que
+funciona** — a distancia, que es como se trabaja con el panel de otro.
+
+El indicador miraba **una sola cosa**: si en la config del panel había un token guardado
+(el que deja el botón "Iniciar sesión" o el que se pega a mano). Pero el proveedor
+`claude-cli` **no necesita ese token**: solo lo pone en el entorno si existe, y cuando no
+está, el CLI resuelve con **su propia sesión** —la de `claude auth login` en la terminal—.
+El editor se había logueado así, que es el camino normal y el que recomienda Anthropic, y
+el panel no miraba nunca ahí. Con lo cual el cartel no describía la máquina: describía
+nuestra cajita.
+
+Ahora se le pregunta **al CLI**, con el **mismo entorno** con el que va a generar:
+
+```
+$ claude auth status
+{ "loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty" }
+```
+
+Es de lectura, contesta en **~250 ms**, no gasta un token y no toca la red (medido contra
+el CLI 2.1.201). Y es sensible al entorno: con `CLAUDE_CODE_OAUTH_TOKEN` puesto contesta
+`authMethod: "oauth_token"`. Por eso la respuesta es la de la corrida **de verdad** y no
+una conjetura sobre ella: el entorno lo arma una sola función que comparten la detección y
+la generación (`bridge/claude-session.js`), así que no pueden opinar distinto. Los cuatro
+caminos que el CLI sabe distinguir —`claude.ai`, `oauth_token`, `api_key`, `none`— ahora se
+ven en el panel, que además dice **con cuál** entrás.
+
+La otra mitad del arreglo es que la respuesta tiene **tres** valores y no dos:
+
+- **Hay sesión** → verde, con la credencial nombrada.
+- **No hay** → ahí sí el cartel, con el próximo paso escrito: `claude auth login` en una
+  terminal, o pegar el token como siempre.
+- **No se pudo averiguar** (un CLI viejo que no conoce `auth status`, un binario que no
+  contesta) → **no se avisa nada**, y el renglón lo dice con todas las letras: *no quiere
+  decir que falte; si venís generando bien, está todo en orden*. Es el mismo criterio del
+  botón ⟳, que tampoco tiene dos estados sino tres. Tratar "no sé" como "no tenés" es
+  exactamente el bug que esto vino a sacar, y era la forma más fácil de traerlo de vuelta.
+
+Falta el CLI entero, que es otro problema con otro arreglo, también se dice aparte: mandar
+a iniciar sesión a alguien que no tiene el binario es hacerle perder el rato.
+
+Lo que este chequeo **no** hace es validar la credencial: con un token vencido igual
+contesta que sí. Es a propósito. Dice "hay con qué autenticarse", que es exactamente la
+condición desde la que arranca la generación; si esa credencial ya no sirve, lo va a decir
+la generación con su motivo (ver **Cuando la generación se cae**), y para eso está. Un
+indicador que además valide cuesta una llamada al modelo cada vez que se abre ⚙.
+
+Una advertencia sobre cómo medir esto, porque es fácil sacar la conclusión equivocada:
+correr `claude -p "hola" --output-format json` desde un proceso hijo **sin terminal** puede
+devolver `"Not logged in · Please run /login"` con **código de salida 0**, y eso se parece
+mucho a "el hijo no llega al llavero". Puede no serlo: en la máquina donde se investigó
+esto, `claude auth status` contestaba `"authMethod": "none"` — simplemente no había ninguna
+sesión, ni interactiva ni de ninguna clase. Conviene preguntar antes de deducir.
+
+## Cuando el modelo diseña sin mirar la imagen de referencia
+
+El mismo editor del cartel mandó otra cosa: *"tampoco está tomando la imagen de referencia
+que le compartí"*. En su log, las tres generaciones de esa clase traían la misma línea:
+
+```
+[WARN] OJO: el CLI necesitó permiso para usar Write (1 vez/veces) y no lo tuvo,
+       así que el modelo diseñó sin eso.
+```
+
+Ese aviso apuntaba al lugar equivocado y sonaba peor de lo que era. Lo denegado fue
+**Write**: el modelo, que trabaja todo el día en repositorios, intentó **guardar la
+composición en un archivo** — una composición que ya nos había devuelto entera en su
+respuesta. Denegarlo no le quitó nada al diseño. Pero el aviso metía todas las
+herramientas en la misma bolsa y le decía al editor que su animación se había hecho a
+ciegas, tapando lo único que sí importa: **leer**, que es lo que cambia lo que el modelo
+vio.
+
+Tres arreglos, en orden de qué tan seguido pega cada uno:
+
+**1. El CLI arranca con las herramientas justas.** `--tools Read`: leer, y nada más. Sin la
+herramienta no hay intento de guardar, no hay denegación y el turno se va entero en
+diseñar. Va acompañado de `--allowedTools Read`, que es la otra mitad del permiso:
+`--add-dir` dice *dónde* puede leer, esto dice que **no hace falta consultarlo** (en
+headless no hay a quién preguntarle, así que una lectura "a confirmar" es una lectura
+perdida). Y el manual del sistema ahora lo dice también en palabras: *la composición se
+entrega en tu respuesta, no en un archivo*.
+
+**2. Se comprueba que la haya abierto.** Que el permiso esté no garantiza que mire: el
+modelo puede saltearse la lectura y diseñar igual, y ahí sale algo presentable que no tiene
+nada que ver con el cuadro que el editor eligió. Era el modo de falla más **mudo** del
+proyecto: nadie se enteraba hasta ver el video. Con el estado en vivo prendido, el stream
+dice qué archivos abrió, así que se puede contar — y si falta alguna, se avisa con el
+nombre:
+
+```
+OJO: el modelo abrió solo 1 de las 2 imágenes de referencia (le faltó: imagen-2.png).
+Qué hacer: volvé a generar. Si se repite, cambiá el proveedor a la API de Claude en
+Configuración: ahí las imágenes viajan dentro del mensaje y no dependen de que el
+modelo abra un archivo.
+```
+
+La comparación es por **nombre de archivo** y no por ruta completa, porque el modelo la
+escribe como quiere (relativa, con `./`, con la barra de la otra plataforma) y lo que se
+pregunta es si miró **esa** imagen. Sin estado en vivo no hay con qué comprobarlo, y ahí
+no se avisa nada: inventar una sospecha es peor que no tener el dato. Y el prompt le avisa
+de antemano que esto se mira, que es la mitad más barata del arreglo.
+
+**3. El aviso de permisos dice cuál es cuál.** Si lo que se denegó fue leer, se dice fuerte
+y con la consecuencia (*el modelo diseñó sin ver eso*). Si fue cualquier otra cosa, se dice
+como nota y con la verdad: *eso es a propósito, no afecta al diseño*.
+
+Lo que este arreglo **no** hace es mandar las imágenes adentro del mensaje, como sí se hace
+con la API. El CLI en headless no las adjunta: van a un directorio temporal y se nombran
+por ruta absoluta en el prompt (`--input-format stream-json` abre una puerta a mandarlas
+en base64, pero no se pudo comprobar contra un CLI con sesión, y cambiar el transporte de
+las imágenes a ciegas es exactamente el tipo de cambio que rompe las dos plataformas a la
+vez). Mientras siga siendo por archivo, el control de arriba es lo que convierte una falla
+muda en una línea de log.
+
+## Elegir cuánto piensa el modelo, con los dos proveedores
+
+Del mismo editor: *"su modelo no le deja seleccionar bien la exigencia de pensamiento del
+Sonnet"*. Y era cierto, aunque el control existiera: en **Cursor** el nivel de razonamiento
+no es un flag, viene **dentro del ID del modelo** (`claude-sonnet-5-thinking-high`,
+`-xhigh`). El panel mostraba esos IDs tal cual y **escondía** la fila de "Nivel de
+pensamiento" porque "en Cursor no aplica". Aplicaba: estaba disfrazada de modelo, y para
+subirle la exigencia había que saber leer el ID.
+
+Ahora las variantes se **agrupan por familia** y el editor ve los **mismos dos
+desplegables** con los dos proveedores:
+
+| Antes (una lista de IDs) | Ahora |
+| --- | --- |
+| `claude-sonnet-5-thinking-high` | **Modelo:** Claude Sonnet 5 · 1M |
+| `claude-sonnet-5-thinking-xhigh` | **Pensamiento:** Alto / Muy alto |
+
+Al guardar se vuelve a armar el ID (familia + nivel), así que el motor y la config no
+cambiaron: lo que viaja sigue siendo el ID que entiende `cursor-agent`. El nombre de la
+familia sale del que pone **Cursor**, no de uno nuestro, y de ahí viene el **1M**: es la
+razón por la que alguien elige esas variantes, y ahora se ve en el selector en vez de
+haber que deducirla del sufijo. Tres detalles que valen la pena:
+
+- **Solo se ofrecen los niveles que tu cuenta tiene.** Cursor no tiene `máximo`; ofrecerlo
+  para después resolverlo calladamente a otra cosa sería mentir. Si cambiás de familia y el
+  nivel que tenías no existe ahí, se baja al vecino más cercano y el desplegable **muestra
+  el que quedó**.
+- **Manda el ID guardado.** Al abrir el panel, el nivel que aparece es el que dice el ID
+  con el que se venía generando, no el `effort` que quedó de cuando usabas Claude.
+- **La variante que no razona queda afuera.** En una familia con niveles, el ID pelado
+  (`claude-sonnet-5`, sin thinking) ya no es alcanzable — misma política que las `-none`,
+  que el motor filtra desde antes: para diseñar una animación es la herramienta equivocada.
+
+Y como el nivel pesa tanto como el modelo en el resultado, ahora va **al log de
+diagnóstico** junto a él (`modelo=… · pensamiento=high`). Es el dato que faltaba para
+comparar el log de otra máquina contra el propio: dos corridas con el mismo modelo y
+distinto nivel no son la misma corrida. El modelo, además, se refresca al cambiarlo: antes
+el log repetía el que había al **abrir** el panel.
+
+Sobre el **1M de contexto**, para que no queden expectativas cruzadas: se consigue por
+**Cursor**, que ofrece esas variantes en su lista. En el CLI de Claude, la ventana de 1M es
+un beta que su propia ayuda marca como *API key users only* (`--betas`), así que por
+suscripción no está disponible y el panel no la promete.
+
 ## Cuando la generación se cae
 
 Un editor en Windows apretó Generar y recibió esto entero: *"Error: claude-cli: salio con
@@ -978,6 +1160,37 @@ que el timeout cuente qué encontró, que una versión vieja mande a actualizar,
 ajeno dentro de un error no se confunda con la autorización y que una ruta con espacios no
 rompa nada.
 
+Y, del otro lado, el **cartel de sesión**, que es el que mentía. Con un `claude` de mentira
+que copia la salida real de `auth status` —y que, como el de verdad, contesta según el
+**entorno**—: que el editor logueado por su terminal **no** reciba el cartel aunque el
+panel no tenga ningún token guardado (el caso del log, y el que hay que no volver a
+romper), que el token del panel llegue al proceso hijo y por eso cuente, que sin token
+nuestro la variable de entorno **no se toque** —pisarla en vacío le sacaría al CLI su
+propia sesión—, que faltar el CLI se diga aparte de faltar la sesión, y que un CLI viejo,
+uno que contesta cualquier cosa o uno colgado terminen en **"no se sabe"** y no en un
+aviso. Del lado del panel se prueba la regla sola, apretando sobre el ⚙ dibujado: que solo
+se avise cuando se **sabe** que falta, ni mientras se averigua ni cuando no se pudo.
+
+La **imagen de referencia** tiene su propia suite, y la mitad interesante es la que prueba
+que el aviso **no** aparezca cuando no corresponde: que el modelo que abrió las dos
+imágenes no reciba ninguna advertencia, que sin imágenes no se avise de nada y que sin
+estado en vivo —donde no hay con qué comprobar— el panel se calle. Del lado que sí avisa:
+que abrir una de dos se diga con el nombre de la que faltó, que la ruta se compare por
+nombre de archivo (el modelo escribe `./imagen-1.png` cuando nosotros pasamos una absoluta),
+que lo que leyó se saque de los mensajes **completos** y no de los eventos parciales —que
+llegan sin la ruta—, y que denegar `Write` no vuelva a decirle al editor que su animación
+se hizo a ciegas. Aparte, que el CLI arranque con `Read` y nada más, y que un CLI viejo que
+no conozca el flag **genere igual**: soltar el acotado no puede llevarse puesto el estado
+en vivo ni el system prompt.
+
+Y el **selector de pensamiento** de Cursor, que se prueba de los dos lados: el motor
+separando familia y nivel de la lista real del CLI (con las `-fast`, las `-none` y la gama
+chica quedando afuera, como siempre), y el panel armando el ID de vuelta. Lo que fija cada
+decisión: que no se ofrezca un nivel que la cuenta no tiene, que cambiar de familia nunca
+produzca un ID inexistente, que el nivel del ID le gane al `effort` guardado, que una
+familia sin niveles lo diga en vez de inventar uno, y que **Claude no se haya movido** —sus
+cinco niveles siguen enteros y su ID sigue viajando pelado—.
+
 Y los **mensajes de error del proveedor**, que es lo único que le queda al editor cuando
 algo se cae en su máquina: que un motivo que vino por `stdout` con `stderr` vacío llegue al
 cartel, que la falta de sesión se reconozca como tal y traiga el comando a correr, y que el
@@ -1074,7 +1287,9 @@ Aparte, dos scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué
 fue aprendiendo; `node test/manual/mutaciones-render.js` mete a propósito cada regresión
 que estos tests dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando
-rompés el código no está probando nada.
+rompés el código no está probando nada. Acepta un filtro por nombre
+(`node test/manual/mutaciones-render.js sesión`) para cuando se tocó una sola parte y
+correr las cuarenta y pico es un rato largo de espera.
 
 Y `node test/manual/live-providers.js` habla con los CLI de verdad (gasta tokens y tarda):
 es lo que hay que correr cuando un CLI se actualiza, para ver si sigue hablando el mismo

@@ -187,6 +187,74 @@ async function main() {
     return;
   }
 
+  // Un CLI anterior a --tools/--allowedTools. Rechaza el flag al instante, sin
+  // gastar un token, y el motor tiene que volver a la forma vieja en vez de
+  // dejar al editor sin generar por un cartelito.
+  if (modo === 'sin-tools' && args.indexOf('--tools') !== -1) {
+    process.stderr.write("error: unknown option '--tools'\n");
+    process.exitCode = 1;
+    return;
+  }
+
+  // ── Qué hizo el modelo con las imágenes de referencia ───────────────
+  // El control compara por NOMBRE de archivo, así que alcanza con nombrarlas
+  // como las nombra el prompt: la ruta temporal cambia en cada corrida.
+  function stream(eventos, resultado) {
+    eventos.forEach((e) => process.stdout.write(JSON.stringify(e) + '\n'));
+    process.stdout.write(JSON.stringify(Object.assign({
+      type: 'result', subtype: 'success', is_error: false,
+      result: '<html>ok</html>',
+      usage: { input_tokens: 10, output_tokens: 20 },
+      total_cost_usd: 0.01,
+    }, resultado || {})) + '\n');
+  }
+  function leyendo(nombres) {
+    return {
+      type: 'assistant',
+      message: {
+        content: nombres.map((n) => ({
+          type: 'tool_use', name: 'Read', input: { file_path: '/tmp/loquesea/' + n },
+        })),
+      },
+    };
+  }
+
+  if (modo === 'mira-imagenes') {
+    // Abre TODAS las que le pasaron (las cuenta de los --add-dir del prompt no:
+    // el prompt las nombra imagen-1, imagen-2… y así las abre).
+    const cuantas = Number(process.env.FAKE_IMAGENES || 1);
+    const nombres = [];
+    for (let i = 1; i <= cuantas; i++) nombres.push('imagen-' + i + '.png');
+    stream([{ type: 'system', subtype: 'init', session_id: 'x' }, leyendo(nombres)]);
+    return;
+  }
+  if (modo === 'mira-una-sola') {
+    // Abre la primera y se saltea el resto: el caso a medias.
+    stream([{ type: 'system', subtype: 'init', session_id: 'x' }, leyendo(['imagen-1.png'])]);
+    return;
+  }
+  if (modo === 'no-mira') {
+    // Diseña sin abrir nada. Es el modo de falla mudo: la composición sale
+    // presentable y no tiene nada que ver con el cuadro que eligió el editor.
+    stream([{ type: 'system', subtype: 'init', session_id: 'x' }]);
+    return;
+  }
+
+  // ── Permisos denegados ──────────────────────────────────────────────
+  // Dos cosas distintas que el aviso metía en la misma bolsa: que no lo dejaran
+  // LEER (el modelo diseña sin ver la referencia) y que no lo dejaran ESCRIBIR
+  // (su costumbre de guardar el archivo; no cambia lo que vio).
+  if (modo === 'deniega-write' || modo === 'deniega-read') {
+    const tool = modo === 'deniega-write' ? 'Write' : 'Read';
+    stream([{ type: 'system', subtype: 'init', session_id: 'x' }, leyendo(['imagen-1.png'])], {
+      permission_denials: [
+        { tool_name: tool, tool_use_id: 't1', tool_input: {} },
+        { tool_name: tool, tool_use_id: 't2', tool_input: {} },
+      ],
+    });
+    return;
+  }
+
   if (modo === 'viejo' || modo === 'sin-sysfile') {
     process.stdout.write(JSON.stringify({
       type: 'result', subtype: 'success', is_error: false,
