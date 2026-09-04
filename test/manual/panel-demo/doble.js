@@ -79,11 +79,31 @@
         "También pasa si el micrófono lo tiene tomado otra app, o si es un dispositivo virtual (Zoom, Steam, OBS…) que figura como entrada pero no es un micrófono: elegí otro en ⚙ → Micrófono."
     };
   }
-  // En esta máquina no se puede dictar (Windows, sin ffmpeg, sin el Whisper de
-  // Apple Silicon). El desplegable de micrófono del ENCABEZADO no se dibuja: es
-  // un control de una función que no corre. ⚙ y el 🎙 de cada campo siguen
-  // diciendo por qué.
+  // En esta máquina NO SE PUEDE DICTAR pero SÍ SE PUEDE REFINAR (Windows, o una
+  // Mac sin ffmpeg, o cualquiera sin el Whisper de Apple Silicon). Es el
+  // escenario donde se ve que las dos disponibilidades están separadas:
+  //   - el desplegable de micrófono del ENCABEZADO no se dibuja: es un control
+  //     de una función que no corre;
+  //   - el 🎙 de cada campo se ve apagado, con el motivo en el tooltip;
+  //   - y el ✨ de refinar lo escrito a mano está PRENDIDO, porque refinar no
+  //     necesita micrófono ni Whisper. Es el caso del editor que escribe todo a
+  //     mano justamente porque no puede dictar.
   if (esc("sin-dictado")) D.dictado = { disponible: false, motivo: "El dictado por voz todavía es solo para Mac. La captura usa avfoundation, que es el sistema de audio de macOS, y el equivalente en Windows (dshow) no está probado. Escribí la instrucción a mano por ahora." };
+  // El otro eje: se puede dictar, pero no hay NINGÚN refinador en la máquina. El
+  // dictado sigue andando y deja el texto crudo; el ✨ queda apagado diciendo
+  // qué le falta a este equipo para prenderse.
+  if (esc("sin-refinador")) {
+    D.dictado = {
+      sinRefinador: "Claude Haiku (API de Anthropic): no hay API key de Anthropic configurada en ⚙ · " +
+        "Claude Haiku (CLI de Claude): el CLI de Claude está pero sin sesión (corré `claude auth login`) · " +
+        "Ollama local: no está corriendo en esta máquina"
+    };
+  }
+  // El refinado a mano se RECHAZA (el control de tamaño lo agarró). Lo que hay
+  // que mirar acá es lo que NO pasa: el campo queda tal cual lo dejó el editor.
+  if (esc("refinado-falla")) {
+    D.dictadoSimulado.fallaAMano = "el refinado quedó en 7 palabras contra 34 escritas: se comió parte del pedido";
+  }
   // Un dictado ANDANDO: cambiar de micrófono no lo toca, y la fila de ⚙ lo dice.
   if (esc("dictando")) D.dictado = { enCurso: "marcador:Marcador 3" };
 
@@ -506,7 +526,13 @@
         plataforma: "darwin", modelo: "mlx-community/whisper-small-mlx",
         faltaBajarModelo: false, cargado: !!dictando,
         enCurso: dictando ? dictando.id : (forzado.enCurso || ""), maxSegundos: 300,
-        refinador: D.dictadoSimulado.refinador, sinRefinador: "", microfono: mic
+        // "Se puede dictar" (`disponible`) y "se puede refinar" (`puedeRefinar`)
+        // son dos respuestas distintas y viajan separadas, igual que en el motor:
+        // refinar no necesita micrófono, ni ffmpeg, ni Whisper, ni ser una Mac.
+        refinador: forzado.sinRefinador ? "" : D.dictadoSimulado.refinador,
+        puedeRefinar: !forzado.sinRefinador,
+        sinRefinador: forzado.sinRefinador || "",
+        microfono: mic
       }));
     },
     dictadoArrancar: function (body, prog) {
@@ -583,8 +609,29 @@
       var dic = D.dictadoSimulado;
       var crudo = String((body && body.crudo) || "").trim();
       var previo = String((body && body.previo) || "").trim();
+      // `origen: "escrito"` es el ✨: refinar lo que se tecleó, sin micrófono de
+      // por medio. Es el MISMO handler que el del dictado —así está en el motor—
+      // y lo único que cambia es el rótulo del pedido y cómo se dice que falló.
+      var aMano = String((body && body.origen) || "") === "escrito";
       if (!crudo) {
-        return luego({ ok: false, texto: previo, crudo: "", refinador: "", ms: 0, aviso: "No se dictó nada." });
+        return luego({
+          ok: false, texto: previo, crudo: "", refinador: "", ms: 0,
+          aviso: aMano ? "El campo está vacío: no hay nada que refinar." : "No se dictó nada."
+        });
+      }
+      if (aMano) {
+        if (dic.fallaAMano) {
+          return luego({
+            ok: false, texto: crudo, crudo: crudo, refinador: dic.refinador,
+            ms: dic.msRefinadoAMano, usage: dic.usage,
+            aviso: "No se pudo refinar lo que escribiste (tu texto quedó como estaba): " +
+              dic.fallaAMano + " (" + dic.refinador + ")."
+          }, dic.msRefinadoAMano);
+        }
+        return luego(ok({
+          texto: dic.refinadoAMano, crudo: crudo, refinador: dic.refinador,
+          ms: dic.msRefinadoAMano, usage: dic.usage
+        }), dic.msRefinadoAMano);
       }
       // Lo que ya estaba escrito y lo dictado se funden en UNA instrucción, que
       // es lo que hace el refinador de verdad: no se pega uno abajo del otro.

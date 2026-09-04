@@ -1657,7 +1657,14 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
    que es donde se lee con qué se refinó y por qué falló cuando falla.
    El `min-width` del botón es su piso propio: es un emoji solo, y ese ancho es
    el que lo mantiene apretable. El blindaje contra el aplastamiento ya no está
-   acá —lo hace el default de `button`—. */
+   acá —lo hace el default de `button`—.
+
+   v1.4.51 — ahora la barra lleva DOS botones: el 🎙 y el ✨ de refinar lo que se
+   escribió a mano. El ✨ lleva además la palabra "Refinar" cuando el panel da el
+   ancho (ver la media query de `.mic-refine-txt`, abajo). El 🎙 no la necesita:
+   un micrófono ya nombra la acción; unas estrellitas no.
+   Medido en la maqueta a 320, 360, 380, 400, 470, 600 y 900 px, en los cinco
+   campos que llevan la barra: cero desborde y cero contenido fuera de caja. */
 .mic-bar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px;
 }
@@ -1665,6 +1672,42 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   min-width: 30px; padding: 2px 8px; font-size: 12px; line-height: 1.5;
 }
 .mic-btn:disabled { opacity: 0.45; cursor: default; }
+/* La palabra del ✨. Se esconde en el panel angosto y NADA MÁS que ella: el
+   botón sigue siendo el mismo, con su emoji, su estado y su tooltip.
+
+   El corte es una media query sobre el ancho de la VENTANA y no un
+   `@container`: el panel corre en CEF 99 (Chromium 99) y `@container` llegó en
+   Chrome 105. Sirve igual porque en CEP el panel ES el viewport, que es lo
+   mismo que aprovecha la media query de la barra de acciones.
+
+   Por qué 380 y no otro. Lo primero que se midió fue lo obvio —¿desborda?— y
+   la respuesta fue que NO, en ningún lado: el ✨ con la palabra pide 76 px
+   (30 sin ella) y la más angosta de las cinco barras es la de la tarjeta de
+   marcador con el panel en su mínimo, 254 px. Barrido en la maqueta de 320 a
+   800 px de a 2 px, los cinco campos, con la barra dictando y con la barra
+   después de un refinado (que es cuando además está el "↩"): cero desborde de
+   documento, cero desborde de barra y cero contenido pintado afuera de su
+   caja. O sea que el corte NO es por ancho: la palabra entra a 320.
+
+   Lo que la palabra cuesta es ALTO, y ahí sí hay un número. Los 46 px se los
+   saca a la línea de estado, que envuelve: a 320-380 la deja entre 136 y 220 px
+   y el mensaje de "Escuchando…" gana un renglón en los cinco campos (+13/+14 px
+   de barra, medido). Ese renglón se paga justo donde no hay con qué: el panel
+   puede tener 400 px de alto y el dictado le reserva a esta barra 96 px para
+   que el ■ de parar quede alcanzable (ver RESERVA_BARRA en dictado.js). Por eso
+   la palabra se va en el mismo corte en el que ya se van el subtítulo del
+   encabezado, los íconos de los botones y el nombre del micrófono: 380 px es
+   donde este panel deja de tener lugar para las palabras de adorno.
+
+   De 381 para arriba se queda, incluido el ancho con el que el panel abre
+   (400). Lo único que cuesta ahí es que entre 381 y ~424 el "↩" baja de
+   renglón antes en la tarjeta de marcador y en la fila de correcciones, que es
+   exactamente lo que la barra está hecha para hacer (ver `.mic-state`), no un
+   desborde. Cortar en 424 para ahorrarse eso dejaría el panel recién abierto
+   sin la palabra, que es justo donde tiene que estar. */
+@media (max-width: 380px) {
+  .mic-refine-txt { display: none; }
+}
 /* Apagado por la plataforma (Windows) o por falta de Whisper: se VE, con el
    motivo en el tooltip. Esconderlo dejaría al editor sin saber que la función
    existe ni por qué no la tiene. */

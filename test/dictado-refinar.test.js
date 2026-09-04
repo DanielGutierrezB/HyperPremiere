@@ -52,6 +52,27 @@ test('con el campo vacío no se inventa un "ya estaba escrito" vacío', function
   eq(p, 'DICTADO:\nque entre con un fade');
 });
 
+test('lo ESCRITO A MANO no se le presenta al modelo como una transcripción', function () {
+  // El botón ✨ del panel. El manual arranca diciendo que lo que llega lo
+  // transcribió Whisper "sin puntuación confiable, con muletillas", y eso sobre
+  // un texto tecleado es una invitación a arreglar una puntuación que ya estaba
+  // bien y a leer una palabra elegida a propósito como un error de Whisper.
+  const p = refinar._armarPedido('El fondo transparente y el logo más chico.', '', 'escrito');
+  has(p, 'ESCRITO A MANO');
+  ok(p.indexOf('DICTADO:') === -1, 'no hay ningún dictado en este camino');
+  has(p, 'no es una transcripción');
+});
+
+test('el manual del refinador viaja IDÉNTICO para los dos orígenes', function () {
+  // Lo que cambia es el rótulo del pedido, que es una línea del mensaje de
+  // usuario. `SISTEMA` no se toca: son ~1.500 caracteres que se leen de caché en
+  // cada llamada, y una variante por origen sería pagar dos cachés distintas
+  // para decir lo mismo (las dos prohibiciones valen igual en los dos casos).
+  has(refinar.SISTEMA, 'NO INVENTES NADA');
+  ok(refinar.SISTEMA.indexOf('ESCRITO A MANO') === -1,
+    'el origen es un dato del pedido, no del manual');
+});
+
 // --- 2. La red: qué se deja pasar y qué no -----------------------------------
 
 test('un refinado que se comió la mitad del pedido se rechaza', function () {
@@ -339,6 +360,62 @@ test('guardar la config vuelve a preguntar: puede haber una API key nueva', asyn
     await refinar.refinarDictado({ crudo: DICTADO }, {});
   });
   eq(sondeos, 2, 'sin esto, el editor pega la key y el dictado sigue crudo hasta que cierre Premiere');
+});
+
+// --- 5 bis. El mismo camino, para lo que se escribió a mano -----------------
+//
+// El ✨ del panel no tiene una cadena propia: entra por acá con `origen:
+// 'escrito'`. Estos tests fijan que sea EL MISMO camino —la misma cadena, el
+// mismo control de tamaño, el mismo gasto informado— y que lo único que cambie
+// sea lo que se le DICE al editor, porque "quedó el dictado sin refinar" sobre
+// un párrafo que tecleó nombra algo que no pasó.
+
+test('refinar a mano usa la misma cadena y el mismo control de tamaño', async function () {
+  const ESCRITO = 'que el lower third entre desde el borde izquierdo con easing suave, se quede tres ' +
+    'segundos y se vaya con un fade corto, con el nombre del invitado y su cargo abajo';
+  const r = await conRefinadores([falso({
+    id: 'c', nombre: 'Ollama local', detalle: 'llama3:latest',
+    complete: async () => ({ text: 'Un lower third.' }), // se comió todo
+  })], () => refinar.refinarDictado({ crudo: ESCRITO, origen: 'escrito' }, {}));
+  ok(!r.ok, 'el control es el mismo: un refinado que perdió la mitad no pasa por escribirse a mano');
+  has(r.aviso, 'se comió parte del pedido');
+  has(r.aviso, 'Ollama local');
+});
+
+test('y el aviso no habla de un dictado que no hubo', async function () {
+  const r = await conRefinadores(NINGUNO, () =>
+    refinar.refinarDictado({ crudo: 'el fondo transparente y el logo más chico', origen: 'escrito' }, {}));
+  ok(!r.ok);
+  ok(r.aviso.indexOf('dictado') === -1,
+    'nombrar un dictado que nunca hubo hace dudar de si el panel entendió qué se apretó');
+  has(r.aviso, 'tu texto quedó como estaba',
+    'y decir que su texto está intacto es la mitad del arreglo: eso es lo que se teme al apretar');
+  has(r.aviso, 'no está corriendo', 'con el motivo de siempre, uno por uno');
+});
+
+test('el campo vacío no le cuesta una llamada a nadie', async function () {
+  let llamado = false;
+  const r = await conRefinadores([falso({
+    id: 'a', nombre: 'API', detectar: async () => { llamado = true; return { disponible: true }; },
+    complete: async () => ({ text: 'x' }),
+  })], () => refinar.refinarDictado({ crudo: '   \n  ', origen: 'escrito' }, {}));
+  ok(!llamado);
+  has(r.aviso, 'El campo está vacío');
+});
+
+test('un refinado a mano que sale bien vuelve con su gasto y su modelo', async function () {
+  const ESCRITO = 'que el titulo vaya arriba a la izquierda y entre con un fade cortito, y el logo chico abajo';
+  const r = await conRefinadores([falso({
+    id: 'c', nombre: 'Ollama local', detalle: 'llama3.2:3b',
+    complete: async () => ({
+      text: 'El título arriba a la izquierda, entrando con un fade corto. El logo, chico, abajo.',
+      usage: { inputTokens: 210, outputTokens: 48, costUsd: 0 },
+    }),
+  })], () => refinar.refinarDictado({ crudo: ESCRITO, origen: 'escrito' }, {}));
+  ok(r.ok, r.aviso || '');
+  has(r.refinador, 'llama3.2:3b', 'el modelo, no solo el proveedor: es lo que va al log');
+  eq(r.usage.inputTokens, 210, 'y el gasto, que el panel manda al bolsillo del dictado');
+  ok(r.ms >= 0);
 });
 
 test('un refinador que revienta al detectarse no rompe la cadena', async function () {

@@ -1131,6 +1131,128 @@ const MUTACIONES = [
     de: '    env: opts.env,\n    detached: !IS_WIN,\n  });',
     a:  '    env: opts.env,\n  });',
   },
+
+  // ── El ✨ de refinar lo escrito a mano ────────────────────────────────
+  // Las dos primeras son las que duelen. La de arriba le pisa al editor un
+  // párrafo que escribió con las manos —el único daño de esta función que no se
+  // puede deshacer—, y la de abajo esconde el botón exactamente en las máquinas
+  // donde es la única forma de refinar (Windows, sin ffmpeg, sin Whisper).
+  {
+    nombre: 'refinar a mano: un refinado que falla pisa el texto del editor',
+    archivo: 'cep/js/dictado.js',
+    de: '        mostrarFase("sin-refinar", { aviso: r.aviso || "No se pudo refinar lo que escribiste; tu texto quedó como estaba." });',
+    a:  '        escribir(textoSinRefinar(r.texto || original, ""));\n        mostrarFase("sin-refinar", { aviso: r.aviso || "No se pudo refinar lo que escribiste; tu texto quedó como estaba." });',
+  },
+  {
+    nombre: 'refinar a mano: el ✨ vuelve a colgarse de "¿se puede dictar?"',
+    archivo: 'cep/js/dictado.js',
+    de: '        puedeRefinar: info.puedeRefinar,',
+    a:  '        puedeRefinar: info.puedeRefinar && info.disponible !== false,',
+  },
+  {
+    nombre: 'refinar a mano: el botón no se cuelga de la barra',
+    archivo: 'cep/js/dictado.js',
+    de: '    bar.appendChild(btn);\n    bar.appendChild(refBtn);',
+    a:  '    bar.appendChild(btn);',
+  },
+  {
+    nombre: 'refinar a mano: el motor deriva "se puede refinar" de "se puede dictar"',
+    archivo: 'bridge/engine.js',
+    de: '  estado.puedeRefinar = Boolean(cual);',
+    a:  '  estado.puedeRefinar = Boolean(cual) && estado.disponible !== false;',
+  },
+  {
+    nombre: 'refinar a mano: se puede refinar lo ya refinado, una vez y otra',
+    archivo: 'cep/js/dictado.js',
+    de: '    if (o.yaRefinado) return "ya-refinado";',
+    a:  '    void o.yaRefinado;',
+  },
+  {
+    nombre: 'refinar a mano: el ✨ no se entera de que el editor teclea',
+    archivo: 'cep/js/dictado.js',
+    de: '    ta.addEventListener("input", function () { pintarElDeRefinar(); });',
+    a:  '    void ta;',
+  },
+  {
+    nombre: 'refinar a mano: el volver al original le recorta lo que escribió',
+    archivo: 'cep/js/dictado.js',
+    de: '      escribir(viendoOriginal ? original : refinado);',
+    a:  '      escribir(viendoOriginal ? String(original).trim() : refinado);',
+  },
+  {
+    nombre: 'refinar a mano: se arranca un refinado encima de otro',
+    archivo: 'cep/js/dictado.js',
+    de: '      if (refinando.length) {\n        pintar({ error: "Ya hay un refinado andando en otro campo. Esperá a que termine: se refina de a uno." });\n        return;\n      }',
+    a:  '      if (false) { return; }',
+  },
+  {
+    // Con un id solo en vez de una lista, el que termina primero suelta la
+    // guarda del otro y quedan dos refinados encimados.
+    nombre: 'refinar a mano: la guarda vuelve a ser un id solo y la suelta el equivocado',
+    archivo: 'cep/js/dictado.js',
+    de: '  function soltarRefinado(id) { refinando = refinando.filter(function (x) { return x !== id; }); }',
+    a:  '  function soltarRefinado(id) { void id; refinando = []; }',
+  },
+  {
+    nombre: 'refinar a mano: mientras se dicta, el ✨ queda apretable',
+    archivo: 'cep/js/dictado.js',
+    de: '        dictando: fase === "preparando" || fase === "escuchando",',
+    a:  '        dictando: false,',
+  },
+  {
+    nombre: 'refinar a mano: el gasto se cuenta como una generación',
+    archivo: 'cep/js/dictado.js',
+    de: '        // El MISMO bolsillo que el del dictado, aparte del de las animaciones:\n        // refinar es refinar, lo haya escrito una persona o Whisper.\n        if (r.usage) HPStore.addDictadoUsage(r.usage);',
+    a:  '        if (r.usage) HPStore.addSessionUsage(r.usage);',
+  },
+  {
+    nombre: 'refinar a mano: un dictado que no se pudo refinar apaga el ✨',
+    archivo: 'cep/js/dictado.js',
+    de: '        refinado = "";\n        escribir(original);',
+    a:  '        refinado = original;\n        escribir(original);',
+  },
+  {
+    nombre: 'refinar a mano: al modelo se le dice que el texto lo transcribió Whisper',
+    archivo: 'cep/js/dictado.js',
+    de: '      HPEngine.call("dictadoRefinar", { crudo: texto, origen: "escrito" })',
+    a:  '      HPEngine.call("dictadoRefinar", { crudo: texto })',
+  },
+  {
+    nombre: 'refinar a mano: el motor no distingue el origen al armar el pedido',
+    archivo: 'bridge/dictado-refinar.js',
+    de: "  if (origen === 'escrito') {",
+    a:  '  if (false) {',
+  },
+
+  // ── La palabra "Refinar" del ✨ ───────────────────────────────────────
+  // La primera es LA que importa: sin el corte, la palabra aparece también en
+  // el panel mínimo, que es donde se midió que le cuesta un renglón a la línea
+  // de estado —el único lugar donde se lee por qué falló un refinado— con el
+  // panel pudiendo tener 400 px de alto.
+  {
+    nombre: 'la palabra: el corte desaparece y aparece hasta en el panel mínimo',
+    archivo: 'cep/css/style.css',
+    de: '@media (max-width: 380px) {\n  .mic-refine-txt { display: none; }\n}',
+    a:  '@media (max-width: 0px) {\n  .mic-refine-txt { display: none; }\n}',
+  },
+  {
+    nombre: 'la palabra: el corte se pasa del ancho con el que abre el panel',
+    archivo: 'cep/css/style.css',
+    de: '@media (max-width: 380px) {\n  .mic-refine-txt { display: none; }\n}',
+    a:  '@media (max-width: 470px) {\n  .mic-refine-txt { display: none; }\n}',
+  },
+  {
+    nombre: 'la palabra: el repintado escribe sobre el botón y se la lleva puesta',
+    archivo: 'cep/js/dictado.js',
+    de: '      refIco.textContent = p.texto;',
+    a:  '      refBtn.textContent = p.texto;',
+  },
+  {
+    nombre: 'la palabra: no se cuelga del botón y el ✨ vuelve a no nombrar nada',
+    archivo: 'cep/js/dictado.js',
+    de: '    refBtn.appendChild(refIco);\n    refBtn.appendChild(refTxt);',
+    a:  '    refBtn.appendChild(refIco);',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla

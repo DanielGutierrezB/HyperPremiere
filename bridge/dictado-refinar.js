@@ -107,10 +107,22 @@ const SISTEMA = [
  * pegados: el modelo tiene que poder distinguirlos para fundirlos en una idea
  * sola (que es lo que pidió el editor) en vez de tratar al segundo como una
  * corrección del primero.
+ *
+ * `origen === 'escrito'` es el botón ✨ del panel: refinar lo que el editor
+ * TECLEÓ, sin micrófono de por medio. Cambia UNA línea, el rótulo del bloque, y
+ * no el manual: `SISTEMA` viaja idéntico byte por byte, que es lo que deja que
+ * se lea de caché en cada llamada. Pero el rótulo importa igual: el manual
+ * arranca diciendo que lo que llega lo transcribió Whisper "sin puntuación
+ * confiable, con muletillas", y eso sobre un texto tecleado es una invitación a
+ * arreglar una puntuación que ya estaba bien y a leer una palabra elegida a
+ * propósito como un error de transcripción.
  */
-function armarPedido(crudo, previo) {
+function armarPedido(crudo, previo, origen) {
   const dictado = String(crudo || '').trim();
   const escrito = String(previo || '').trim();
+  if (origen === 'escrito') {
+    return 'ESCRITO A MANO (no es una transcripción: la puntuación y las palabras son las que eligió):\n' + dictado;
+  }
   if (!escrito) return 'DICTADO:\n' + dictado;
   return [
     'YA ESTABA ESCRITO EN EL CAMPO:',
@@ -380,27 +392,50 @@ function porQueNoHayRefinador() {
 }
 
 /**
- * Refina un dictado. NUNCA lanza y NUNCA devuelve un campo vacío: si no se pudo
+ * Cómo arranca el aviso de "no se pudo".
+ *
+ * Es lo único que se dice distinto según de dónde salió el texto, y hace falta
+ * decirlo distinto: "quedó el dictado sin refinar" sobre un párrafo que el
+ * editor tecleó nombra algo que no pasó, y encima suena a que se perdió lo
+ * suyo, que es exactamente lo que NO ocurre (el panel no le toca el campo).
+ */
+function noSePudo(origen) {
+  return origen === 'escrito'
+    ? 'No se pudo refinar lo que escribiste (tu texto quedó como estaba): '
+    : 'Quedó el dictado sin refinar: ';
+}
+
+/**
+ * Refina un dictado —o lo que el editor escribió a mano, con `origen:
+ * 'escrito'`—. NUNCA lanza y NUNCA devuelve un campo vacío: si no se pudo
  * refinar, vuelve el crudo con el motivo, que es lo que hace que el dictado
  * siga sirviendo en una máquina sin ningún proveedor.
  *
- * @param {{crudo:string, previo?:string}} body
+ * El camino es UNO solo para los dos orígenes a propósito: la cadena de
+ * refinadores, el control de tamaño y el gasto que se informa son los mismos.
+ * Refinar es refinar, lo haya escrito una persona o Whisper.
+ *
+ * @param {{crudo:string, previo?:string, origen?:string}} body
  * @param {object} cfg - la config plana del motor
  * @returns {Promise<{ok:boolean, texto:string, crudo:string, refinador:string, ms:number, usage?:object, aviso?:string}>}
  */
 async function refinarDictado(body, cfg) {
   const crudo = String((body && body.crudo) || '').trim();
   const previo = String((body && body.previo) || '').trim();
+  const origen = String((body && body.origen) || '') === 'escrito' ? 'escrito' : 'dictado';
   const juntos = previo ? (previo + ' ' + crudo).trim() : crudo;
   if (!crudo) {
-    return { ok: false, texto: previo, crudo: '', refinador: '', ms: 0, aviso: 'No se dictó nada.' };
+    return {
+      ok: false, texto: previo, crudo: '', refinador: '', ms: 0,
+      aviso: origen === 'escrito' ? 'El campo está vacío: no hay nada que refinar.' : 'No se dictó nada.',
+    };
   }
 
   const cual = await elegirRefinador(cfg);
   if (!cual) {
     return {
       ok: false, texto: juntos, crudo: crudo, refinador: '', ms: 0,
-      aviso: 'Quedó el dictado sin refinar: no hay ningún refinador disponible en esta máquina. ' +
+      aviso: noSePudo(origen) + 'no hay ningún refinador disponible en esta máquina. ' +
         porQueNoHayRefinador(),
     };
   }
@@ -411,7 +446,7 @@ async function refinarDictado(body, cfg) {
   try {
     salida = await proveedorDe(quien).complete({
       systemPrompt: SISTEMA,
-      userPrompt: armarPedido(crudo, previo),
+      userPrompt: armarPedido(crudo, previo, origen),
       model: quien.model(cual.detalle),
       config: await quien.config(cfg, cual.detalle),
     });
@@ -423,7 +458,7 @@ async function refinarDictado(body, cfg) {
       // el "Qué hacer" y después lo que escribió el proceso). Se corta porque
       // esto se lee en una línea abajo del micrófono, y lo que importa —el
       // diagnóstico y el próximo paso— va adelante.
-      aviso: 'Quedó el dictado sin refinar: ' + cual.nombre + ' falló (' +
+      aviso: noSePudo(origen) + cual.nombre + ' falló (' +
         String((e && e.message) || e).slice(0, 400) + ').',
     };
   }
@@ -434,7 +469,7 @@ async function refinarDictado(body, cfg) {
     return {
       ok: false, texto: juntos, crudo: crudo,
       refinador: cual.nombre, ms: ms, usage: salida.usage,
-      aviso: 'Quedó el dictado sin refinar: ' + control.motivo + ' (' + cual.nombre + ').',
+      aviso: noSePudo(origen) + control.motivo + ' (' + cual.nombre + ').',
     };
   }
   return {

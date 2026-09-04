@@ -1220,6 +1220,36 @@ modelo refinó y cuánto tardó, que es lo primero que hace falta cuando alguien
 dictado me sale raro"*. Y el gasto va a un bolsillo **aparte** en el contador de la sesión,
 para que no se confunda con lo que cuestan las animaciones.
 
+**Y el mismo refinado, para lo que se escribió a mano.** Al lado del 🎙 hay un **✨ Refinar**
+—con la palabra desde 381 px de ancho de panel, o sea también en el que abre Premiere; por
+debajo queda el emoji solo, que es donde el panel ya se queda sin lugar para las palabras—:
+toma lo que hay tecleado en ese campo y lo pasa por el refinador de arriba —la misma cadena, el
+mismo control de tamaño, el mismo bolsillo del contador—, dejando el resultado en el campo
+y un **↩ texto original** al lado, que devuelve lo que había *carácter por carácter*, con
+sus espacios y sus renglones en blanco. Se puede apretar una vez: después queda apagado
+hasta que el texto cambie, porque refinar lo refinado gasta tokens para empeorarlo; si se
+vuelve al original, o si se sigue escribiendo, se prende de nuevo. Con el campo vacío está
+apagado, mientras se dicta también —al parar, el dictado se refina solo— y se refina de a
+uno en todo el panel, como hay un solo micrófono. La diferencia con el dictado es qué pasa
+cuando falla: acá el campo **no se toca**. Un dictado se puede pisar con el crudo, porque
+el crudo es lo que acababa de entrar; un párrafo que alguien escribió con las manos no se
+pisa con nada, así que si el refinador se cae o el control de tamaño lo rechaza, queda el
+texto tal cual y el motivo escrito abajo.
+
+**Refinar no necesita micrófono, ni ffmpeg, ni Whisper, ni ser una Mac**: es una llamada de
+texto a texto. Por eso "se puede dictar" y "se puede refinar" son dos respuestas separadas
+y no una, y **el ✨ funciona en Windows**, donde el 🎙 no. Ese es el punto de todo esto: el
+editor que escribe todo a mano *porque* no puede dictar es justamente el que más lo
+necesita, y colgar el botón nuevo de la respuesta del micrófono se lo escondía a él. Cada
+botón apagado dice en su tooltip qué le falta a esa máquina —el 🎙 el avfoundation o el
+Whisper, el ✨ la API key, la sesión del CLI o el Ollama que no está corriendo— y ninguno
+de los dos se esconde: que una función exista y no esté disponible es información, que no
+esté es un misterio. Una aspereza medida acá, con el CLI de Claude como refinador: de siete
+refinados de una instrucción de marcador, cinco tardaron entre 7,9 y 16 segundos (mediana
+~8) y **dos se colgaron hasta el tope de 45 s**. El texto queda intacto y se dice el
+motivo, pero ocho segundos ya se sienten y cuarenta y cinco son un callejón. Con una API
+key de Anthropic no se paga el arranque del CLI, que es de donde sale casi todo ese número.
+
 Dos asperezas honestas. El texto en vivo **va quedando atrás** del que habla: medio segundo
 al principio, unos dos y medio a los veinte segundos. Se aisló capturando sin transcribir y
 el retraso es idéntico, así que es de ffmpeg/avfoundation, no del modelo; probar a 48 kHz

@@ -142,6 +142,78 @@ test('con todo en su lugar, se puede dictar', function () {
   eq(v.motivo, '');
 });
 
+// --- 3 bis. Dictar y refinar son dos disponibilidades, no una ----------------
+
+test('el veredicto de DICTAR no sabe nada de refinadores', function () {
+  // Es la mitad de la separación: `veredicto` mira micrófono, ffmpeg, Whisper y
+  // plataforma, y nada más. Si alguna vez alguien le sumara "y que haya con qué
+  // refinar", una máquina sin API key perdería el dictado —que sin refinador
+  // sirve igual: queda el texto crudo—.
+  ['win32', 'darwin'].forEach(function (plataforma) {
+    const v = dictado._veredicto({ plataforma: plataforma, ffmpeg: true, whisper: { style: 'mlx' }, python: 'p' });
+    ok(String(v.motivo).indexOf('refinad') === -1, plataforma + ': el motivo no habla de refinadores');
+  });
+});
+
+test('el motor contesta por separado si se puede dictar y si se puede refinar', async function () {
+  // La otra mitad, y la que hace existir al ✨ en Windows. Se falsean las dos
+  // respuestas por separado: un equipo donde NO se puede dictar y SÍ hay
+  // refinador tiene que devolver `disponible: false` y `puedeRefinar: true`.
+  const engine = require('../bridge/engine');
+  const refinar = require('../bridge/dictado-refinar');
+  const realEstado = dictado.dictadoEstado;
+  const reales = refinar._REFINADORES.splice(0, refinar._REFINADORES.length);
+  dictado.dictadoEstado = async () => ({
+    ok: true, disponible: false,
+    motivo: 'El dictado por voz todavía es solo para Mac.',
+    plataforma: 'win32',
+  });
+  refinar._REFINADORES.push({
+    id: 'ollama', nombre: 'Ollama local',
+    detectar: async () => ({ disponible: true, detalle: 'llama3.2:3b' }),
+    model: (d) => d, config: () => ({}), proveedor: { complete: async () => ({ text: '' }) },
+  });
+  refinar.olvidarRefinador();
+  try {
+    const st = await engine.dictadoEstado();
+    ok(!st.disponible, 'dictar, no');
+    ok(st.puedeRefinar, 'refinar, sí: es una llamada de texto a texto, sin micrófono ni Whisper');
+    has(st.refinador, 'llama3.2:3b', 'y con qué, que es lo que muestra el tooltip del ✨');
+    eq(st.sinRefinador, '');
+  } finally {
+    dictado.dictadoEstado = realEstado;
+    refinar._REFINADORES.splice(0, refinar._REFINADORES.length);
+    reales.forEach((r) => refinar._REFINADORES.push(r));
+    refinar.olvidarRefinador();
+  }
+});
+
+test('sin ningún refinador se dice qué falta, y dictar sigue disponible', async function () {
+  const engine = require('../bridge/engine');
+  const refinar = require('../bridge/dictado-refinar');
+  const realEstado = dictado.dictadoEstado;
+  const reales = refinar._REFINADORES.splice(0, refinar._REFINADORES.length);
+  dictado.dictadoEstado = async () => ({ ok: true, disponible: true, motivo: '', plataforma: 'darwin' });
+  refinar._REFINADORES.push({
+    id: 'ollama', nombre: 'Ollama local',
+    detectar: async () => ({ disponible: false, motivo: 'no está corriendo en esta máquina' }),
+    model: () => '', config: () => ({}), proveedor: { complete: async () => ({ text: '' }) },
+  });
+  refinar.olvidarRefinador();
+  try {
+    const st = await engine.dictadoEstado();
+    ok(st.disponible, 'un dictado sin refinar sirve: queda el texto crudo');
+    ok(!st.puedeRefinar);
+    has(st.sinRefinador, 'no está corriendo',
+      'y el ✨ apagado tiene que poder decir qué le falta a este equipo, no solo que no anda');
+  } finally {
+    dictado.dictadoEstado = realEstado;
+    refinar._REFINADORES.splice(0, refinar._REFINADORES.length);
+    reales.forEach((r) => refinar._REFINADORES.push(r));
+    refinar.olvidarRefinador();
+  }
+});
+
 // --- 4. El permiso de macOS, que es el error que más se va a ver -------------
 
 test('el error de permiso explica que el diálogo dice "Adobe Premiere Pro"', function () {

@@ -428,6 +428,14 @@
       refinado: "El título entra desde la izquierda con un fade de medio segundo y easing suave en los keyframes. El logo queda abajo a la derecha durante toda la animación.",
       refinador: "Claude Haiku (CLI de Claude)",
       msRefinado: 1400,
+      // El ✨: refinar lo que el editor ESCRIBIÓ A MANO, sin micrófono de por
+      // medio. Tarda más que el del dictado porque un texto tecleado suele ser
+      // más largo que dos frases dichas. `fallaAMano` lo enciende el escenario
+      // `?e=refinado-falla`, y ahí lo que hay que mirar es lo que NO pasa: el
+      // campo queda tal cual lo dejó el editor.
+      refinadoAMano: "Un lower third con el nombre del invitado y su cargo, que entra desde el borde izquierdo con easing suave y se va con un fade corto. Fondo semitransparente oscuro y el texto en blanco, alineado a la izquierda.",
+      msRefinadoAMano: 2100,
+      fallaAMano: "",
       // Lo que gasta un refinado de verdad: el manual del refinador son ~1.500
       // caracteres que se leen de caché en cada llamada, y ahí está la entrada.
       usage: {

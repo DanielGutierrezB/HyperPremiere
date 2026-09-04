@@ -96,6 +96,33 @@ function elemento(tag) {
   return el;
 }
 
+/**
+ * El primer descendiente que tenga esa clase ENTRE las suyas.
+ *
+ * `buscar` compara el className completo, y no alcanza para la barra del
+ * micrófono: sus nodos se repintan con clases de estado pegadas
+ * (`mic-state is-warn`, `mic-btn is-busy`), que es justo lo que hay que mirar.
+ */
+function porClase(raiz, clase) {
+  for (const h of raiz.children) {
+    if (String(h.className).split(/\s+/).indexOf(clase) !== -1) return h;
+    const hit = porClase(h, clase);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * El emoji del ✨ y su palabra, que viven en dos `<span>` y no en el
+ * `textContent` del botón.
+ *
+ * Están separados porque la palabra se esconde con CSS en el panel angosto, y
+ * CSS no puede esconder media palabra de un nodo de texto. Los tests preguntan
+ * por cada uno donde antes preguntaban por el botón entero.
+ */
+function icono(btn) { const e = porClase(btn, 'mic-refine-ico'); return e ? String(e.textContent) : null; }
+function palabra(btn) { const e = porClase(btn, 'mic-refine-txt'); return e ? String(e.textContent) : null; }
+
 /** Un HPDictado de mentira que cuelga una barra reconocible. */
 function dictadoDeMentira(espia) {
   return {
@@ -626,11 +653,25 @@ function campoConRegla() {
 /** El alto que el widget le dejó puesto al campo, en píxeles. */
 function altoPuesto(ta) { return parseInt(String(ta.style.height || '0'), 10) || 0; }
 
+/** El refinado que devuelve el motor de mentira si no se le pide otra cosa. */
+const REFINADO = { ok: true, texto: 'Título desde la izquierda, con fade.', refinador: 'Claude Haiku', ms: 900 };
+
 /**
  * Cuelga un micrófono de verdad de un campo con regla, adentro de un `<details>`
  * plegado (que es como está una tarjeta de marcador que no se abrió).
+ *
+ * `o.estado` reemplaza lo que contesta `dictadoEstado` —que es lo que separa "se
+ * puede dictar" de "se puede refinar"—, y `o.refinar(arg)` reemplaza lo que
+ * contesta `dictadoRefinar`. `HPStore` es el DE VERDAD, con un localStorage en
+ * memoria: el contador de la sesión es parte de lo que hay que probar y un espía
+ * no diría si el gasto cayó en el bolsillo correcto.
  */
-function montarDictado(altoPanel) {
+function montarDictado(altoPanel, o) {
+  o = o || {};
+  const estado = Object.assign(
+    { ok: true, disponible: true, puedeRefinar: true, refinador: 'Claude Haiku' },
+    o.estado || {}
+  );
   const ta = campoConRegla();
   const tarjeta = elemento('details');
   tarjeta.open = false;
@@ -638,19 +679,29 @@ function montarDictado(altoPanel) {
 
   let avisarProgreso = null;
   let terminarDictado = null;
+  const pedidos = [];   // cada `dictadoRefinar` que salió del panel
+  const logs = [];      // lo que se escribió en el ⬇ Log
+  const disco = {};
   const ctx = {
     console: console, Date: Date, Math: Math, JSON: JSON, Object: Object, String: String,
     Number: Number, Array: Array, Promise: Promise, parseInt: parseInt,
     setTimeout: setTimeout, clearTimeout: clearTimeout,
     setInterval: function () { return 0; }, clearInterval: function () {},
     innerHeight: altoPanel,
-    HPLog: { log: function () {} },
-    HPStore: { addDictadoUsage: function () {} },
+    localStorage: {
+      getItem: function (k) { return Object.prototype.hasOwnProperty.call(disco, k) ? disco[k] : null; },
+      setItem: function (k, v) { disco[k] = String(v); },
+      removeItem: function (k) { delete disco[k]; },
+    },
+    HPLog: { log: function (msg, nivel) { logs.push({ msg: String(msg), nivel: nivel || 'INFO' }); } },
     HPEngine: {
-      call: function (metodo) {
-        if (metodo === 'dictadoEstado') return Promise.resolve({ ok: true, disponible: true, refinador: 'Claude Haiku' });
+      call: function (metodo, arg) {
+        if (metodo === 'dictadoEstado') {
+          return o.estadoFalla ? Promise.reject(new Error(o.estadoFalla)) : Promise.resolve(estado);
+        }
         if (metodo === 'dictadoRefinar') {
-          return Promise.resolve({ ok: true, texto: 'Título desde la izquierda, con fade.', refinador: 'Claude Haiku', ms: 900 });
+          pedidos.push(arg);
+          return Promise.resolve(o.refinar ? o.refinar(arg) : REFINADO);
         }
         return Promise.resolve({ ok: true });
       },
@@ -662,18 +713,48 @@ function montarDictado(altoPanel) {
     document: { createElement: elemento },
   };
   ctx.window = ctx;
+  ctx.global = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(path.join(CEP, 'dictado.js'), 'utf8'), ctx, { filename: 'dictado.js' });
-  const w = ctx.HPDictado.attachMic(ta, { id: 'marcador:1' });
+  for (const f of ['util.js', 'store.js', 'dictado.js']) {
+    vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
+  }
+  const escrito = [];
+  const w = ctx.HPDictado.attachMic(ta, {
+    id: 'marcador:1',
+    onChange: function (texto) { escrito.push(texto); },
+  });
   tarjeta.appendChild(w.el);
   return {
-    ta: ta, tarjeta: tarjeta, bar: w.el, boton: w.boton,
+    ctx: ctx, ta: ta, tarjeta: tarjeta, bar: w.el, boton: w.boton, refinar: w.botonRefinar,
+    pedidos: pedidos, logs: logs, escrito: escrito,
     /** Espera a que el botón sepa que en esta máquina se puede dictar. */
     listo: function () { return new Promise(function (r) { setTimeout(r, 0); }); },
     /** Lo que manda el motor al pasar de etapa (ver el sobre en engine-client.js). */
     avisar: function (sobre) { avisarProgreso(sobre); },
     /** Un refresco del texto en vivo: el motor manda el buffer ENTERO otra vez. */
     hablar: function (texto) { avisarProgreso({ dictado: { id: 'marcador:1', texto: texto } }); },
+    /** El editor tecleando: pone el valor Y dispara el evento, como el navegador. */
+    teclear: function (texto) { ta.escribir(texto); },
+    /** Lo que dice la línea de estado de la barra. */
+    linea: function () { return porClase(w.el, 'mic-state'); },
+    /** El botón de volver atrás (oculto mientras `data-hidden` sea "true"). */
+    volver: function () { return porClase(w.el, 'mic-undo'); },
+    /** Deja correr la promesa del refinado. */
+    esperar: function () { return new Promise(function (r) { setTimeout(r, 0); }); },
+    /**
+     * Un SEGUNDO campo con su barra, en el mismo módulo. Hace falta para probar
+     * las guardas de "uno a la vez": son variables del módulo, y montar otro
+     * contexto daría dos módulos que no se conocen entre sí.
+     */
+    otroCampo: function (idOtro) {
+      const otra = campoConRegla();
+      const w2 = ctx.HPDictado.attachMic(otra, { id: idOtro || 'marcador:2' });
+      return {
+        ta: otra, bar: w2.el, boton: w2.boton, refinar: w2.botonRefinar,
+        teclear: function (t) { otra.escribir(t); },
+        linea: function () { return porClase(w2.el, 'mic-state'); },
+      };
+    },
     /** El editor tocó ■: vuelve el crudo y arranca el refinado. */
     parar: function (crudo) {
       terminarDictado({ ok: true, crudo: crudo });
@@ -871,4 +952,589 @@ test('reiniciar el contador también limpia lo del dictado', function () {
   HPStore.resetSessionUsage();
   eq(HPStore.getSessionUsage().dictado.refinados, 0);
   eq(HPStore.getSessionUsage().dictado.costUsd, 0);
+});
+
+// ── 9. El ✨: refinar lo que se escribió a mano ──────────────────────
+//
+// El mismo refinado del dictado, sobre un texto que puso una persona. De ahí
+// salen las dos reglas que no comparte con el micrófono:
+//
+//   1. si falla, el campo NO SE TOCA. En el dictado se puede pisar el campo con
+//      el crudo, porque el crudo es lo que acababa de entrar; un párrafo que
+//      alguien tecleó no se pisa con nada.
+//   2. el "↩" devuelve su texto TAL CUAL, carácter por carácter: es lo que el
+//      editor va a comparar contra lo que le devolvió el modelo, y "casi igual"
+//      no sirve para comparar.
+//
+// Y una regla que sí es del panel entero: refinar no necesita micrófono, ni
+// ffmpeg, ni Whisper, ni ser una Mac. Necesita un refinador. Por eso hay dos
+// disponibilidades separadas y no una, y por eso el test que más importa de esta
+// sección es el que monta el widget en una máquina DONDE NO SE PUEDE DICTAR.
+
+// ── 9.1 Las decisiones puras ─────────────────────────────────────────
+
+test('el ✨ contesta primero por lo que no depende del editor', function () {
+  const D = cargarDictado();
+  // El orden de las preguntas es el orden en que importan: si no hay refinador,
+  // da igual qué haya escrito; si está refinando, da igual que además esté
+  // dictando. Un orden distinto muestra el motivo equivocado en el tooltip, que
+  // es lo único que el editor tiene para saber por qué el botón está gris.
+  eq(D._estadoDeRefinar({ averiguando: true, puedeRefinar: true, texto: 'algo' }), 'averiguando');
+  eq(D._estadoDeRefinar({ puedeRefinar: false, texto: 'algo' }), 'sin-refinador');
+  eq(D._estadoDeRefinar({ puedeRefinar: true, texto: 'algo', refinando: true, dictando: true }), 'refinando');
+  eq(D._estadoDeRefinar({ puedeRefinar: true, texto: 'algo', dictando: true }), 'dictando');
+  eq(D._estadoDeRefinar({ puedeRefinar: true, texto: 'algo', ocupado: true }), 'ocupado');
+  eq(D._estadoDeRefinar({ puedeRefinar: true, texto: '  \n  ' }), 'vacio',
+    'espacios y renglones en blanco no son un pedido: refinar aire cuesta plata');
+  eq(D._estadoDeRefinar({ puedeRefinar: true, texto: 'algo', yaRefinado: true }), 'ya-refinado');
+  eq(D._estadoDeRefinar({ puedeRefinar: true, texto: 'algo' }), 'listo');
+});
+
+test('el ✨ apagado siempre dice qué lo apagó', function () {
+  const D = cargarDictado();
+  // Un botón gris sin explicación se aprieta tres veces y después se reporta
+  // como roto. Y no se esconde en ningún estado: que la función exista y no esté
+  // disponible es información; que no esté es un misterio.
+  ['sin-refinador', 'dictando', 'ocupado', 'vacio', 'ya-refinado'].forEach(function (e) {
+    const p = D._pintarRefinar(e, { refinador: 'Claude Haiku', sinRefinador: 'Ollama local: no está corriendo' });
+    ok(p.apagado, e + ': tiene que estar apagado');
+    eq(p.texto, '✨', e + ': el ícono se queda');
+    ok(p.titulo.length > 40, e + ': el tooltip tiene que explicar, no rotular');
+  });
+});
+
+test('el volver atrás se llama distinto según de dónde salió el texto', function () {
+  const D = cargarDictado();
+  eq(D._etiquetaDeVolver('escrito', false).texto, '↩ texto original',
+    '"↩ dictado crudo" sobre un párrafo tecleado nombra un dictado que no hubo');
+  eq(D._etiquetaDeVolver('dictado', false).texto, '↩ dictado crudo');
+  eq(D._etiquetaDeVolver('escrito', true).texto, '↪ volver al refinado');
+  eq(D._etiquetaDeVolver('dictado', true).texto, '↪ volver al refinado',
+    'para ir al refinado da igual de dónde venía: es el mismo texto');
+});
+
+// ── 9.2 El ciclo, cableado ───────────────────────────────────────────
+
+test('el ✨ refina lo que el editor escribió a mano', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  const suyo = 'que el titulo vaya arriba a la izquierda y entre con un fade cortito';
+  m.teclear(suyo);
+  ok(!m.refinar.disabled, 'con texto escrito y nada pasando, se puede refinar');
+
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, REFINADO.texto, 'el refinado queda en el campo');
+  eq(m.escrito[m.escrito.length - 1], REFINADO.texto,
+    'y se avisa para que el que llamó lo persista, como cualquier cambio del campo');
+  has(m.linea().textContent, 'Claude Haiku');
+  has(m.linea().textContent, '0.9 s');
+});
+
+test('el refinado a mano se le pide al motor como ESCRITO, no como dictado', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  const suyo = '  el fondo transparente y el logo un poco más chico  ';
+  m.teclear(suyo);
+  m.refinar.click();
+  await m.esperar();
+
+  eq(m.pedidos.length, 1, 'un solo pedido, y al mismo handler que el del dictado');
+  eq(m.pedidos[0].origen, 'escrito',
+    'decirle al modelo que un texto tecleado lo transcribió Whisper lo manda a arreglar ' +
+    'una puntuación que ya estaba bien');
+  eq(m.pedidos[0].crudo, suyo, 'y va entero, sin recortarle nada');
+  ok(!m.pedidos[0].previo, 'no hay "lo que ya estaba": lo que ya estaba ES lo que se refina');
+});
+
+test('el ↩ devuelve lo escrito a mano carácter por carácter', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  // Con espacios de más y un renglón en blanco a propósito: eso es lo que el
+  // editor escribió, y si le vuelve recortado la vuelta atrás no sirve para lo
+  // que se pensó (comparar su texto contra el del modelo).
+  const suyo = '  que el título tape menos la cara,\n\n  y el logo un poco más chico  ';
+  m.teclear(suyo);
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, REFINADO.texto);
+
+  const volver = m.volver();
+  eq(volver.getAttribute('data-hidden'), 'false', 'el volver atrás queda a la vista');
+  eq(volver.textContent, '↩ texto original');
+  volver.click();
+  eq(m.ta.value, suyo, 'exactamente lo que había: los dos espacios del principio y el renglón vacío');
+  eq(m.escrito[m.escrito.length - 1], suyo, 'y también se persiste así');
+  eq(volver.textContent, '↪ volver al refinado');
+  ok(!m.refinar.disabled, 'volver al original vuelve a habilitar el ✨');
+
+  volver.click();
+  eq(m.ta.value, REFINADO.texto);
+  ok(m.refinar.disabled, 'y volver al refinado lo apaga otra vez, sin guardar ningún estado nuevo');
+});
+
+test('un refinado que falla no le toca una coma al texto del editor', async function () {
+  // Con espacios de más adrede: "no se toca" es no se toca. La tentación de
+  // copiar lo que hace el dictado —volver a escribir el crudo en el campo— pasa
+  // el texto por `trim` y le come al editor su sangría.
+  const suyo = '  que el título tape menos la cara,\n  y el logo quede un poco más chico  ';
+  const m = montarDictado(600, {
+    refinar: function () {
+      return {
+        ok: false, texto: suyo.trim(), crudo: suyo.trim(), refinador: 'Ollama local · llama3:latest', ms: 3400,
+        aviso: 'No se pudo refinar lo que escribiste (tu texto quedó como estaba): el refinado quedó ' +
+          'en 4 palabras contra 13 escritas: se comió parte del pedido (Ollama local · llama3:latest).',
+      };
+    },
+  });
+  await m.listo();
+  m.teclear(suyo);
+  m.refinar.click();
+  await m.esperar();
+
+  eq(m.ta.value, suyo, 'perderle un párrafo que escribió a mano es mucho peor que no refinarlo');
+  eq(m.escrito.length, 0, 'ni se avisó un cambio que no hubo: nada que persistir');
+  has(m.linea().textContent, 'se comió parte del pedido', 'y el motivo se lee');
+  has(m.linea().className, 'is-warn', 'en ámbar y no en rojo: no hay nada que rehacer, el texto está');
+  eq(m.volver().getAttribute('data-hidden'), 'true', 'no se ofrece volver a un original que nunca se pisó');
+  ok(!m.refinar.disabled, 'y se puede reintentar');
+});
+
+test('si el motor se cae en el medio, el texto tampoco se toca', async function () {
+  const suyo = 'el fondo tiene que quedar transparente';
+  const m = montarDictado(600, {
+    refinar: function () { return Promise.reject(new Error('el motor no contestó')); },
+  });
+  await m.listo();
+  m.teclear(suyo);
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, suyo);
+  has(m.linea().textContent, 'el motor no contestó');
+  has(m.linea().textContent, 'quedó como estaba', 'decirlo es la mitad del arreglo');
+});
+
+// ── 9.3 Cuándo se puede apretar, y cuándo no ─────────────────────────
+
+test('con el campo vacío el ✨ está apagado: no hay nada que refinar', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  ok(m.refinar.disabled);
+  has(m.refinar.title, 'no hay nada que refinar');
+  m.teclear('   \n  ');
+  ok(m.refinar.disabled, 'ni con espacios y saltos de línea');
+  m.teclear('subí el título');
+  ok(!m.refinar.disabled);
+});
+
+test('mientras dicta, el ✨ está apagado: el dictado ya refina solo al parar', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  m.teclear('el título tapa la cara');
+  ok(!m.refinar.disabled);
+
+  m.boton.click();
+  ok(m.refinar.disabled, 'apenas arranca el dictado, no');
+  has(m.refinar.title, 'se refina solo', 'y dice por qué no hace falta');
+  m.avisar({ fase: 'escuchando', msg: 'Escuchando…' });
+  ok(m.refinar.disabled, 'y mientras escucha, tampoco');
+});
+
+test('después de refinar, el ✨ se apaga hasta que el texto cambie', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  m.teclear('que el titulo vaya arriba y entre con un fade cortito');
+  m.refinar.click();
+  await m.esperar();
+
+  ok(m.refinar.disabled, 'refinar lo refinado gasta tokens para empeorar el texto');
+  has(m.refinar.title, 'Ya está refinado');
+  has(m.refinar.title, 'cambiá algo', 'con la salida a la vista');
+
+  m.teclear(REFINADO.texto + ' Y el logo abajo a la derecha.');
+  ok(!m.refinar.disabled, 'en cuanto sigue escribiendo, se prende de nuevo');
+});
+
+test('mientras refina, el botón se apaga y no manda un segundo pedido', async function () {
+  let soltar = null;
+  const m = montarDictado(600, { refinar: function () { return new Promise(function (r) { soltar = r; }); } });
+  await m.listo();
+  m.teclear('el título tapa la cara, subilo un poco');
+  m.refinar.click();
+
+  eq(icono(m.refinar), '…', 'el refinado tarda de medio segundo a varios: hay que ver que trabaja');
+  eq(palabra(m.refinar), 'Refinar',
+    'y la palabra no se conjuga: un "Refinando" le cambiaría el ancho al botón en medio del ' +
+    'refinado y le movería de lugar a la línea de estado, que es justo lo que hay que leer');
+  ok(m.refinar.disabled);
+  has(m.refinar.className, 'is-busy');
+  has(m.linea().textContent, 'Refinando con Claude Haiku');
+  // El 🎙 también queda tomado, pero NO se pone en "…": dos "…" idénticos al
+  // lado del otro no dicen cuál de los dos está trabajando.
+  eq(m.boton.textContent, '🎙');
+  ok(m.boton.disabled);
+  has(m.boton.title, 'Esperá', 'y dice que espere, no que está pasando algo con el micrófono');
+
+  m.refinar.click(); // un doble clic, o un Enter sobre el botón recién apagado
+  eq(m.pedidos.length, 1, 'no se paga dos veces el mismo refinado');
+
+  soltar(REFINADO);
+  await m.esperar();
+  eq(m.ta.value, REFINADO.texto);
+  eq(icono(m.refinar), '✨', 'y el botón vuelve');
+});
+
+test('en todo el panel se refina de a uno, como hay un solo micrófono', async function () {
+  let soltar = null;
+  const m = montarDictado(600, { refinar: function () { return new Promise(function (r) { soltar = r; }); } });
+  await m.listo();
+  const otro = m.otroCampo('marcador:2');
+  await m.esperar();
+
+  m.teclear('el título tapa la cara');
+  m.refinar.click();
+  eq(m.pedidos.length, 1);
+
+  otro.teclear('el logo se pierde con el fondo claro');
+  ok(otro.refinar.disabled, 'el segundo campo ni ofrece el botón mientras el primero refina');
+  has(otro.refinar.title, 'otro campo');
+  otro.refinar.click();
+  eq(m.pedidos.length, 1, 'y apretándolo igual no arranca encima del primero');
+  has(otro.linea().textContent, 'de a uno', 'con el motivo, que es lo que evita el "no hace nada"');
+
+  soltar(REFINADO);
+  await m.esperar();
+  otro.teclear('el logo se pierde con el fondo claro');
+  ok(!otro.refinar.disabled, 'cuando el primero termina, el segundo se puede refinar');
+});
+
+test('si el refinado del dictado falla, el ✨ queda disponible para reintentar', async function () {
+  const crudo = 'que el titulo entre desde la izquierda con un fade cortito';
+  const m = montarDictado(600, {
+    refinar: function () {
+      return { ok: false, texto: crudo, crudo: crudo, refinador: 'Ollama local', ms: 900,
+        aviso: 'Quedó el dictado sin refinar: Ollama local falló (HTTP 500).' };
+    },
+  });
+  await m.listo();
+  m.boton.click();
+  m.avisar({ fase: 'escuchando', msg: 'Escuchando…' });
+  await m.parar(crudo);
+  await m.esperar();
+
+  eq(m.ta.value, crudo, 'el dictado crudo queda en el campo: sirve igual');
+  ok(!m.refinar.disabled,
+    'y el ✨ queda disponible. Si el crudo se guardara como "el refinado", el botón lo leería ' +
+    'como "ya está refinado" y se apagaría justo cuando reintentar a mano es lo único que queda');
+});
+
+test('el que termina de refinar no le suelta la guarda al otro campo', async function () {
+  // El camino angosto y real: se refina a mano en un campo y se arranca un
+  // dictado en OTRO —que no se puede bloquear, porque no necesita el refinador
+  // hasta que para—. Al parar, los dos están refinando; si la guarda fuera un id
+  // solo, el primero que termine soltaría la del otro y un tercer campo podría
+  // arrancar un refinado encima del que sigue andando.
+  const soltar = {};
+  const m = montarDictado(600, {
+    refinar: function (arg) {
+      return new Promise(function (r) { soltar[arg.origen === 'escrito' ? 'mano' : 'dictado'] = r; });
+    },
+  });
+  await m.listo();
+  const dictando = m.otroCampo('marcador:2');
+  const tercero = m.otroCampo('marcador:3');
+  await m.esperar();
+
+  m.teclear('el título tapa la cara');
+  m.refinar.click();
+
+  // El segundo campo dicta y para: `avisar` y `parar` hablan con el último que
+  // llamó al motor, o sea con éste.
+  dictando.boton.click();
+  m.avisar({ fase: 'escuchando', msg: 'Escuchando…' });
+  await m.parar('que el logo quede abajo a la derecha');
+
+  soltar.mano(REFINADO);
+  await m.esperar();
+  tercero.teclear('el fondo tiene que quedar transparente');
+  ok(tercero.refinar.disabled,
+    'el dictado del segundo campo sigue refinando: la guarda no la puede soltar el primero');
+
+  soltar.dictado(REFINADO);
+  await m.esperar();
+  tercero.teclear('el fondo tiene que quedar transparente');
+  ok(!tercero.refinar.disabled, 'cuando el que la tomó la suelta, sí');
+});
+
+test('el refinado del dictado toma la misma guarda que el ✨', async function () {
+  // Los dos llaman al mismo refinador —el mismo CLI, o el mismo modelo local—,
+  // así que dos encimados es el doble de espera para los dos.
+  let soltar = null;
+  const m = montarDictado(600, { refinar: function () { return new Promise(function (r) { soltar = r; }); } });
+  await m.listo();
+  const otro = m.otroCampo('marcador:2');
+  await m.esperar();
+
+  m.boton.click();
+  m.avisar({ fase: 'escuchando', msg: 'Escuchando…' });
+  await m.parar('que el título entre desde la izquierda');
+
+  otro.teclear('el logo se pierde con el fondo claro');
+  ok(otro.refinar.disabled, 'mientras el dictado refina, el ✨ del otro campo espera');
+  soltar(REFINADO);
+  await m.esperar();
+  otro.teclear('el logo se pierde con el fondo claro');
+  ok(!otro.refinar.disabled);
+});
+
+// ── 9.4 El punto de todo esto: refinar no necesita micrófono ─────────
+
+test('donde NO se puede dictar pero SÍ refinar, el ✨ está y anda', async function () {
+  // Windows, una Mac sin ffmpeg, cualquiera sin el Whisper de Apple Silicon.
+  // Son justo las máquinas del editor que escribe todo a mano PORQUE no puede
+  // dictar, o sea el que más necesita este botón. Colgarlo de `disponible` —la
+  // respuesta de "¿se puede dictar?"— era esconderlo exactamente ahí.
+  const m = montarDictado(600, {
+    estado: {
+      disponible: false,
+      motivo: 'El dictado por voz todavía es solo para Mac. La captura usa avfoundation, que es el ' +
+        'sistema de audio de macOS, y el equivalente en Windows (dshow) no está probado.',
+      puedeRefinar: true,
+      refinador: 'Ollama local · llama3.2:3b',
+    },
+  });
+  await m.listo();
+
+  ok(m.boton.disabled, 'el 🎙 está apagado');
+  has(m.boton.title, 'solo para Mac', 'y dice por qué');
+
+  ok(porClase(m.bar, 'mic-refine'),
+    'y el ✨ está EN LA BARRA, al lado del 🎙: colgarlo de "¿se puede dictar?" lo escondía ' +
+    'justo en las máquinas de quien escribe todo a mano');
+  m.teclear('que el lower third entre desde el borde izquierdo y se vaya con un fade');
+  ok(!m.refinar.disabled, 'y el ✨ está PRENDIDO: refinar es una llamada de texto a texto');
+  has(m.refinar.title, 'No necesita micrófono ni Whisper');
+  has(m.refinar.title, 'llama3.2:3b', 'con qué se va a refinar, que es lo primero que se pregunta');
+
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, REFINADO.texto,
+    'y refina de verdad, que es lo único que le importa a quien escribe todo a mano');
+});
+
+test('sin ningún refinador el ✨ se ve, apagado y diciendo qué falta', async function () {
+  const m = montarDictado(600, {
+    estado: {
+      puedeRefinar: false, refinador: '',
+      sinRefinador: 'Claude Haiku (API de Anthropic): no hay API key de Anthropic configurada en ⚙ · ' +
+        'Ollama local: no está corriendo en esta máquina',
+    },
+  });
+  await m.listo();
+  m.teclear('que el título entre con un fade');
+  ok(m.refinar.disabled);
+  eq(icono(m.refinar), '✨', 'esconderlo dejaría al editor sin saber que la función existe');
+  eq(palabra(m.refinar), 'Refinar', 'y apagado sigue diciendo qué es: un botón gris sin nombre ni ' +
+    'motivo es el que se reporta como roto');
+  has(m.refinar.className, 'is-off');
+  has(m.refinar.title, 'no está corriendo', 'el motivo entero, uno por uno');
+  has(m.refinar.title, 'API key');
+  has(m.refinar.title, 'se prende', 'y qué habría que hacer para tenerlo');
+
+  ok(!m.boton.disabled, 'dictar sigue andando: un dictado sin refinar deja el texto crudo, y sirve');
+});
+
+test('si el motor no contesta si se puede refinar, el ✨ no promete lo que no sabe', async function () {
+  // Sin motor no hay refinado posible, así que acá "no sé" sí es "no hay": es al
+  // revés que con el desplegable de micrófono del encabezado, donde no saber no
+  // puede esconder un control que quizás funcione.
+  const m = montarDictado(600, { estadoFalla: 'HPEngine no está definido' });
+  await m.listo();
+  m.teclear('que el título entre con un fade');
+  ok(m.refinar.disabled, 'sin motor no hay a quién pedirle el refinado');
+  has(m.refinar.title, 'no está disponible');
+  ok(m.boton.disabled, 'y dictar tampoco');
+});
+
+// ── 9.5 El gasto y el log ────────────────────────────────────────────
+
+test('el gasto del refinado a mano cae en el bolsillo del dictado, no en el de las animaciones', async function () {
+  const m = montarDictado(600, {
+    refinar: function () {
+      return Object.assign({}, REFINADO, {
+        usage: { inputTokens: 210, outputTokens: 48, cacheReadTokens: 12000, costUsd: 0.0005 },
+      });
+    },
+  });
+  await m.listo();
+  m.teclear('que el titulo vaya arriba a la izquierda y entre con un fade cortito');
+  m.refinar.click();
+  await m.esperar();
+
+  const u = m.ctx.HPStore.getSessionUsage();
+  eq(u.dictado.refinados, 1, 'refinar a mano es el mismo tipo de gasto que refinar un dictado');
+  eq(u.dictado.inputTokens, 210);
+  eq(u.generations, 0, 'y no es una generación');
+  eq(u.inputTokens, 0,
+    'un refinado son cientos de tokens y una generación decenas de miles: mezclarlos hace que el ' +
+    'promedio por generación deje de querer decir nada');
+});
+
+test('el log dice con qué se refinó y cuánto tardó', async function () {
+  const m = montarDictado(600, {
+    refinar: function () {
+      return { ok: true, texto: 'El título arriba, con un fade corto.', refinador: 'Ollama local · llama3.2:3b', ms: 3480 };
+    },
+  });
+  await m.listo();
+  m.teclear('que el titulo vaya arriba con un fade');
+  m.refinar.click();
+  await m.esperar();
+
+  const escrito = m.logs.map(function (l) { return l.msg; }).join('\n');
+  has(escrito, 'Refinado a mano', 'distinguido del dictado: son dos caminos y se diagnostican distinto');
+  has(escrito, 'llama3.2:3b', 'cuando alguien diga "el refinado me sale raro", es el primer dato');
+  has(escrito, '3.48 s');
+});
+
+// ── 9.6 La palabra del botón ─────────────────────────────────────────
+//
+// El ✨ dice "Refinar" cuando el panel da el ancho, y queda en el emoji solo
+// cuando está angosto. El 🎙 no lo necesita —un micrófono ya nombra la acción—;
+// unas estrellitas no nombran ninguna, así que sin la palabra el botón se
+// aprende apretándolo.
+//
+// Quién la esconde es CSS, no el widget, y eso es la mitad de lo que hay que
+// fijar acá: el JS escribe la palabra UNA vez y no vuelve a tocarla, así que no
+// hay un segundo lugar donde el botón pueda quedarse sin nombre.
+//
+// Lo que estos tests NO hacen: medir cajas. El DOM de mentira no tiene motor de
+// layout, así que la regla se fija leyendo el CSS de verdad, igual que
+// panel-botones-flex.test.js y panel-cartel-preparar-motor.test.js. La medición
+// se rehizo en la maqueta (test/manual/panel-demo): 320 a 800 px de a 2 px, los
+// cinco campos que llevan la barra, con la barra dictando y con la barra después
+// de un refinado. Cero desborde y cero contenido fuera de caja: la palabra ENTRA
+// hasta en el panel mínimo. Lo que cuesta es alto —46 px menos para la línea de
+// estado, que envuelve— y por eso el corte está donde el panel ya se queda sin
+// lugar para las palabras de adorno.
+
+const CSS = fs.readFileSync(path.join(__dirname, '..', 'cep', 'css', 'style.css'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '');
+
+/** El bloque `@media` que esconde la palabra, o null. */
+function mediaDeLaPalabra() {
+  return (CSS.match(/@media[^{]*\{[\s\S]*?\n\}/g) || [])
+    .filter(function (b) { return /\.mic-refine-txt/.test(b); })[0] || null;
+}
+
+test('la palabra vive en su propio nodo, que es lo que deja esconderla con CSS', async function () {
+  const m = montarDictado(600);
+  await m.listo();
+  eq(palabra(m.refinar), 'Refinar', 'el botón dice qué hace');
+  eq(icono(m.refinar), '✨', 'con el emoji al lado, en otro nodo');
+  // Si el emoji y la palabra compartieran el `textContent` del botón, esconder
+  // una sola sería imposible: no hay selector para media frase.
+  eq(String(m.refinar.textContent), '', 'y el botón no escribe texto suyo: son sus dos hijos');
+});
+
+test('la palabra sobrevive a todos los repintados del botón', async function () {
+  // El repintado escribe el emoji, y ahí es donde un `refBtn.textContent = …`
+  // de un tirón le borra el nombre al botón para siempre. No es teórico: es
+  // exactamente lo que hacía este widget antes de que la palabra existiera.
+  let soltar = null;
+  const m = montarDictado(600, { refinar: function () { return new Promise(function (r) { soltar = r; }); } });
+  await m.listo();
+  eq(palabra(m.refinar), 'Refinar');
+  m.teclear('que el título entre desde la izquierda');   // repinta por tecleo
+  eq(palabra(m.refinar), 'Refinar');
+  m.refinar.click();                                      // repinta a "…"
+  eq(palabra(m.refinar), 'Refinar');
+  soltar(REFINADO);
+  await m.esperar();                                      // y de vuelta a ✨
+  eq(palabra(m.refinar), 'Refinar');
+  m.boton.click();                                        // y con un dictado andando
+  eq(palabra(m.refinar), 'Refinar');
+});
+
+test('la decisión pura sigue siendo solo el emoji: la palabra no es un estado', function () {
+  const D = cargarDictado();
+  // Si `pintarRefinar` devolviera "✨ Refinar" o "Refinando", la palabra
+  // volvería a estar en el `textContent` del botón y CSS no podría sacarla; y
+  // de paso el botón cambiaría de ancho en medio del refinado.
+  ['averiguando', 'sin-refinador', 'refinando', 'dictando', 'ocupado', 'vacio', 'ya-refinado', 'listo']
+    .forEach(function (e) {
+      const p = D._pintarRefinar(e, { refinador: 'Claude Haiku' });
+      ok(p.texto === '✨' || p.texto === '…', e + ': el emoji y nada más, es «' + p.texto + '»');
+      // Y con la palabra en el botón, el tooltip tiene que aportar algo más que
+      // repetirla: qué va a hacer, con qué, o por qué está apagado. El único que
+      // puede ser corto es el de "refinando", que no explica nada: informa que
+      // está trabajando y con qué, que es lo mismo que muestra el "…".
+      if (e !== 'refinando') ok(p.titulo.length > 45, e + ': el tooltip explica, no rotula: «' + p.titulo + '»');
+    });
+});
+
+test('la palabra se esconde con una media query, no con JS', function () {
+  const bloque = mediaDeLaPalabra();
+  ok(bloque, 'tiene que haber un @media que esconda `.mic-refine-txt`');
+  ok(/display:\s*none/.test(bloque), 'esconderla es sacarla del layout, no dejarla transparente');
+  // `@container` sería lo natural (la barra vive adentro de cinco cajas de
+  // anchos distintos) y NO se puede: el panel corre en CEF 99 y `@container`
+  // llegó en Chrome 105. Sirve la media query porque en CEP el panel ES el
+  // viewport, igual que en la que apila la barra de acciones.
+  eq((CSS.match(/@container/g) || []).length, 0,
+    'nada de @container: el panel es Chromium 99 y la regla no existiría');
+  const js = fs.readFileSync(path.join(CEP, 'dictado.js'), 'utf8');
+  eq((js.match(/mic-refine-txt[\s\S]{0,80}(display|hidden)/g) || []).length, 0,
+    'el widget no decide cuándo se ve la palabra: si lo hiciera, habría dos reglas para lo mismo');
+});
+
+test('el corte deja la palabra puesta en el panel recién abierto', function () {
+  // El número medido, y el que importa: el panel abre en 400 px y va de 320 a
+  // 2200. Un corte de 400 o más deja sin palabra justo el ancho con el que
+  // Premiere lo abre, que es donde el botón se tiene que poder leer; uno por
+  // debajo de 320 es no tener corte.
+  const tope = /max-width:\s*(\d+)px/.exec(mediaDeLaPalabra());
+  ok(tope, 'el corte tiene que ser por ancho máximo: la palabra se va en el panel ANGOSTO');
+  const px = Number(tope[1]);
+  ok(px >= 320, 'por debajo del panel mínimo (320) la regla no se activa nunca: ' + px);
+  ok(px < 400, 'el panel abre en 400 y ahí la palabra tiene que estar: ' + px);
+});
+
+test('la palabra no le agrega ni un blindaje ni un ancho al botón', function () {
+  // La 1.4.50 sacó veinticuatro `flex` sueltos puestos por las dudas. Un
+  // `min-width` o un `flex: none` acá sería el veinticinco, y encima sobre el
+  // botón que acaba de cambiar de tamaño: lo que tiene que decidir su ancho es
+  // su contenido, como el de todos los demás.
+  const reglas = CSS.match(/\.mic-refine[^{]*\{[^}]*\}/g) || [];
+  reglas.forEach(function (r) {
+    ok(!/flex\s*:/.test(r), 'sin flex propio: ' + r.trim());
+    ok(!/min-width\s*:/.test(r), 'sin ancho a mano: ' + r.trim());
+    ok(!/\bwidth\s*:/.test(r), 'sin ancho a mano: ' + r.trim());
+  });
+});
+
+test('el 🎙 se queda sin palabra, y eso es a propósito', async function () {
+  // No es un olvido: un micrófono ya nombra la acción, y ponerle la palabra a
+  // los dos le suma otros 46 px a la barra en el panel angosto sin agregar
+  // nada. Lo que el 🎙 tiene para decir —qué micrófono va a abrir, o qué le
+  // falta a esta máquina— no entra en una palabra y ya está en su tooltip.
+  const m = montarDictado(600);
+  await m.listo();
+  eq(m.boton.children.length, 0, 'el 🎙 es su emoji y nada más');
+  eq(String(m.boton.textContent), '🎙');
+  ok(m.boton.title.length > 40, 'y lo suyo lo sigue diciendo el tooltip');
+});
+
+test('un refinado a mano que falla también queda escrito en el log', async function () {
+  const m = montarDictado(600, {
+    refinar: function () { return { ok: false, texto: 'x', refinador: 'Ollama local', ms: 900, aviso: 'el refinador contestó en vez de refinar (Ollama local).' }; },
+  });
+  await m.listo();
+  m.teclear('que el titulo vaya arriba con un fade');
+  m.refinar.click();
+  await m.esperar();
+
+  const malos = m.logs.filter(function (l) { return l.nivel === 'WARN'; });
+  eq(malos.length, 1, 'un refinado que no salió es lo que hay que poder leer después en el ⬇ Log');
+  has(malos[0].msg, 'contestó en vez de refinar');
 });

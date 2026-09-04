@@ -2058,15 +2058,31 @@ async function whisperStatusForPanel() {
 // necesita las credenciales de verdad (`loadConfig`), no la vista enmascarada
 // que devuelve `getConfig` al panel.
 
+// Este handler contesta DOS preguntas distintas, y separarlas es lo que hace
+// que refinar a mano exista donde no se puede dictar:
+//
+//   `disponible`   → ¿se puede DICTAR? Necesita micrófono, ffmpeg, el Whisper de
+//                    Apple Silicon y macOS. Lo decide `dictado.veredicto`.
+//   `puedeRefinar` → ¿se puede REFINAR? Necesita un refinador y nada más. No
+//                    hay micrófono en la lista, ni ffmpeg, ni Whisper, ni
+//                    plataforma: es una llamada de texto a texto.
+//
+// La segunda es verdadera en muchas máquinas donde la primera es falsa —Windows,
+// una Mac sin ffmpeg, cualquiera sin Whisper—, y son justo las del editor que
+// escribe todo a mano porque no puede dictar. Colgar el ✨ de `disponible` era
+// esconderle el botón precisamente a él.
 async function dictadoEstado() {
   const cfg = loadConfig();
   const estado = await dictado.dictadoEstado(cfg);
   const cual = await dictadoRefinar.elegirRefinador(cfg).catch(() => null);
   estado.refinador = cual ? (cual.nombre + (cual.detalle ? ' · ' + cual.detalle : '')) : '';
+  estado.puedeRefinar = Boolean(cual);
   // Sin refinador el dictado NO se apaga: el texto crudo ya sirve. Pero el
   // panel tiene que poder decir por qué el resultado va a venir en bruto, o el
-  // editor va a creer que el refinado falló en silencio.
-  estado.sinRefinador = cual ? '' : dictadoRefinar.porQueNoHayRefinador();
+  // editor va a creer que el refinado falló en silencio. Y es lo mismo que le
+  // dice al ✨ qué le falta a esta máquina para prenderse.
+  estado.sinRefinador = cual ? '' : (dictadoRefinar.porQueNoHayRefinador() ||
+    'no pude averiguar qué refinador hay en esta máquina');
   return estado;
 }
 

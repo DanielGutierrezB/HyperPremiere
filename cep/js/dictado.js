@@ -25,6 +25,25 @@
  * una instrucción clara, y queda a la vista un "↩ dictado crudo" para volver a
  * lo que dijo textual si el refinado no le gusta.
  *
+ * Al lado del 🎙 hay un ✨: el MISMO refinado, sobre lo que el editor escribió a
+ * mano. No es otro camino —es el mismo handler del motor, la misma cadena de
+ * refinadores, el mismo control de tamaño y el mismo bolsillo del contador—,
+ * con dos diferencias que salen de que acá el texto lo puso una persona:
+ *   - si falla, el campo NO SE TOCA. Perderle un párrafo que escribió a mano es
+ *     mucho peor que no refinárselo.
+ *   - el "↩" devuelve su texto TAL CUAL, carácter por carácter.
+ *
+ * Se puede dictar y se puede refinar son DOS cosas distintas
+ * ----------------------------------------------------------
+ * Dictar necesita micrófono, ffmpeg, el Whisper de Apple Silicon y macOS.
+ * Refinar necesita un refinador y nada más. La segunda es verdadera en muchas
+ * máquinas donde la primera es falsa —Windows, una Mac sin ffmpeg, cualquiera
+ * sin Whisper—, o sea justo las del editor que escribe todo a mano PORQUE no
+ * puede dictar. Así que el ✨ mira `puedeRefinar` y el 🎙 mira `disponible`, y
+ * cada uno apagado dice en su tooltip qué le falta a esta máquina. Colgar los
+ * dos de la misma respuesta era esconderle el botón nuevo a quien más lo
+ * necesita.
+ *
  * Dos cosas que parecen detalles y no lo son:
  *   - Lo que el editor YA tenía escrito no se pisa nunca. El dictado se agrega
  *     abajo mientras habla, y al refinar las dos partes se mandan juntas como
@@ -48,6 +67,23 @@
   // motor rechaza el segundo; acá se evita antes para no mostrar un error que
   // el editor no provocó.
   var enCurso = null;
+
+  // Y un refinado a la vez, por el mismo motivo que el dictado tiene uno solo:
+  // el refinador es un CLI o un modelo local, y dos llamadas encimadas es el
+  // doble de espera para las dos. Guarda del lado del panel, igual que
+  // `enCurso`.
+  //
+  // Es una LISTA de ids y no un id solo, aunque el objetivo sea que haya uno:
+  // los dos caminos que refinan —el ✨ y el dictado al parar— sueltan la guarda
+  // cuando terminan, y con una variable sola el que suelta puede estar soltando
+  // la del otro. Pasa por un camino angosto pero real: refinar a mano en un
+  // campo, arrancar un dictado en otro (que no necesita el refinador hasta que
+  // para, así que no se lo puede bloquear) y que el segundo termine primero.
+  var refinando = [];
+  function estaRefinando(id) { return refinando.indexOf(id) !== -1; }
+  function otroRefinando(id) { return refinando.some(function (x) { return x !== id; }); }
+  function tomarRefinado(id) { if (!estaRefinando(id)) refinando.push(id); }
+  function soltarRefinado(id) { refinando = refinando.filter(function (x) { return x !== id; }); }
 
   // Lo que contestó el motor sobre esta máquina. Se pide UNA vez: ni el sistema
   // operativo ni Whisper aparecen a mitad de sesión. La promesa se comparte
@@ -202,6 +238,18 @@
       };
     }
     if (estado === "refinando") {
+      // Refinando lo que se escribió a mano, el que está trabajando es el ✨, y
+      // ése ya se pone en "…". Dos "…" idénticos al lado del otro no dicen cuál
+      // de los dos está haciendo algo (medido a ojo en la maqueta: ilegible), así
+      // que el 🎙 se queda 🎙, apagado, diciendo que espere. Al refinar un
+      // DICTADO es al revés: el que venía trabajando es el 🎙 y ahí sí va el "…".
+      if (d.aMano) {
+        return {
+          texto: "🎙",
+          titulo: "Esperá: se está refinando lo que escribiste en este campo. Cuando termine podés dictar.",
+          apagado: true, clase: "",
+        };
+      }
       return {
         texto: "…",
         titulo: "Refinando el dictado con " + (d.refinador || "el modelo") + "…",
@@ -218,6 +266,133 @@
         (mic ? " " + mic : ""),
       apagado: false, clase: "",
     };
+  }
+
+  /**
+   * En qué estado va el ✨ (refinar lo escrito a mano).
+   *
+   * Es LA decisión de esta parte, y como todas las de este archivo va pura y
+   * separada del dibujo. El orden de las preguntas es el orden en que importan:
+   * primero lo que no depende del editor (¿ya sabemos qué hay en la máquina?,
+   * ¿hay refinador?), después lo que está pasando ahora (¿está refinando?,
+   * ¿está dictando?, ¿lo tiene tomado otro campo?) y al final lo que dice el
+   * campo (¿hay algo?, ¿ya está refinado?).
+   *
+   * El "que solo se pueda activar una vez" del pedido se resuelve en la última
+   * pregunta, y sin guardar ningún estado nuevo: se COMPARA el texto del campo
+   * con lo que devolvió el refinador. Si son iguales, ya está refinado y el
+   * botón se apaga —refinar lo refinado gasta tokens para empeorar el texto—; y
+   * en cuanto dejan de ser iguales, se prende. Eso cubre los tres caminos de
+   * vuelta con una sola cuenta: seguir escribiendo, tocar el "↩ texto original"
+   * y volver al refinado con el "↪".
+   *
+   * @param {{averiguando:boolean, puedeRefinar:boolean, texto:string,
+   *          dictando:boolean, refinando:boolean, ocupado:boolean,
+   *          yaRefinado:boolean}} o
+   * @returns {string} averiguando · sin-refinador · refinando · dictando ·
+   *                   ocupado · vacio · ya-refinado · listo
+   */
+  function estadoDeRefinar(o) {
+    o = o || {};
+    if (o.averiguando) return "averiguando";
+    if (!o.puedeRefinar) return "sin-refinador";
+    if (o.refinando) return "refinando";
+    if (o.dictando) return "dictando";
+    if (o.ocupado) return "ocupado";
+    if (!String(o.texto == null ? "" : o.texto).trim()) return "vacio";
+    if (o.yaRefinado) return "ya-refinado";
+    return "listo";
+  }
+
+  /**
+   * Cómo se dibuja el ✨ en cada estado. Igual que `pintarBoton`: pura, para
+   * poder fijar por test lo que si no habría que mirar a ojo —sobre todo que
+   * cada estado apagado DIGA qué lo apagó, porque un botón gris sin explicación
+   * se aprieta tres veces y después se reporta como roto—.
+   *
+   * @param {string} estado - lo que devolvió `estadoDeRefinar`
+   * @param {object} [datos] - { refinador, sinRefinador, segundos }
+   * @returns {{texto:string, titulo:string, apagado:boolean, clase:string}}
+   */
+  function pintarRefinar(estado, datos) {
+    var d = datos || {};
+    var con = d.refinador || "un modelo chico";
+    if (estado === "averiguando") {
+      return { texto: "✨", titulo: "Averiguando con qué se puede refinar en esta máquina…", apagado: true, clase: "" };
+    }
+    if (estado === "sin-refinador") {
+      return {
+        texto: "✨",
+        // El motivo entero, que es lo único que dice qué habría que hacer. No se
+        // esconde el botón: que la función exista y no esté disponible es
+        // información, y que no esté es un misterio.
+        titulo: "Refinar el texto no está disponible en esta máquina" +
+          (d.sinRefinador ? ": " + String(d.sinRefinador).replace(/[.\s]+$/, "") : "") +
+          ". Con una API key de Anthropic en ⚙, con el CLI de Claude con sesión, o con Ollama corriendo, se prende.",
+        apagado: true, clase: "is-off",
+      };
+    }
+    if (estado === "refinando") {
+      return {
+        texto: "…",
+        titulo: "Refinando con " + con + "…" + (d.segundos ? " (" + Math.round(d.segundos) + " s)" : ""),
+        apagado: true, clase: "is-busy",
+      };
+    }
+    if (estado === "dictando") {
+      return {
+        texto: "✨",
+        titulo: "Mientras dictás, no hace falta: al parar el dictado el texto se refina solo.",
+        apagado: true, clase: "",
+      };
+    }
+    if (estado === "ocupado") {
+      return {
+        texto: "✨",
+        titulo: "Hay un refinado andando en otro campo. Esperá a que termine: se refina de a uno.",
+        apagado: true, clase: "",
+      };
+    }
+    if (estado === "vacio") {
+      return {
+        texto: "✨",
+        titulo: "Escribí el pedido y después tocá acá: por ahora no hay nada que refinar.",
+        apagado: true, clase: "",
+      };
+    }
+    if (estado === "ya-refinado") {
+      return {
+        texto: "✨",
+        titulo: "Ya está refinado con " + con + ". Volver a refinar lo refinado gasta tokens para empeorar el " +
+          "texto: cambiá algo, o volvé al original, y se prende de nuevo.",
+        apagado: true, clase: "",
+      };
+    }
+    return {
+      texto: "✨",
+      titulo: "Refinar lo que escribiste: " + con + " lo deja como una instrucción clara, conservando todo lo " +
+        "que pediste y sin agregar nada, y después podés volver al original. No necesita micrófono ni Whisper.",
+      apagado: false, clase: "",
+    };
+  }
+
+  /**
+   * El botón de volver atrás, que dice lo que corresponde en cada caso: lo que
+   * hay detrás del refinado no se llama igual si se dictó o si se escribió a
+   * mano ("↩ dictado crudo" sobre un párrafo tecleado nombra algo que no pasó).
+   *
+   * Acá se decide nada más CÓMO SE LLAMA. A qué se vuelve es una sola cosa y
+   * está en un solo lugar —la variable `original` del widget—, así que no hay
+   * dos deshacer que puedan desincronizarse.
+   */
+  function etiquetaDeVolver(origen, viendoOriginal) {
+    if (viendoOriginal) {
+      return { texto: "↪ volver al refinado", titulo: "Vuelve al texto que dejó el refinador." };
+    }
+    if (origen === "escrito") {
+      return { texto: "↩ texto original", titulo: "Deja en el campo exactamente lo que habías escrito, sin refinar." };
+    }
+    return { texto: "↩ dictado crudo", titulo: "Deja en el campo exactamente lo que dictaste, sin refinar." };
   }
 
   /**
@@ -285,6 +460,31 @@
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mic-btn";
+    // El ✨ va JUNTO al 🎙, y con la palabra "Refinar" al lado cuando el panel da
+    // el ancho. "Estrellitas" no nombra ninguna acción —el 🎙 sí, y por eso ése
+    // se queda solo—, así que sin la palabra el botón se aprende apretándolo.
+    //
+    // Son DOS nodos y no un `textContent` con las dos cosas porque el que
+    // desaparece en el panel angosto es la palabra, y CSS no puede esconder
+    // media palabra de un nodo de texto. Quién decide cuándo esconderla es la
+    // media query de `.mic-refine-txt` (ver style.css): el panel CEP ES el
+    // viewport, así que el ancho de la ventana es el ancho de la barra.
+    var refBtn = document.createElement("button");
+    refBtn.type = "button";
+    refBtn.className = "mic-btn mic-refine";
+    // El emoji, que es lo único que cambia con el estado (✨ ↔ …).
+    var refIco = document.createElement("span");
+    refIco.className = "mic-refine-ico";
+    // Y la palabra, que NO cambia: es el nombre del botón, no su estado. Un
+    // "Refinando" mientras trabaja movería el ancho del botón en medio del
+    // refinado —la línea de estado, que está al lado, saltaría de lugar— y
+    // dejaría el umbral de la media query atado a la palabra más larga, que es
+    // la que menos se ve. Lo que está pasando lo dicen el emoji y la línea.
+    var refTxt = document.createElement("span");
+    refTxt.className = "mic-refine-txt";
+    refTxt.textContent = "Refinar";
+    refBtn.appendChild(refIco);
+    refBtn.appendChild(refTxt);
     var linea = document.createElement("span");
     linea.className = "mic-state";
     var volver = document.createElement("button");
@@ -292,15 +492,25 @@
     volver.className = "mic-undo";
     volver.setAttribute("data-hidden", "true");
     bar.appendChild(btn);
+    bar.appendChild(refBtn);
     bar.appendChild(linea);
     bar.appendChild(volver);
 
     var fase = "averiguando";
     var info = {};
-    var previo = "";       // lo que el editor tenía escrito al arrancar
+    var previo = "";       // lo que el editor tenía escrito al arrancar a dictar
     var crudo = "";        // lo dictado, textual
     var refinado = "";     // lo que devolvió el refinador
-    var viendoCrudo = false;
+    // A lo que vuelve el "↩", y de dónde salió. Es UNA variable para los dos
+    // orígenes: el deshacer no sabe si el texto se dictó o se tecleó, y por eso
+    // no hay dos deshacer que puedan desincronizarse. Lo que sí cambia es cómo
+    // se llega: en el dictado es `textoSinRefinar(previo, crudo)`, y en el
+    // escrito a mano es el valor del campo TAL CUAL, sin recortar espacios ni
+    // saltos de línea, porque eso es lo que el editor va a comparar contra lo
+    // que le devolvió el modelo.
+    var original = "";
+    var origen = "dictado";   // dictado | escrito
+    var viendoOriginal = false;
     var reloj = null;
     var t0 = 0;
     // El micrófono que el motor dijo que abrió en ESTE dictado. Manda sobre el
@@ -312,16 +522,50 @@
       var p = pintarBoton(fase, {
         motivo: info.motivo, refinador: info.refinador, sinRefinador: info.sinRefinador,
         faltaBajarModelo: info.faltaBajarModelo, segundos: (extra && extra.segundos) || 0,
-        microfono: micActual || info.microfono,
+        microfono: micActual || info.microfono, aMano: origen === "escrito",
       });
       btn.textContent = p.texto;
       btn.disabled = p.apagado;
       btn.title = p.titulo;
       btn.className = "mic-btn" + (p.clase ? " " + p.clase : "");
+      pintarElDeRefinar(extra);
       var l = lineaDeEstado(Object.assign({ fase: fase, microfono: micActual || info.microfono }, extra || {}));
       linea.textContent = l.texto;
       linea.className = "mic-state" + (l.clase ? " " + l.clase : "");
     }
+
+    /**
+     * El ✨, repintado desde el estado del widget.
+     *
+     * Va aparte de `pintar` porque además se repinta SOLO, cada vez que el
+     * editor teclea: lo que lo habilita y lo deshabilita es el texto del campo.
+     */
+    function pintarElDeRefinar(extra) {
+      var e = estadoDeRefinar({
+        averiguando: fase === "averiguando",
+        puedeRefinar: info.puedeRefinar,
+        texto: ta.value,
+        dictando: fase === "preparando" || fase === "escuchando",
+        refinando: estaRefinando(id),
+        ocupado: otroRefinando(id),
+        yaRefinado: Boolean(refinado) && ta.value === refinado,
+      });
+      var p = pintarRefinar(e, {
+        refinador: info.refinador, sinRefinador: info.sinRefinador,
+        segundos: (extra && extra.segundos) || 0,
+      });
+      // Solo el emoji: la palabra la puso `attachMic` una vez y se queda.
+      refIco.textContent = p.texto;
+      refBtn.disabled = p.apagado;
+      refBtn.title = p.titulo;
+      refBtn.className = "mic-btn mic-refine" + (p.clase ? " " + p.clase : "");
+    }
+
+    // Poner el valor por código —que es lo que hace `escribir`— NO dispara
+    // `input` en ningún navegador, así que este oyente es exactamente el del
+    // editor tecleando o pegando, y no se pisa con los refrescos del dictado.
+    // Los caminos que escriben por código repintan el ✨ ellos mismos.
+    ta.addEventListener("input", function () { pintarElDeRefinar(); });
 
     function escribir(texto) {
       ta.value = texto;
@@ -410,23 +654,28 @@
 
     function mostrarVolver(hay) {
       volver.setAttribute("data-hidden", hay ? "false" : "true");
-      volver.textContent = viendoCrudo ? "↪ volver al refinado" : "↩ dictado crudo";
-      volver.title = viendoCrudo
-        ? "Vuelve al texto que dejó el refinador."
-        : "Deja en el campo exactamente lo que dictaste, sin refinar.";
+      var e = etiquetaDeVolver(origen, viendoOriginal);
+      volver.textContent = e.texto;
+      volver.title = e.titulo;
     }
 
     volver.addEventListener("click", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      viendoCrudo = !viendoCrudo;
-      escribir(viendoCrudo ? textoSinRefinar(previo, crudo) : refinado);
-      asentarCampo(); // el crudo casi siempre es más largo que el refinado
+      viendoOriginal = !viendoOriginal;
+      escribir(viendoOriginal ? original : refinado);
+      asentarCampo(); // el original casi siempre es más largo que el refinado
       mostrarVolver(true);
+      // Volver al original vuelve a habilitar el ✨, y volver al refinado lo
+      // apaga otra vez. Sale de comparar el campo con el refinado, así que no
+      // hay una segunda regla que mantener al día: alcanza con repintar.
+      pintarElDeRefinar();
     });
 
     pedirEstado().then(function (st) {
       info = st || {};
+      // Las dos disponibilidades, cada una a su botón. `disponible` es dictar y
+      // `puedeRefinar` es refinar; no se derivan una de la otra.
       fase = info.disponible ? "listo" : "no-disponible";
       pintar();
     });
@@ -452,7 +701,9 @@
       previo = ta.value;
       crudo = "";
       refinado = "";
-      viendoCrudo = false;
+      original = "";
+      origen = "dictado";
+      viendoOriginal = false;
       mostrarVolver(false);
       fase = "preparando";
       pintar();
@@ -530,6 +781,13 @@
 
     function refinar() {
       fase = "refinando";
+      // El refinado del dictado toma la MISMA guarda que el del ✨: los dos
+      // llaman al mismo refinador, así que dos encimados es el doble de espera
+      // para los dos. Y de paso el ✨ de este campo y el de los otros se ven
+      // trabajando en vez de apretables.
+      tomarRefinado(id);
+      origen = "dictado";
+      original = textoSinRefinar(previo, crudo);
       t0 = Date.now();
       clearInterval(reloj);
       reloj = setInterval(function () { pintar({ segundos: (Date.now() - t0) / 1000, refinador: info.refinador }); }, 1000);
@@ -537,6 +795,7 @@
 
       HPEngine.call("dictadoRefinar", { crudo: crudo, previo: previo }).then(function (r) {
         clearInterval(reloj);
+        soltarRefinado(id);
         fase = "listo";
         r = r || {};
         // El gasto del refinado va al contador de la sesión APARTE del de las
@@ -554,18 +813,101 @@
         }
         // No se pudo refinar. El campo se queda con el dictado —que es útil— y
         // se dice por qué, que es lo que evita que parezca que no hizo nada.
-        refinado = textoSinRefinar(previo, crudo);
-        escribir(refinado);
+        // `refinado` queda VACÍO a propósito: si quedara con el crudo, el ✨ lo
+        // leería como "ya está refinado" y se apagaría justo cuando reintentar a
+        // mano es lo único que le queda al editor.
+        refinado = "";
+        escribir(original);
         asentarCampo();
         mostrarFase("sin-refinar", { aviso: r.aviso });
         hpLog("Dictado (" + id + "): " + (r.aviso || "no se pudo refinar"), "WARN");
       }).catch(function (e) {
         clearInterval(reloj);
+        soltarRefinado(id);
         fase = "listo";
-        refinado = textoSinRefinar(previo, crudo);
+        refinado = "";
         mostrarFase("sin-refinar", { aviso: "El refinado falló: " + ((e && e.message) || e) + ". Queda el dictado como salió." });
       });
     }
+
+    /**
+     * Refina lo que el editor ESCRIBIÓ A MANO en este campo (el ✨).
+     *
+     * Mismo handler del motor que el dictado, misma cadena de refinadores, mismo
+     * control de tamaño y mismo bolsillo del contador. Lo único propio es qué
+     * pasa cuando falla: acá el campo NO SE TOCA. En el dictado se puede pisar
+     * el campo con el crudo porque el crudo es lo que acababa de entrar; un
+     * párrafo que alguien tecleó no se pisa con nada.
+     */
+    function refinarEscrito() {
+      // El valor SIN recortar: es a lo que va a volver el "↩", y tiene que
+      // volver carácter por carácter.
+      var texto = String(ta.value == null ? "" : ta.value);
+      // Las tres guardas son la red del botón apagado, no su reemplazo: un
+      // Enter sobre un botón que se acaba de deshabilitar, o un doble clic,
+      // llegan acá igual.
+      if (!texto.trim()) return;
+      if (fase === "preparando" || fase === "escuchando") return;
+      if (refinando.length) {
+        pintar({ error: "Ya hay un refinado andando en otro campo. Esperá a que termine: se refina de a uno." });
+        return;
+      }
+      tomarRefinado(id);
+      origen = "escrito";
+      original = texto;
+      refinado = "";
+      viendoOriginal = false;
+      mostrarVolver(false);
+      fase = "refinando";
+      // El alto de reposo se mide ACÁ y no al colgar el botón: `attachMic` corre
+      // antes de que el campo esté en el documento, y ahí no mide nada. Sin
+      // esto, un refinado más corto le devolvería un campo más chico que el que
+      // tenía abierto.
+      if (!altoBase) altoBase = ta.offsetHeight || 0;
+
+      t0 = Date.now();
+      clearInterval(reloj);
+      reloj = setInterval(function () { pintar({ segundos: (Date.now() - t0) / 1000, refinador: info.refinador }); }, 1000);
+      pintar({ segundos: 0, refinador: info.refinador });
+      traer(bar); // que se vea que está trabajando: el refinado tarda de medio segundo a varios
+
+      HPEngine.call("dictadoRefinar", { crudo: texto, origen: "escrito" }).then(function (r) {
+        clearInterval(reloj);
+        soltarRefinado(id);
+        fase = "listo";
+        r = r || {};
+        // El MISMO bolsillo que el del dictado, aparte del de las animaciones:
+        // refinar es refinar, lo haya escrito una persona o Whisper.
+        if (r.usage) HPStore.addDictadoUsage(r.usage);
+        if (r.ok) {
+          refinado = r.texto;
+          escribir(refinado);
+          asentarCampo();
+          mostrarVolver(true);
+          mostrarFase("refinado", { refinador: r.refinador, ms: r.ms });
+          hpLog("Refinado a mano (" + id + "): con " + r.refinador + " en " + (r.ms / 1000).toFixed(2) + " s.");
+          return;
+        }
+        // Falló, o el control de tamaño lo rechazó. No se escribe NADA: el campo
+        // queda tal como lo dejó el editor, y la línea dice por qué.
+        mostrarFase("sin-refinar", { aviso: r.aviso || "No se pudo refinar lo que escribiste; tu texto quedó como estaba." });
+        hpLog("Refinado a mano (" + id + "): " + (r.aviso || "no se pudo refinar"), "WARN");
+      }).catch(function (e) {
+        clearInterval(reloj);
+        soltarRefinado(id);
+        fase = "listo";
+        mostrarFase("sin-refinar", {
+          aviso: "El refinado falló: " + ((e && e.message) || e) + ". Tu texto quedó como estaba.",
+        });
+        hpLog("Refinado a mano (" + id + "): " + ((e && e.message) || e), "WARN");
+      });
+    }
+
+    refBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      refinarEscrito();
+    });
 
     // La línea de resultado sobrevive al botón volviendo a "listo": el editor
     // tiene que poder leer con qué se refinó después de que terminó.
@@ -575,10 +917,11 @@
       linea.className = "mic-state" + (l.clase ? " " + l.clase : "");
       var p = pintarBoton("listo", info);
       btn.textContent = p.texto; btn.disabled = false; btn.title = p.titulo; btn.className = "mic-btn";
+      pintarElDeRefinar();
     }
 
     pintar();
-    return { el: bar, boton: btn, _pintar: pintar };
+    return { el: bar, boton: btn, botonRefinar: refBtn, _pintar: pintar };
   }
 
   // Lo que se sabe de la máquina se pide una vez… salvo que cambie algo que
@@ -597,6 +940,9 @@
     _altoDelCampo: altoDelCampo,
     _lineaDeEstado: lineaDeEstado,
     _textoDeMicrofono: textoDeMicrofono,
-    _olvidarEstado: function () { estadoMaquina = null; enCurso = null; },
+    _estadoDeRefinar: estadoDeRefinar,
+    _pintarRefinar: pintarRefinar,
+    _etiquetaDeVolver: etiquetaDeVolver,
+    _olvidarEstado: function () { estadoMaquina = null; enCurso = null; refinando = []; },
   };
 })(typeof window !== "undefined" ? window : this);
