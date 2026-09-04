@@ -44,15 +44,23 @@ function assertNotOAuthToken(apiKey) {
 }
 
 /**
+ * Una llamada a la API, devolviendo el TEXTO tal como lo escribió el modelo.
+ *
+ * `generate` es esto mismo leído como HTML (ver abajo). Están separados porque
+ * la API también atiende trabajos de texto —refinar un dictado— y ahí prometer
+ * "SOLO el HTML de la composición" y después pasar la respuesta por
+ * `stripHtmlFence` funcionaba de casualidad: sobre prosa ese filtro es casi la
+ * identidad, no porque el contrato lo diga.
+ *
  * @param {object} opts
  * @param {string} opts.systemPrompt
  * @param {string} opts.userPrompt
  * @param {string[]} [opts.images] - data URLs de stills
  * @param {string} opts.model
- * @param {object} opts.config - { apiKey (requerido), maxTokens?, timeoutMs? }
- * @returns {Promise<string>} HTML de la composicion
+ * @param {object} opts.config - { apiKey (requerido), maxTokens?, timeoutMs?, effort? }
+ * @returns {Promise<{text:string, usage:object}>}
  */
-async function generate({ systemPrompt, userPrompt, images, model, config }) {
+async function complete({ systemPrompt, userPrompt, images, model, config }) {
   const cfg = config || {};
   const apiKey = normalizeApiKey(cfg.apiKey);
   if (!apiKey) {
@@ -153,8 +161,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     .map((b) => b.text)
     .join('\n');
 
-  const html = stripHtmlFence(text);
-  if (!html) throw new Error('claude-api: la respuesta no contiene texto');
+  if (!text.trim()) throw new Error('claude-api: la respuesta no contiene texto');
 
   const u = data.usage || {};
   const usage = makeUsage('claude-api', model || DEFAULT_MODEL, {
@@ -164,7 +171,21 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     cacheCreationTokens: u.cache_creation_input_tokens,
     costUsd: null, // Anthropic no devuelve costo en el body
   });
-  return { text: html, usage };
+  return { text, usage };
 }
 
-module.exports = { generate, normalizeApiKey, assertNotOAuthToken, API_URL, API_VERSION, DEFAULT_MODEL };
+/**
+ * Lo mismo, leyendo la respuesta como la COMPOSICIÓN: se le saca el fence de
+ * markdown con el que los modelos envuelven el HTML.
+ *
+ * @param {object} opts - los mismos de `complete`
+ * @returns {Promise<{text:string, usage:object}>} `text` es el HTML
+ */
+async function generate(opts) {
+  const r = await complete(opts);
+  const html = stripHtmlFence(r.text);
+  if (!html) throw new Error('claude-api: la respuesta no contiene texto');
+  return { text: html, usage: r.usage };
+}
+
+module.exports = { generate, complete, normalizeApiKey, assertNotOAuthToken, API_URL, API_VERSION, DEFAULT_MODEL };

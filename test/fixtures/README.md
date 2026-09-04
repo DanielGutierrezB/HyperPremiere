@@ -42,3 +42,17 @@ magnitud de verdad, que es lo único que hace ver el problema: el campo de entra
 en dos dígitos y la entrada completa en los de caché. El de Cursor es literal — el
 `usage` que devolvió `cursor-agent` con el prompt más chico posible ("Decí
 solamente: hola"), 2 tokens de entrada y 31.823 escritos a caché.
+
+## El micrófono del dictado
+
+| archivo | qué es |
+|---|---|
+| `avfoundation-list-devices.txt` | el `stderr` tal cual de `ffmpeg -f avfoundation -list_devices true -i ""` en esta máquina (ffmpeg 9.0.1): once cámaras, seis entradas de audio, la línea ajena de EOS Webcam Utility al principio y el error de abrir `""` al final |
+| `avfoundation-list-devices-nombres-raros.txt` | la misma salida con **tres dispositivos agregados a mano** en el mismo formato, para los nombres que existen y acá no estaban enchufados: paréntesis, tildes, `ø`, guiones largos y un nombre de dos renglones de largo |
+| `system-profiler-audio.json` | `system_profiler SPAudioDataType -json` de esta máquina, de donde sale cuál es la entrada por defecto del sistema (`coreaudio_default_audio_input_device`) |
+
+`fake-cli/fake-ffmpeg.js` es el ffmpeg de mentira: contesta `-version`, imprime
+la lista por `stderr` con código 251 (como el real, que sale mal aunque la lista
+haya salido bien) y en captura escupe PCM a tiempo real con los niveles que se
+midieron: voz (RMS 0,08), sala callada (0,006), ceros exactos, ni una muestra, o
+el error real de un índice que ya no existe.

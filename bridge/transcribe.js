@@ -24,6 +24,9 @@ const path = require('path');
 
 const { run, killTree, salidaDe } = require('./exec');
 const { ensureOutputDir } = require('./store/project-fs');
+// Dónde viven las referencias a procesos CORRIENDO, que tienen que sobrevivir
+// al ⟳ del panel sin quedarse huérfanas (ver vivos.js).
+const vivosDe = require('./vivos');
 // Registro del Whisper que instaló el propio panel (carpeta propia, ruta
 // absoluta): se prefiere al PATH, que dentro de Premiere es un entorno mínimo.
 const { readInstalled } = require('./store/whisper-home');
@@ -47,14 +50,28 @@ const WHISPER_MODEL = process.env.HYPERPREMIERE_WHISPER_MODEL || DEFAULT_WHISPER
 const WHISPER_IDLE_MS = Number(process.env.HYPERPREMIERE_WHISPER_IDLE_MS) || 900_000;
 
 // Proceso en curso (ffmpeg o whisper) para poder CANCELAR desde el panel.
-let currentChild = null;
+//
+// Cuelga de `process` y no del módulo (ver vivos.js) por lo mismo que el
+// dictado: el ⟳ del panel rehace este módulo pero NO el proceso de Node, y una
+// transcripción de una clase entera son minutos de CPU con un whisper de medio
+// giga. Con la referencia en una variable de módulo, la instancia nueva no
+// tenía a quién cancelar y la vieja seguía moliendo para nadie.
+const vivos = vivosDe.adoptar('transcribe', { child: null });
 let cancelled = false;
+
+// Al adoptar esta caja, la instancia siguiente mata el proceso que haya quedado
+// —y nada más. NO toca `cancelled`, que es de ESTA instancia: apagarle la
+// bandera a un módulo que ya nadie usa no arregla nada, y prenderla podría
+// dejar mudo al que todavía se está usando desde otro lado.
+vivos.bajarTodo = function () {
+  if (vivos.child) { try { killTree(vivos.child); } catch (e) {} }
+};
 
 /** Cancela la transcripción en curso (mata el proceso activo y sus hijos). */
 function cancelTranscription() {
   cancelled = true;
-  if (currentChild) {
-    killTree(currentChild);
+  if (vivos.child) {
+    killTree(vivos.child);
     return { ok: true, cancelled: true };
   }
   return { ok: true, cancelled: false };
@@ -448,9 +465,9 @@ async function transcribeMedia(body, onProgress) {
       report({ pct: 5, msg: 'Extrayendo el audio de la secuencia (ffmpeg)…' });
       ff = await run('ffmpeg', ['-y', '-i', mediaPath, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', input], {
         timeoutMs: 900_000, idleTimeoutMs: 120_000,
-        onSpawn: (child) => { currentChild = child; },
+        onSpawn: (child) => { vivos.child = child; },
       });
-      currentChild = null;
+      vivos.child = null;
     }
     if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
     if (ff.code !== 0) {
@@ -500,8 +517,8 @@ async function transcribeMedia(body, onProgress) {
         const cutAt = Math.min(durationSec, tailAt + TAIL_MARGIN_SEC);
         const trimmed = path.join(tmpBase, 'trimmed.wav');
         const cut = await run('ffmpeg', ['-y', '-i', input, '-t', String(cutAt), '-c', 'copy', trimmed],
-          { timeoutMs: 600_000, idleTimeoutMs: 120_000, onSpawn: (child) => { currentChild = child; } });
-        currentChild = null;
+          { timeoutMs: 600_000, idleTimeoutMs: 120_000, onSpawn: (child) => { vivos.child = child; } });
+        vivos.child = null;
         if (cut.code === 0 && fs.existsSync(trimmed) && fs.statSync(trimmed).size > 0) {
           const saved = Math.round(durationSec - cutAt);
           report({
@@ -542,7 +559,7 @@ async function transcribeMedia(body, onProgress) {
       idleTimeoutMs: WHISPER_IDLE_MS,
       cwd: tmpBase,
       shell: IS_WIN,
-      onSpawn: (child) => { currentChild = child; },
+      onSpawn: (child) => { vivos.child = child; },
       onData: (s) => {
         lastOutputAt = Date.now();
         sawOutput = true;
@@ -575,7 +592,7 @@ async function transcribeMedia(body, onProgress) {
       lastOutputAt = Date.now();
       r = await run(tool.path || tool.bin, whisperArgs(tool, input, tmpBase, argOpts), runOpts);
     }
-    currentChild = null;
+    vivos.child = null;
     clearInterval(heartbeat); heartbeat = null;
     const cmdLine = (tool.path || tool.bin) + ' ' + whisperArgs(tool, input, tmpBase, argOpts).join(' ');
     if (cancelled) return { ok: false, cancelled: true, error: 'Transcripción cancelada.' };
@@ -679,7 +696,7 @@ async function transcribeMedia(body, onProgress) {
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   } finally {
-    currentChild = null;
+    vivos.child = null;
     if (heartbeat) clearInterval(heartbeat);
     try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (e) {}
     // El .wav de la secuencia se borra SIEMPRE (también si falló o se canceló):

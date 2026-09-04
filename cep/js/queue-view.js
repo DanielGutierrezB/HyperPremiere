@@ -1,7 +1,7 @@
 /**
  * HPQueueView — vista de la pestaña Cola: lista agrupada por secuencia con
- * controles (reordenar, pausar, reactivar, feedback inline, Render HQ,
- * limpiar versiones viejas) y el estimado de tiempo/tokens/costo pendiente.
+ * controles (reordenar, pausar, reactivar, feedback inline, limpiar versiones
+ * viejas) y el estimado de tiempo/tokens/costo pendiente.
  *
  * Solo DOM: el estado vive en HPQueue (y la selección de imágenes de
  * feedback en HPStills). Deps de main vía init(deps):
@@ -18,6 +18,24 @@
   var hpLog = HPLog.log;
   var fmtDuration = HPUtil.fmtDuration;
   var addThousands = HPUtil.addThousands;
+
+  /**
+   * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
+   * `null`.
+   *
+   * El dictado es un AGREGADO a la caja de feedback, nunca un requisito. Si
+   * `js/dictado.js` no está —en Windows, en una máquina sin Whisper, o porque
+   * el archivo no llegó a evaluarse—, la cola entera tiene que dibujarse igual:
+   * sin esta guarda, un panel sin dictado se queda sin poder mandar feedback,
+   * que es la función principal de esta vista.
+   *
+   * La guarda vive acá y no en un módulo común a propósito: un módulo común
+   * sería otra cosa que puede faltar, o sea el mismo bug una capa más arriba.
+   */
+  function micOpcional(ta, opts) {
+    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
+    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
+  }
 
   var deps = null; // lo llena init()
 
@@ -104,36 +122,6 @@
     b.type = "button"; b.className = "qbtn"; b.textContent = txt; b.title = title;
     b.addEventListener("click", function (e) { e.stopPropagation(); cb(); });
     return b;
-  }
-
-  // Re-renderiza en alta calidad la última versión de UN marcador (un job).
-  // Se usa desde la Cola cuando el job se hizo en borrador y a Daniel le gustó.
-  function renderJobHQ(job) {
-    if (!job) return;
-    HPQueue.add({
-      kind: "renderVersionHQ",
-      payload: {
-        projectPath: job.projectPath, sequenceName: job.seqName, markerSlug: job.markerKey,
-        marker: { start: job.markerStart, end: job.markerStart + job.markerDuration, duration: job.markerDuration },
-        background: !!(job.payload && job.payload.background)
-      },
-      seqName: job.seqName, projectPath: job.projectPath, markerKey: job.markerKey,
-      label: job.label + " (Render HQ)", markerStart: job.markerStart, markerDuration: job.markerDuration
-    });
-  }
-
-  // Re-renderiza en HQ la última versión de cada marcador MEJORABLE (opaco en
-  // borrador) de una secuencia, según los jobs de esa secuencia en la cola.
-  function renderSeqHQ(seqName) {
-    var jobs = HPQueue.jobs();
-    var byMarker = {};
-    for (var i = 0; i < jobs.length; i++) {
-      var j = jobs[i];
-      if (j.seqName === seqName && j.markerKey) byMarker[j.markerKey] = j; // el último gana
-    }
-    Object.keys(byMarker).forEach(function (mk) {
-      if (HPQueue.isUpgradable(byMarker[mk])) renderJobHQ(byMarker[mk]);
-    });
   }
 
   // ── Limpieza de versiones viejas ──────────────────────────────────────
@@ -398,6 +386,15 @@
     });
     inRow.appendChild(fresh);
     fb.appendChild(inRow);
+    // El micrófono va DEBAJO de la fila, no adentro: `.qj-feedback` es un flex
+    // de tres columnas (caja + Refinar + Regenerar) calibrado para que los dos
+    // botones se estiren al alto de la caja, y meterle un cuarto hijo lo
+    // rompería. Abajo entra sin tocar una línea de ese CSS.
+    var mic = micOpcional(ta, {
+      id: "cola:" + j.id,
+      onChange: function (texto) { feedbackDraft[j.id] = texto; },
+    });
+    if (mic) fb.appendChild(mic);
     // Imágenes/elementos para el feedback — mismo control que la tarjeta
     // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
     // marcador y la regeneración los toma.
@@ -589,17 +586,6 @@
         if (gi > 0) ctrls.appendChild(iconBtn("▲", "Subir esta secuencia", function () { HPQueue.moveSeq(g.seqName, -1); }));
         if (gi < groups.length - 1) ctrls.appendChild(iconBtn("▼", "Bajar esta secuencia", function () { HPQueue.moveSeq(g.seqName, 1); }));
       }
-      // Render HQ (secuencia): solo si hay ≥1 clip MEJORABLE (opaco hecho en
-      // borrador). Alpha y opacos ya en alta no cuentan (Render HQ sería no-op).
-      var upgradable = g.jobs.filter(function (j) {
-        return j.status === "done" && HPQueue.isUpgradable(j);
-      }).length;
-      if (upgradable > 0) {
-        var hqSeq = g.seqName;
-        var hq = iconBtn("Render HQ", "Re-renderiza en alta los clips CON FONDO que se hicieron en borrador de esta secuencia", function () { renderSeqHQ(hqSeq); });
-        hq.className = "qbtn qbtn-hq";
-        ctrls.appendChild(hq);
-      }
       if (ctrls.childNodes.length) gh.appendChild(ctrls);
       panel.appendChild(gh);
 
@@ -659,8 +645,8 @@
           ec.appendChild(iconBtn("✕", "Descartar", (function (id) { return function () { HPQueue.remove(id); }; })(j.id)));
           line.appendChild(ec);
         } else if (j.status === "done") {
-          // Job terminado: revisar en Premiere, subir a HQ si fue borrador, o
-          // dar feedback y regenerar (retomando el mismo puesto en la cola).
+          // Job terminado: revisarlo en Premiere, o dar feedback y regenerar
+          // (retomando el mismo puesto en la cola).
           var dc = document.createElement("span"); dc.className = "qj-ctrls";
           // (El "Ver" ahora es clic en el nombre del clip — ver arriba.)
           // Render hecho y clip afuera: lo único que falta es colocarlo, y va
@@ -672,14 +658,6 @@
               "Si falló porque estabas en otro proyecto o la secuencia estaba cerrada, abrilos y probá de nuevo.",
               (function (id) { return function () { HPQueue.placeAgain(id); }; })(j.id));
             pb.className = "qbtn qbtn-react"; dc.appendChild(pb);
-          }
-          // Render HQ SOLO tiene sentido en clips OPACOS (con fondo/mp4): ahí el
-          // borrador usa JPEG 80 y HQ sube a 95. En clips con ALPHA el borrador ya
-          // sale en PNG lossless → ProRes 4444 (máxima calidad), así que NO se ofrece.
-          if (j.kind !== "renderVersionHQ" && HPQueue.isUpgradable(j)) {
-            var hqb = iconBtn("Render HQ", "Re-renderizar este marcador opaco en alta calidad (el borrador usó compresión mayor)",
-              (function (job) { return function () { renderJobHQ(job); }; })(j));
-            hqb.className = "qbtn qbtn-hq"; dc.appendChild(hqb);
           }
           if (j.kind === "generate" || j.kind === "feedback") {
             dc.appendChild(iconBtn("✎ Feedback", "Dar feedback y regenerar (mantiene el puesto en la cola)",

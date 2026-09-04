@@ -149,7 +149,23 @@
    *               después (qué se reparó, por qué se gastó una llamada extra, con
    *               qué configuración se renderizó). NO va a la barra.
    *   - `level` → nivel de esa nota ("WARN"/"ERROR"); sin él, informativa.
-   * Si hace falta un campo nuevo, se agrega ACÁ y en onP, no en cada productor.
+   *
+   * Y los del DICTADO por voz, que usa este mismo canal (los consume el handler
+   * de `dictadoArrancar` en js/dictado.js, y `nivel` el medidor de ⚙):
+   *   - `fase`  → en qué etapa está el trabajo, dicha por el motor: para el
+   *               dictado, "preparando" | "escuchando" | "cortando". Va aparte
+   *               de `msg` a propósito: `msg` es texto para leer y se puede
+   *               reescribir, la fase es de lo que depende que el botón pase a
+   *               "■". Deducirla del texto —lo que se hacía— ataba el único
+   *               control para frenar el micrófono a una palabra en castellano.
+   *   - `dictado`   → { id, texto, segundos, escuchando } · el texto parcial. Se
+   *               REESCRIBE entero en cada refresco, no se agrega al final.
+   *   - `microfono` → el dispositivo que se abrió { nombre, indice, origen,
+   *               elegido, aviso }, apenas se sabe cuál es.
+   *   - `nivel`     → { dbfs, picoDbfs, umbralDbfs, pasa, segundos, duracion },
+   *               ~10 por segundo, para la barra de la prueba de micrófono.
+   * Si hace falta un campo nuevo, se agrega ACÁ y en quien lo consume, no en
+   * cada productor.
    */
   function callProg(method, arg, prog) {
     if (!engine || typeof engine[method] !== "function") {

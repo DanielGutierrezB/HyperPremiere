@@ -304,7 +304,6 @@ function dibujar(job, opts) {
       isPaused: function () { return false; },
       hasActive: function () { return false; },
       hasQueued: function () { return false; },
-      isUpgradable: function () { return false; },
       needsPlacing: function () { return false; },
       timing: { calibrated: function () { return true; }, estimateSec: function () { return 0; } },
     },

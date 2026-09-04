@@ -24,7 +24,6 @@
  * Deps de main vía init(deps):
  *   context()        → { projectPath, sequenceName } del panel
  *   refreshContext(cb) → relee proyecto/secuencia de Premiere y llama cb
- *   draft()          → si el modo borrador está activo
  *
  * Vanilla JS, sin ES modules: se expone como window.HPCorrections.
  */
@@ -34,6 +33,26 @@
   var hpLog = HPLog.log;
   var formatTime = HPUtil.formatTime;
   var fmtDuration = HPUtil.fmtDuration;
+
+  /**
+   * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
+   * `null`.
+   *
+   * El dictado es un AGREGADO al campo, nunca un requisito, y la guarda está acá
+   * porque las tres situaciones en las que el módulo NO está son reales, no
+   * hipotéticas: Windows (donde el botón va deshabilitado por decisión tomada),
+   * una máquina sin Whisper, y que `js/dictado.js` no llegue a evaluarse. En
+   * los tres casos esta fila tiene que dibujarse igual y escribirse a mano: sin
+   * esta guarda, un panel sin dictado se queda sin pestaña de correcciones.
+   *
+   * Por qué la guarda vive en cada archivo que la usa y no en un módulo común:
+   * un módulo común sería otra cosa que puede faltar, y estaríamos escribiendo
+   * el mismo bug una capa más arriba.
+   */
+  function micOpcional(ta, opts) {
+    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
+    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
+  }
 
   var deps = null;
   var listEl = null;
@@ -126,26 +145,24 @@
   }
 
   /**
-   * El marco de la clase: objetivo e indicaciones generales. Están guardados
-   * contra la secuencia donde nació el recurso, y ahí pueden no estar —ese corte
-   * nunca se abrió en esta máquina—, así que lo que falte se toma de la secuencia
-   * abierta: es la misma clase con otro corte, y mandar "(sin objetivo
-   * declarado)" es pedirle al modelo que corrija sin saber de qué va la clase.
+   * El objetivo de la clase. Está guardado contra la secuencia donde nació el
+   * recurso, y ahí puede no estar —ese corte nunca se abrió en esta máquina—,
+   * así que si falta se toma de la secuencia abierta: es la misma clase con otro
+   * corte, y mandar "(sin objetivo declarado)" es pedirle al modelo que corrija
+   * sin saber de qué va la clase.
+   *
+   * El prompt general NO se busca acá y no viaja en el job: lo resuelve la cola
+   * contra la secuencia de origen justo antes de llamar al modelo. Desde que
+   * vive al lado del .prproj hay una base del proyecto que cubre a todas las
+   * secuencias, así que este rebusque de mirar al corte vecino dejó de tener
+   * sentido — y de paso una corrección deja de poder salir con un estilo
+   * distinto del que sale una generación normal del mismo marcador.
    */
-  function marcoDeLaClase() {
-    function leer() {
-      return {
-        objective: HPStore.getObjective() || "",
-        general: (HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}).instruction || ""
-      };
-    }
+  function objetivoDeLaClase() {
+    function leer() { return HPStore.getObjective() || ""; }
     var propio = leerDe(origen.sequenceName, leer);
-    if (!otroCorte() || (propio.objective && propio.general)) return propio;
-    var vecino = leerDe(destino, leer);
-    return {
-      objective: propio.objective || vecino.objective,
-      general: propio.general || vecino.general
-    };
+    if (propio || !otroCorte()) return propio;
+    return leerDe(destino, leer);
   }
 
   /**
@@ -170,7 +187,6 @@
     }).then(function (r) {
       if (!r || !r.ok || !r.html) throw new Error((r && r.error) || "no pude leer el HTML de la v" + version);
 
-      var marco = marcoDeLaClase();
       var job = jobBase(m);
       job.kind = "feedback";
       job.label = m.slug + " (corrección)";
@@ -186,16 +202,14 @@
         // eso, así que el encargo se perdía para siempre.
         instruction: m.instruction || text,
         adjustment: text,
-        objective: marco.objective,
-        generalInstruction: marco.general,
+        objective: objetivoDeLaClase(),
         previousHtml: r.html,
         // Qué imágenes del marcador viajan (el 📤 de cada miniatura). La cola las
         // resuelve contra la secuencia de origen justo antes de llamar al modelo.
         stillsSend: HPStills.fbCollect(opts.fbJobId, m.slug, opts),
         // Con o sin fondo tiene que salir igual que el original: si no, una
         // corrección convertiría un clip opaco en uno transparente.
-        background: !!m.background,
-        draft: deps.draft()
+        background: !!m.background
       };
       if (staged) HPQueue.addStaged(job); else HPQueue.add(job);
       HPStills.fbClear(opts.fbJobId); // la próxima ronda arranca con todas activas
@@ -224,7 +238,7 @@
       // Con fondo o sin fondo decide el formato del video (mp4 opaco / mov con
       // alpha). Sin esto, editar a mano un recurso opaco lo devolvía en mov.
       background: !!m.background,
-      markerSlug: m.slug, html: html, draft: deps.draft()
+      markerSlug: m.slug, html: html
     };
     HPQueue.add(job);
     state.className = "corr-state is-ok";
@@ -323,6 +337,12 @@
     box.rows = 2;
     box.placeholder = "Qué hay que corregir. Ej: “el título tapa la cara, subilo”, “falta la fuente del dato”.";
     row.appendChild(box);
+    // Corregir una clase entera es ir fila por fila diciendo qué está mal, que
+    // es exactamente el caso donde dictar gana. El texto de esta caja no se
+    // persiste en ningún lado (se lee al apretar Regenerar), así que el
+    // micrófono no tiene nada que avisarle a nadie.
+    var mic = micOpcional(box, { id: "correccion:" + m.slug });
+    if (mic) row.appendChild(mic);
 
     // Una corrección es una ronda de feedback como las de la Cola, así que tiene
     // que traer lo mismo: mandar imágenes nuevas, decidir cuáles viajan y marcar

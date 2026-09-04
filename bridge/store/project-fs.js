@@ -1,5 +1,7 @@
 // Manejo del sistema de archivos para las salidas de HyperPremiere.
 // Las renders viven en "<dir del .prproj>/HyperPremiere/<slug(sequenceName)>/".
+// Y lo que es del proyecto entero —la cola, la base del prompt general— un
+// nivel más arriba, en "<dir del .prproj>/HyperPremiere/".
 
 'use strict';
 
@@ -26,15 +28,25 @@ function slugify(name) {
 }
 
 /**
- * Dónde VA la carpeta de salida de una secuencia, sin crearla. Para consultas de
- * solo lectura (¿ya tiene transcript?), que no deben dejar carpetas vacías.
+ * La carpeta del PROYECTO: "<dir del .prproj>/HyperPremiere". Es el único nivel
+ * que NO es de una secuencia, y ahí va lo que vale para el proyecto entero: la
+ * cola y la base del prompt general. Existía repartida en dos copias (acá y en
+ * engine.js, para queue.json); vive en un solo lugar porque ahora hay más de un
+ * archivo que depende de dar la misma carpeta.
  * Si projectPath está vacío (proyecto sin guardar), usa ~/HyperPremiere.
  */
-function outputDirPath(projectPath, sequenceName) {
-  const root = projectPath
+function projectRootPath(projectPath) {
+  return projectPath
     ? path.join(path.dirname(projectPath), 'HyperPremiere')
     : path.join(os.homedir(), 'HyperPremiere');
-  return path.join(root, slugify(sequenceName));
+}
+
+/**
+ * Dónde VA la carpeta de salida de una secuencia, sin crearla. Para consultas de
+ * solo lectura (¿ya tiene transcript?), que no deben dejar carpetas vacías.
+ */
+function outputDirPath(projectPath, sequenceName) {
+  return path.join(projectRootPath(projectPath), slugify(sequenceName));
 }
 
 /**
@@ -111,6 +123,104 @@ function readMeta(metaPath) {
     return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
   } catch {
     return null;
+  }
+}
+
+/** El contenido de un archivo de texto, o null si no está (que no es lo mismo que vacío). */
+function readTextFileOrNull(file) {
+  try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
+}
+
+// ── Prompt general: la base del proyecto y el que la pisa ────────────
+// El estilo del curso —marca, paleta, tipografía, tono— es del PROYECTO, no del
+// localStorage de una máquina. Mientras vivió ahí, el segundo editor abría el
+// mismo .prproj y generaba con el campo vacío: misma clase, mismo marcador,
+// contexto distinto y animaciones peores, sin nada que se lo dijera.
+//
+// Dos archivos, misma forma que el resto:
+//   <dir .prproj>/HyperPremiere/prompt-general.md            ← la base, del proyecto
+//   <dir .prproj>/HyperPremiere/<secuencia>/prompt-general.md ← el propio de esa clase
+//
+// Es texto plano y no JSON a propósito: es prosa, y en un JSON las líneas se
+// escaparían a "\n" — dejaría de ser un archivo que el editor puede abrir y
+// arreglar a mano, que es medio punto de guardarlo al lado del proyecto.
+const GENERAL_PROMPT_FILE = 'prompt-general.md';
+
+function generalPromptPaths(projectPath, sequenceName) {
+  return {
+    project: path.join(projectRootPath(projectPath), GENERAL_PROMPT_FILE),
+    sequence: sequenceName
+      ? path.join(outputDirPath(projectPath, sequenceName), GENERAL_PROMPT_FILE)
+      : '',
+  };
+}
+
+/**
+ * Qué prompt general le toca a esta secuencia y DE DÓNDE sale.
+ *
+ * La respuesta es una sola para todos —el panel, el log y el prompt— porque la
+ * pregunta que resolvió el bug es exactamente ésa: con qué contexto se generó.
+ * `source`: 'sequence' (la secuencia pisa la base), 'project' o 'none'.
+ *
+ * El propio de una secuencia REEMPLAZA a la base, no se le suma: dos textos
+ * pegados que pueden contradecirse ("tipografía Inter" + "tipografía Roboto")
+ * dejan al modelo eligiendo, que es la clase de contexto turbio que esto vino
+ * a sacar. Se ve entero lo que viaja, y no hay precedencia que deducir.
+ */
+function loadGeneralPrompt(body) {
+  body = body || {};
+  const vacio = { text: '', source: 'none', projectText: '', sequenceText: '', hasProjectFile: false };
+  try {
+    const files = generalPromptPaths(body.projectPath, body.sequenceName);
+    const projectRaw = readTextFileOrNull(files.project);
+    const sequenceRaw = files.sequence ? readTextFileOrNull(files.sequence) : null;
+    const projectText = String(projectRaw == null ? '' : projectRaw).trim();
+    const sequenceText = String(sequenceRaw == null ? '' : sequenceRaw).trim();
+    return {
+      ok: true,
+      text: sequenceText || projectText,
+      source: sequenceText ? 'sequence' : (projectText ? 'project' : 'none'),
+      projectText,
+      sequenceText,
+      // Que el archivo EXISTA aunque esté vacío es un dato: quiere decir que el
+      // proyecto ya decidió que no hay base, y entonces no hay nada que migrar.
+      hasProjectFile: projectRaw != null,
+      paths: files,
+    };
+  } catch (e) {
+    return Object.assign({ ok: false, error: (e && e.message) || String(e) }, vacio);
+  }
+}
+
+/**
+ * Escribe la base del proyecto (`scope: 'project'`) o el propio de una secuencia
+ * (`scope: 'sequence'`).
+ *
+ * Vaciar el de una secuencia ES volver a la base: se borra el archivo, así el
+ * disco no queda diciendo "esta clase tiene el suyo" con nada adentro. Vaciar la
+ * base se anota, pero no se crea la carpeta solo por eso — misma regla que la
+ * cola: abrir el panel no deja carpetas por ahí.
+ */
+function saveGeneralPrompt(body) {
+  body = body || {};
+  const text = String(body.text == null ? '' : body.text).trim();
+  const scope = body.scope === 'sequence' ? 'sequence' : 'project';
+  try {
+    const files = generalPromptPaths(body.projectPath, body.sequenceName);
+    const file = scope === 'sequence' ? files.sequence : files.project;
+    if (!file) return { ok: false, error: 'para guardar el prompt de una secuencia hace falta su nombre' };
+    if (!text) {
+      if (scope === 'sequence') {
+        try { fs.unlinkSync(file); } catch { /* no estaba: ya está en la base */ }
+        return { ok: true, path: file, scope, removed: true };
+      }
+      if (!fs.existsSync(file)) return { ok: true, path: file, scope, created: false };
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text ? text + '\n' : '', 'utf8');
+    return { ok: true, path: file, scope };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
   }
 }
 
@@ -196,9 +306,15 @@ module.exports = {
   slugify,
   ensureOutputDir,
   outputDirPath,
+  projectRootPath,
   paths,
   saveMeta,
   readMeta,
+  readTextFileOrNull,
+  // El estilo del curso, que viaja con el .prproj en vez de con la máquina.
+  generalPromptPaths,
+  loadGeneralPrompt,
+  saveGeneralPrompt,
   lastCompositionHtml,
   saveStills,
   saveResources,

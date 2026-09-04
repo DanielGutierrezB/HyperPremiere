@@ -226,7 +226,7 @@ test('cuando sale a la primera no se reintenta nada', async function () {
 test('el perfil de 1 worker pide captura por pantalla, no chunks', function () {
   const a = argsDeRender({
     baseArgs: [], workDir: '/tmp/x', outPath: '/tmp/y.mov',
-    format: 'mov', quality: 'high', workers: 1, lowMemory: true,
+    format: 'mov', workers: 1, lowMemory: true,
   });
   ok(a.includes('--low-memory-mode'), 'va el modo que resultó más rápido');
   ok(!a.includes('--target-chunk-frames'), 'y no el reparto en pedazos, que es del otro perfil');
@@ -236,7 +236,7 @@ test('el perfil de 1 worker pide captura por pantalla, no chunks', function () {
 test('el perfil paralelo acota el chunk para no reventar el Buffer de Node', function () {
   const a = argsDeRender({
     baseArgs: [], workDir: '/tmp/x', outPath: '/tmp/y.mov',
-    format: 'mov', quality: 'high', workers: 3, lowMemory: false,
+    format: 'mov', workers: 3, lowMemory: false,
   });
   eq(a[a.indexOf('--target-chunk-frames') + 1], '300',
     'sin esto, un marcador de 33s se cae con "Set maximum size exceeded"');
@@ -246,13 +246,34 @@ test('el perfil paralelo acota el chunk para no reventar el Buffer de Node', fun
 test('el .mov con alpha nunca pide encode por hardware; el .mp4 sí', function () {
   const mov = argsDeRender({
     baseArgs: [], workDir: '/tmp/x', outPath: '/tmp/y.mov',
-    format: 'mov', quality: 'high', workers: 1, lowMemory: true,
+    format: 'mov', workers: 1, lowMemory: true,
   });
   ok(!mov.includes('--gpu'), 'ProRes 4444 encodea por software: --gpu no haría nada');
   const mp4 = argsDeRender({
     baseArgs: [], workDir: '/tmp/x', outPath: '/tmp/y.mp4',
-    format: 'mp4', quality: 'high', workers: 1, lowMemory: true,
+    format: 'mp4', workers: 1, lowMemory: true,
   });
   ok(mp4.includes('--gpu'), 'H.264 sí usa el motor de media dedicado');
   eq(mp4[mp4.indexOf('--crf') + 1], '18', 'y en alta, calidad de lectura');
+});
+
+test('todo render sale en ALTA: la calidad ya no es una opción', function () {
+  // Existió un "modo borrador" que bajaba el mp4 a --crf 28 para previsualizar,
+  // y con él un "Render HQ" para rehacer en alta lo que había quedado feo. Se
+  // sacó entero: no hay dónde pedir otra cosa, y por las dudas tampoco alcanza
+  // con que un job viejo traiga el campo colgado en su payload.
+  const conBasura = { quality: 'draft', draft: true };
+  const mov = argsDeRender(Object.assign({
+    baseArgs: [], workDir: '/tmp/x', outPath: '/tmp/y.mov',
+    format: 'mov', workers: 1, lowMemory: true,
+  }, conBasura));
+  eq(mov[mov.indexOf('--quality') + 1], 'high', 'el .mov, siempre ProRes 4444');
+  ok(!mov.includes('--crf'), 'ProRes no se rige por crf');
+
+  const mp4 = argsDeRender(Object.assign({
+    baseArgs: [], workDir: '/tmp/x', outPath: '/tmp/y.mp4',
+    format: 'mp4', workers: 1, lowMemory: true,
+  }, conBasura));
+  eq(mp4[mp4.indexOf('--quality') + 1], 'high');
+  eq(mp4[mp4.indexOf('--crf') + 1], '18', 'el mp4 con fondo, siempre calidad de lectura');
 });

@@ -21,16 +21,29 @@ const DEFAULT_TIMEOUT_MS = 1_800_000;
 // no entran en el num_ctx por defecto de Ollama (~4k), que cortaría el contrato.
 const NUM_CTX = 32768;
 
+// Cuánto se queda el modelo residente. Media hora para generar: así los
+// marcadores siguientes no pagan el cold-load (~20-40s) de recargar 19-20 GB
+// cada vez. Un trabajo corto puede pedir otro con `config.keepAlive`.
+const KEEP_ALIVE = '30m';
+
 /**
+ * Una llamada a Ollama, devolviendo el TEXTO tal como lo escribió el modelo.
+ *
+ * `generate` es esto mismo leído como HTML (ver abajo). Están separados porque
+ * el mismo Ollama atiende trabajos de texto —refinar un dictado—, y ahí lo que
+ * cambia son tres números, no el código: contexto, residencia y temperatura.
+ * Por eso entran por `config` y no por una copia de esta función en otro
+ * archivo.
+ *
  * @param {object} opts
  * @param {string} opts.systemPrompt
  * @param {string} opts.userPrompt
  * @param {string[]} [opts.images] - data URLs de stills
  * @param {string} opts.model
- * @param {object} [opts.config] - { baseUrl?, timeoutMs? }
- * @returns {Promise<string>} HTML de la composicion
+ * @param {object} [opts.config] - { baseUrl?, timeoutMs?, numCtx?, keepAlive?, temperature? }
+ * @returns {Promise<{text:string, usage:object}>}
  */
-async function generate({ systemPrompt, userPrompt, images, model, config }) {
+async function complete({ systemPrompt, userPrompt, images, model, config }) {
   const cfg = config || {};
   if (!userPrompt || typeof userPrompt !== 'string') {
     throw new Error('ollama: userPrompt es requerido');
@@ -61,14 +74,22 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Refinar texto no es escribir una composición: alcanza con un contexto
+  // chico, y la temperatura alta es exactamente por donde se cuela lo que nadie
+  // pidió. Los defaults siguen siendo los de generar.
+  const options = { num_ctx: Number.isFinite(cfg.numCtx) ? cfg.numCtx : NUM_CTX };
+  if (Number.isFinite(cfg.temperature)) options.temperature = cfg.temperature;
+
   let res;
   try {
     res = await hpFetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      // keep_alive: deja el modelo residente 30 min → los marcadores siguientes
-      // no pagan el cold-load (~20-40s) de recargar 19-20GB cada vez.
-      body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m', options: { num_ctx: NUM_CTX } }),
+      body: JSON.stringify({
+        model, messages, stream: false,
+        keep_alive: cfg.keepAlive || KEEP_ALIVE,
+        options: options,
+      }),
       signal: controller.signal,
     });
   } catch (e) {
@@ -111,7 +132,19 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     outputTokens: data.eval_count,
     costUsd: 0, // local = gratis
   });
-  return { text: stripHtmlFence(contentText), usage };
+  return { text: contentText, usage };
 }
 
-module.exports = { generate };
+/**
+ * Lo mismo, leyendo la respuesta como la COMPOSICIÓN: se le saca el fence de
+ * markdown (y el <think>…</think> de los modelos que piensan en voz alta).
+ *
+ * @param {object} opts - los mismos de `complete`
+ * @returns {Promise<{text:string, usage:object}>} `text` es el HTML
+ */
+async function generate(opts) {
+  const r = await complete(opts);
+  return { text: stripHtmlFence(r.text), usage: r.usage };
+}
+
+module.exports = { generate, complete };

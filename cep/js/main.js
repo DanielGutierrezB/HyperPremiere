@@ -2,8 +2,8 @@
  * main.js — orquestador del panel HyperPremiere.
  *
  * Acá vive lo que es genuinamente de esta pantalla: contexto (proyecto +
- * secuencia), objetivo/transcript/prompt general, las TARJETAS de marcador
- * (instrucción, imágenes, editor de HTML) y el wiring de header/pestañas.
+ * secuencia), objetivo y transcript, las TARJETAS de marcador (instrucción,
+ * imágenes, editor de HTML) y el wiring de header/pestañas.
  *
  * El resto está en módulos propios (cargados antes por index.html):
  *   HPUtil (js/util.js)              helpers puros
@@ -12,6 +12,8 @@
  *   HPHost (js/host-client.js)       llamadas a ExtendScript (host.jsx)
  *   HPSeqWatch (js/seq-watch.js)     vigila si cambiaste de secuencia en Premiere
  *   HPStore (js/store.js)            persistencia por proyecto+secuencia
+ *   HPGeneral (js/general-prompt.js) el estilo del curso, al lado del .prproj
+ *   HPGeneralView (js/general-view.js) su bloque en el encabezado del panel
  *   HPTranscript (js/transcript.js)  parser del transcript
  *   HPWidgets (js/widgets.js)        select propio, editor de código, tooltips
  *   HPStills (js/stills.js)          control de imágenes/recursos por marcador
@@ -28,6 +30,27 @@
   var hpCall = HPEngine.call;
   var debounce = HPUtil.debounce;
   var formatTime = HPUtil.formatTime;
+
+  /**
+   * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
+   * `null`.
+   *
+   * El dictado es un AGREGADO a los campos de prompt, nunca un requisito, y las
+   * situaciones en las que el módulo NO está son reales: Windows (donde el
+   * botón va deshabilitado por decisión tomada), una máquina sin Whisper
+   * instalado, y que `js/dictado.js` no llegue a evaluarse por lo que sea. En
+   * los tres casos la tarjeta del marcador, las Indicaciones generales y el
+   * prompt general tienen que dibujarse igual y escribirse a mano. Sin esta
+   * guarda, un panel sin dictado se queda sin tarjetas de marcador, que es todo
+   * el panel.
+   *
+   * La guarda vive acá y no en un módulo común a propósito: un módulo común
+   * sería otra cosa que puede faltar, o sea el mismo bug una capa más arriba.
+   */
+  function micOpcional(ta, opts) {
+    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
+    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
+  }
 
   // Clave del "Prompt general" (instrucción + stills + recursos que aplican a
   // TODOS los marcadores). Ver HPStore.GENERAL_KEY.
@@ -54,9 +77,6 @@
 
   var currentProjectPath = "";
   var currentSequenceName = "";
-  // Modo borrador (render rápido, menor calidad) — preferencia global de sesión.
-  var draftMode = false;
-  try { draftMode = window.localStorage.getItem("hyperpremiere::draft") === "1"; } catch (e) {}
 
   var lastRestoredProject = null; // para restaurar la cola solo al cambiar de proyecto
   function loadContext(done) {
@@ -84,7 +104,7 @@
   }
 
   // ── Cableado de las vistas ───────────────────────────────────────────
-  HPStills.init({ onGeneralChanged: function () { updateGeneralSummary(); } });
+  HPStills.init({ onGeneralChanged: function () { HPGeneralView.refreshSummary(); } });
   HPQueueView.init({
     goToJobMarker: function (job, openEditor) { goToJobMarker(job, openEditor); },
     showJobInTimeline: showJobInTimeline,
@@ -102,8 +122,7 @@
     // La pestaña se usa al volver de la revisión, cuando lo más probable es que
     // hayas cambiado de secuencia desde que abriste el panel: se relee antes de
     // listar para no mostrarte la carpeta de otra clase.
-    refreshContext: loadContext,
-    draft: function () { return draftMode; }
+    refreshContext: loadContext
   });
   // Cada evento de la cola refresca la vista de Cola, las tarjetas de la
   // secuencia actual y el contador de uso de la sesión.
@@ -125,46 +144,24 @@
   }
 
   // ── Prompt general (aplica a todos los marcadores) ──────────────────
-  var generalInput = document.getElementById("general-instruction");
-  var generalMount = document.getElementById("general-stills-mount");
-  var generalSummary = document.getElementById("general-summary");
-  function updateGeneralSummary() {
-    if (!generalSummary) return;
-    var g = HPStore.getMarkerData(GEN_KEY);
-    var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
-    var hasTxt = (g.instruction || "").trim().length > 0;
-    if (hasTxt || n) {
-      generalSummary.textContent = "✓ activo" + (n ? " · " + n + " adj." : "");
-      generalSummary.className = "cfg-summary section-state is-ok";
-    } else {
-      // Vacío: sugerir desplegarlo (aplica a TODOS los marcadores de abajo).
-      generalSummary.textContent = "opcional · estilo/marca para todos — desplegá";
-      generalSummary.className = "cfg-summary section-state is-hint";
-    }
-  }
-  function hydrateGeneral() {
-    if (generalInput) generalInput.value = HPStore.getMarkerData(GEN_KEY).instruction || "";
-    if (generalMount) {
-      generalMount.innerHTML = "";
-      generalMount.appendChild(HPStills.createControl(GEN_KEY));
-    }
-    updateGeneralSummary();
-  }
-  if (generalInput) {
-    generalInput.addEventListener("input", debounce(function () {
-      HPStore.setMarkerInstruction(GEN_KEY, generalInput.value);
-      updateGeneralSummary();
-    }, DEBOUNCE_MS));
+  // El TEXTO vive al lado del .prproj y lo administra HPGeneral; el bloque de
+  // interfaz (campo, renglón de origen, botón de destino y cartel de conflicto)
+  // es HPGeneralView. Acá queda solo el cableado, y en enqueueMarkerGeneration
+  // la lectura de lo que le viaja al modelo.
+  HPGeneralView.init({
+    context: function () { return { projectPath: currentProjectPath, sequenceName: currentSequenceName }; },
+    setOutput: setOutput
+  });
+
+  function guardarObjetivo() {
+    HPStore.setObjective(objectiveInput.value);
+    updateContextSummary();
   }
 
   if (objectiveInput) {
-    objectiveInput.addEventListener(
-      "input",
-      debounce(function () {
-        HPStore.setObjective(objectiveInput.value);
-        updateContextSummary();
-      }, DEBOUNCE_MS)
-    );
+    objectiveInput.addEventListener("input", debounce(guardarObjetivo, DEBOUNCE_MS));
+    var micObjetivo = micOpcional(objectiveInput, { id: "objetivo", onChange: guardarObjetivo });
+    if (micObjetivo) objectiveInput.parentNode.insertBefore(micObjetivo, objectiveInput.nextSibling);
   }
 
   // ---------------------------------------------------------------------
@@ -1173,7 +1170,10 @@
   function enqueueMarkerGeneration(marker, mode, staged) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
-    var gen = HPStore.getMarkerData(GEN_KEY); // prompt general (aplica a todos)
+    // Las imágenes del prompt general siguen siendo de esta secuencia; el texto
+    // sale del proyecto (HPGeneral), que es lo que ahora viaja con el .prproj.
+    var gen = HPStore.getMarkerData(GEN_KEY);
+    var genTxt = HPGeneral.state(currentProjectPath, currentSequenceName);
     var segments = HPStore.getTranscript() || [];
     var markerTranscript = HPTranscript.sliceForMarker(segments, marker.start, marker.start + marker.duration, HPStore.getTranscriptOffset());
     var payload = {
@@ -1184,13 +1184,15 @@
       // a corregir.
       marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration, guid: marker.guid || "" },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
-      generalInstruction: gen.instruction || "",
+      // El origen viaja pegado al texto: es lo que hace que el ⬇ Log de cada
+      // generación diga con qué estilo se diseñó y no solo que había uno.
+      generalInstruction: genTxt.text, generalSource: genTxt.source,
       // stills = TODAS las imágenes (marcador + generales) para que el modelo las VEA (contexto).
       stills: (data.stills || []).concat(gen.stills || []),
       // assets = solo las marcadas "usar" → se INCRUSTAN en el gráfico (logo/icono/foto).
       assets: HPStore.getMarkerAssets(markerKey).concat(HPStore.getMarkerAssets(GEN_KEY)),
       resources: (data.resources || []).concat(gen.resources || []),
-      background: !!data.background, draft: draftMode,
+      background: !!data.background,
       markerSlug: markerKey, mode: mode
     };
     // Refinar NO reenviaba las imágenes salvo que el texto las nombrara, para
@@ -1305,6 +1307,15 @@
       HPStore.setMarkerInstruction(markerKey, instruction.value);
     }, DEBOUNCE_MS));
     body.appendChild(instruction);
+    // Micrófono de este marcador. Se guarda SIN debounce: lo que escribe el
+    // dictado no son pulsaciones, es el texto ya terminado, y esperar 300 ms
+    // para persistirlo es la ventana en la que se pierde si el editor cambia
+    // de pestaña justo ahí.
+    var mic = micOpcional(instruction, {
+      id: "marcador:" + markerKey,
+      onChange: function (texto) { HPStore.setMarkerInstruction(markerKey, texto); },
+    });
+    if (mic) body.appendChild(mic);
 
     body.appendChild(HPStills.createControl(markerKey));
 
@@ -1589,7 +1600,7 @@
         payload: {
           projectPath: currentProjectPath, sequenceName: currentSequenceName,
           marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
-          markerSlug: markerKey, html: html, draft: draftMode
+          markerSlug: markerKey, html: html
         },
         seqName: currentSequenceName, projectPath: currentProjectPath, markerKey: markerKey,
         label: markerKey + " (edición manual)", markerStart: marker.start, markerDuration: marker.duration
@@ -1637,7 +1648,8 @@
       setOutput(ignored
         ? "La secuencia solo tiene comentarios de Frame.io (" + ignored + "), ningún marcador para animar."
         : "La secuencia activa no tiene marcadores.", false);
-      setHeaderStatus((currentSequenceName || "secuencia") + " · sin marcadores", "idle");
+      setHeaderStatus(HPUtil.shortenMiddle(currentSequenceName || "secuencia", 26) + " · sin marcadores", "idle",
+        (currentSequenceName || "secuencia") + " · sin marcadores");
       return;
     }
 
@@ -1656,7 +1668,8 @@
     }
     setOutput(markers.length + " marcador(es) cargados · estado guardado ✓" + deFrameIo, false);
     // Estado de secuencia arriba, en verde.
-    setHeaderStatus((currentSequenceName || "secuencia") + " ✓", "ok");
+    setHeaderStatus(HPUtil.shortenMiddle(currentSequenceName || "secuencia", 26) + " ✓", "ok",
+      (currentSequenceName || "secuencia") + " ✓");
     // Flujo progresivo: al tener marcadores, si ya hay contexto (objetivo o
     // transcript), colapsar Contexto para que los marcadores tengan el espacio
     // — sobre todo con el panel chico. El header colapsado muestra el resumen,
@@ -1698,7 +1711,7 @@
     // proyecto o secuencia, las tarjetas deben rehidratarse del namespace nuevo.
     loadContext(function () {
       hydrateObjective();
-      hydrateGeneral();
+      HPGeneralView.hydrate();
       hydrateOffset();
       updateTranscriptStatus();
       // Cambiar de secuencia acá es lo normal: hay que traer SU transcript.
@@ -1756,9 +1769,13 @@
     suValue.textContent = vista.line;
     if (suBox) suBox.setAttribute("title", vista.detail);
   }
+  // Al contador le suman la cola (una generación) y el micrófono, que vive en
+  // otro archivo (el refinado del dictado, en su propio bolsillo). En vez de que
+  // cada uno se acuerde de refrescar la barra —y de que HPDictado conozca los
+  // ids del header—, la barra se suscribe a que el acumulado cambie.
+  HPStore.onUsageChange(updateSessionUsageBar);
   if (suReset) suReset.addEventListener("click", function () {
     HPStore.resetSessionUsage();
-    updateSessionUsageBar();
   });
   updateSessionUsageBar();
   // El acumulado que quedó de antes cuenta la entrada a medias y eso no se puede
@@ -1879,21 +1896,20 @@
   if (btnQueueReady) btnQueueReady.addEventListener("click", function () { enqueueAllReady(true); });
 
   // ── Estado en el header (verde OK / rojo error) ─────────────────────
+  //
+  // La insignia se recorta con ellipsis cuando el panel es angosto (a 320 le
+  // quedan 179 px y el nombre de una secuencia mide el doble), así que lo que
+  // dice va SIEMPRE completo en su tooltip: recortado por el final, dos cortes
+  // de la misma clase se ven idénticos, y ahí es justo cuando hay que
+  // distinguirlos. Por lo mismo el nombre de secuencia se acorta por el MEDIO
+  // antes de entrar (HPUtil.shortenMiddle), que conserva el sufijo.
   var hdrStatus = document.getElementById("hdr-status");
-  function setHeaderStatus(text, state) {
+  function setHeaderStatus(text, state, completo) {
     if (!hdrStatus) return;
     hdrStatus.textContent = text;
     hdrStatus.className = "hdr-chip is-" + (state || "idle");
-  }
-
-  // ── Toggle de modo borrador (global) ────────────────────────────────
-  var draftCheck = document.getElementById("draft-mode");
-  if (draftCheck) {
-    draftCheck.checked = draftMode;
-    draftCheck.addEventListener("change", function () {
-      draftMode = draftCheck.checked;
-      try { window.localStorage.setItem("hyperpremiere::draft", draftMode ? "1" : "0"); } catch (e) {}
-    });
+    hdrStatus.setAttribute("title", completo || text);
+    hdrStatus.removeAttribute("data-tip"); // el tooltip propio cachea el anterior
   }
 
   // ── Pestañas: Marcadores / Cola / Corrections ───────────────────────
@@ -1935,6 +1951,14 @@
   if (btnHelpClose) btnHelpClose.addEventListener("click", function () { toggleHelp(false); });
   if (helpPanel) helpPanel.addEventListener("click", function (e) { if (e.target === helpPanel) toggleHelp(false); });
 
+  // El micrófono del dictado, arriba: el MISMO control que la fila de ⚙
+  // (HPMicSelect tiene un solo estado y dos vistas), para poder cambiar de
+  // micrófono sin abrir la configuración. Se monta ANTES de HPConfigUI.init()
+  // para que las dos vistas ya estén cuando ⚙ pide el listado: así ffmpeg se
+  // corre una sola vez al abrir el panel.
+  if (typeof HPMicSelect !== "undefined" && HPMicSelect) {
+    HPMicSelect.montarEncabezado(document.getElementById("hdr-mic"));
+  }
   HPConfigUI.init();
   HPWidgets.installTooltips();
 
@@ -1943,7 +1967,7 @@
   // así al reabrir Premiere reconoce que esta secuencia ya lo tiene hecho.
   loadContext(function () {
     hydrateObjective();
-    hydrateGeneral();
+    HPGeneralView.hydrate();
     hydrateOffset();
     updateTranscriptStatus();
     hydrateTranscriptFromDisk();

@@ -4,9 +4,23 @@
  * Registro de proveedores de generacion.
  *
  * Interfaz comun que implementa cada proveedor:
- *   async generate({ systemPrompt, userPrompt, images, model, config }) -> Promise<string>
- * donde `images` es un array de data URLs ("data:image/png;base64,....")
- * y el retorno es SOLO el HTML de la composicion (sin fences de markdown).
+ *   async generate({ systemPrompt, userPrompt, images, model, config })
+ *       -> { text, usage, warning? }   ·  `text` es SOLO el HTML de la composicion
+ *   async complete({ ...lo mismo })
+ *       -> { text, usage, warning? }   ·  `text` es lo que escribio el modelo, crudo
+ * donde `images` es un array de data URLs ("data:image/png;base64,....").
+ *
+ * `generate` es `complete` + `stripHtmlFence`, y nada mas. Los dos existen
+ * porque el panel le pide a estos mismos proveedores dos cosas distintas: una
+ * COMPOSICION (que viene envuelta en un fence de markdown y hay que
+ * desenvolver) y TEXTO a secas (el refinador del dictado). Reescribir el
+ * proveedor afuera para el segundo caso es como se pierden las cosas que solo
+ * estan aca: que el CLI puede salir con codigo 0 y `is_error: true`, la
+ * escalera de reintento por flag desconocido, el system prompt por archivo en
+ * Windows y el diagnostico de "sin sesion / sin cuota / modelo inexistente".
+ *
+ * `cursor-cli` y `openai-compat` todavia implementan solo `generate`: nadie les
+ * pide texto crudo. El dia que haga falta, se parten igual.
  */
 
 const PROVIDERS = {

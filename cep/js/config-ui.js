@@ -26,12 +26,17 @@
   // verdad. Quien contesta ahora es el CLI (ver bridge/claude-session.js).
   var currentSession = "?"; // "si" | "no" | "?"
   var currentSessionWarn = "iniciá sesión en Claude";
+  // CON QUÉ credencial entra el CLI de Claude ('api_key' | 'claude.ai' |
+  // 'oauth_token' | "" mientras no se sepa). No es un detalle de diagnóstico:
+  // es lo que decide qué ventana de contexto se puede prometer, porque por API
+  // key el CLI va por la API y por suscripción nadie dice cuánto te entra.
+  var currentAuthMethod = "";
 
   var cfgProviderSel = null;
   var cfgModelSel = null;
   var cfgEffortSel = null;
   var cfgModelCustom, cfgApiKey, cfgBaseUrl, btnSaveConfig, configStatus, cfgSummary;
-  var btnLoginClaude, loginStatus, modelsHint;
+  var btnLoginClaude, loginStatus, modelsHint, cfgContext;
 
   // Nivel de pensamiento (esfuerzo) de Claude: es la palanca de CALIDAD, no de
   // velocidad nada más. Diseñar una animación es razonamiento, así que subirlo
@@ -268,7 +273,7 @@
     var list = MODELS[provider] || CLAUDE_MODELS;
     var matched = false;
     for (var i = 0; i < list.length; i++) if (list[i].v === selected) matched = true;
-    var opts = list.map(function (o) { return { value: o.v, label: o.t }; });
+    var opts = list.map(function (o) { return { value: o.v, label: modelOptionLabel(o) }; });
     var val;
     if (selected && !matched && provider !== "claude-cli" && provider !== "claude-api") {
       // ID personalizado que no está en la lista → seleccionar "Otro" y precargar.
@@ -291,6 +296,62 @@
       return cursorIdFor(currentCursorGroup(), cfgEffortSel ? cfgEffortSel.value : "");
     }
     return cfgModelSel.value;
+  }
+
+  // ── Cuánto le entra, y cuánto le metemos ──────────────────────────────
+  //
+  // Las dos decisiones —qué ventana corresponde y cómo se cuenta el consumo—
+  // son funciones puras de HPUtil, probadas sin DOM. Acá solo se juntan los
+  // datos que están desperdigados en el panel (proveedor, catálogo, credencial
+  // del CLI, contador de la sesión) y se pinta.
+
+  /** La entrada del catálogo del proveedor activo para este ID, o null. */
+  function catalogEntry(id) {
+    var list = MODELS[cfgProviderSel.value] || [];
+    for (var i = 0; i < list.length; i++) if (list[i].v === id) return list[i];
+    return null;
+  }
+
+  /**
+   * La ventana del modelo que está elegido ahora, o null si no se sabe.
+   * En Cursor el dato está en el NOMBRE que devolvió el CLI (que es de donde
+   * sale el "· 1M" de la etiqueta); en Claude, en el ID más la credencial.
+   */
+  function activeWindow() {
+    var p = cfgProviderSel.value;
+    if (p === "cursor-cli") {
+      var g = currentCursorGroup();
+      return HPUtil.ventanaDeContexto({ provider: p, model: effectiveModel(), nombre: g ? g.label : "" });
+    }
+    var id = effectiveModel();
+    var e = catalogEntry(id);
+    return HPUtil.ventanaDeContexto({
+      provider: p, model: id, nombre: e ? e.t : "",
+      autenticacion: currentAuthMethod, reportado: e ? e.ventana : 0
+    });
+  }
+
+  /** La etiqueta de una opción del desplegable: el nombre y, si la sabemos, la ventana. */
+  function modelOptionLabel(o) {
+    var v = HPUtil.ventanaDeContexto({
+      provider: cfgProviderSel.value, model: o.v, nombre: o.t,
+      autenticacion: currentAuthMethod, reportado: o.ventana
+    });
+    // Un nombre que ya la dice (los de Cursor traen el 1M puesto) no la repite.
+    if (!v || String(o.t).indexOf(v.texto) !== -1) return o.t;
+    return o.t + " · " + v.texto;
+  }
+
+  /** El renglón de abajo del selector: la ventana y lo que gasta de verdad. */
+  function updateContextNote() {
+    if (!cfgContext) return;
+    var uso = (typeof HPStore !== "undefined" && HPStore) ? HPStore.getSessionUsage() : null;
+    cfgContext.textContent = HPUtil.lineaDeContexto({
+      ventana: activeWindow(),
+      consumo: HPUtil.consumoTipico(uso, cfgProviderSel.value),
+      proveedor: PROVIDER_LABEL[cfgProviderSel.value] || cfgProviderSel.value,
+      provider: cfgProviderSel.value
+    });
   }
 
   function modelLabel(id) {
@@ -345,6 +406,7 @@
         noteEl.setAttribute("data-hidden", "true");
       }
     }
+    updateContextNote();
   }
 
   // Semáforo del resumen: verde si el proveedor está listo, aviso si falta algo.
@@ -441,7 +503,13 @@
           }
           return;
         }
-        var list = r.models.map(function (m) { return { v: m.id, t: m.name || m.id }; });
+        // `ventana` es el max_input_tokens que informa la API. Cuando viene, el
+        // selector le hace caso antes que a nuestra tabla: es el número de la
+        // cuenta de verdad. Cuando no (la respuesta lo admite en null), queda 0
+        // y manda la tabla.
+        var list = r.models.map(function (m) {
+          return { v: m.id, t: m.name || m.id, ventana: Number(m.maxInputTokens) || 0 };
+        });
         // Los dos proveedores Claude comparten catálogo: hay que reasignar los dos.
         MODELS["claude-cli"] = list;
         MODELS["claude-api"] = list;
@@ -544,6 +612,11 @@
     hpCall("claudeSessionStatus")
       .then(function (s) {
         if (!s || cfgProviderSel.value !== "claude-cli") return;
+        // Con qué credencial entra decide qué ventana se puede prometer, así
+        // que las etiquetas del desplegable se rearman cuando cambia: hasta que
+        // llega esta respuesta, el panel no sabe y muestra el piso.
+        var antes = currentAuthMethod;
+        currentAuthMethod = (s.estado === "con-sesion") ? String(s.metodo || "") : "";
         if (s.estado === "con-sesion") {
           currentSession = "si";
         } else if (s.estado === "sin-sesion") {
@@ -558,7 +631,9 @@
           loginStatus.className = "muted " +
             (currentSession === "si" ? "login-ok" : (currentSession === "no" ? "login-err" : ""));
         }
+        if (antes !== currentAuthMethod) populateModels("claude-cli", effectiveModel());
         updateSummary();
+        updateContextNote();
       })
       .catch(function () { /* sin motor no se sabe, y no saber no es un problema */ });
   }
@@ -574,11 +649,69 @@
       });
   }
 
+  // ── Micrófono del dictado ─────────────────────────────────────────────
+  //
+  // El DESPLEGABLE ya no vive acá: es de HPMicSelect (cep/js/mic-select.js),
+  // porque desde la v1.4.49 el mismo control está también en el encabezado del
+  // panel y dos copias se desincronizarían en el primer cambio. Lo que queda en
+  // ⚙ es lo que es SOLO de ⚙: la línea de estado larga, el ↻ y "Probar
+  // micrófono", que abre el elegido con el MISMO comando que el dictado y
+  // muestra el nivel en vivo (HPMicMedidor).
+  //
+  // Todo lo que pasa acá queda en el ⬇ Log: la lista cada vez que se enumera,
+  // la elección, y lo que el motor va contando de la prueba (que llega por
+  // `note`). Es lo que hace falta para diagnosticar un micrófono desde lejos.
+
+  function initMicrofono() {
+    var status = document.getElementById("mic-status");
+    var btnTest = document.getElementById("btn-mic-test");
+    var meterBox = document.getElementById("mic-meter");
+    if (typeof HPMicSelect === "undefined" || !HPMicSelect || !status) return;
+    var hpLog = (typeof HPLog !== "undefined" && HPLog && HPLog.log) ? HPLog.log : function () {};
+    var medidor = (typeof HPMicMedidor !== "undefined" && HPMicMedidor && meterBox) ? HPMicMedidor.crear(meterBox) : null;
+
+    var vista = HPMicSelect.montar(document.getElementById("cfg-mic"), {
+      status: status,
+      refresh: document.getElementById("btn-mic-refresh"),
+    });
+    if (!vista) return;
+
+    if (btnTest) btnTest.addEventListener("click", function () {
+      btnTest.disabled = true;
+      if (medidor) medidor.arrancar();
+      hpLog("Prueba de micrófono: arranca desde ⚙.");
+      HPEngine.callProg("microfonoProbar", {}, function (p) {
+        if (!p) return;
+        if (p.note) hpLog(p.note, p.level || "INFO");
+        if (medidor && p.msg) medidor.mensaje(p.msg);
+        if (medidor && p.nivel) medidor.nivel(p.nivel);
+      }).then(function (r) {
+        btnTest.disabled = false;
+        if (!r || !r.ok) {
+          var motivo = (r && r.error) || "el motor no devolvió nada";
+          if (medidor) medidor.veredicto({ estado: "error", titulo: "La prueba no pudo correr.", detalle: motivo });
+          hpLog("Prueba de micrófono: no pudo correr: " + motivo, "ERROR");
+          return;
+        }
+        if (medidor) medidor.veredicto(r);
+        hpLog("Prueba de micrófono: terminó con veredicto «" + r.estado + "».", r.estado === "ok" ? "INFO" : "WARN");
+      }).catch(function (e) {
+        btnTest.disabled = false;
+        var motivo = (e && e.message) || String(e);
+        if (medidor) medidor.veredicto({ estado: "error", titulo: "La prueba se cayó.", detalle: motivo });
+        hpLog("Prueba de micrófono: se cayó: " + motivo, "ERROR");
+      });
+    });
+
+    HPMicSelect.refrescar("al abrir el panel");
+  }
+
   function init() {
     cfgProviderSel = HPWidgets.select(document.getElementById("cfg-provider"));
     cfgModelSel = HPWidgets.select(document.getElementById("cfg-model"));
     cfgEffortSel = HPWidgets.select(document.getElementById("cfg-effort"));
     modelsHint = document.getElementById("models-hint");
+    cfgContext = document.getElementById("cfg-context");
     cfgModelCustom = document.getElementById("cfg-model-custom");
     cfgApiKey = document.getElementById("cfg-apikey");
     cfgBaseUrl = document.getElementById("cfg-baseurl");
@@ -754,7 +887,16 @@
         .then(function () { btnLoginToken.disabled = false; });
     });
 
+    // El promedio de consumo sale del contador de la sesión, así que después de
+    // cada generación el renglón dice otro número. Se escucha en vez de
+    // recalcularlo al abrir ⚙: el overlay puede quedar abierto mientras la cola
+    // trabaja.
+    if (typeof HPStore !== "undefined" && HPStore && HPStore.onUsageChange) {
+      HPStore.onUsageChange(updateContextNote);
+    }
+
     loadConfig();
+    initMicrofono();
   }
 
   global.HPConfigUI = {

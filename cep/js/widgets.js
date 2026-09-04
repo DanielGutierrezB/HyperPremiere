@@ -93,8 +93,11 @@
     var value = null;
     var api = { onChange: null };
 
+    // Lo que muestra el botón cerrado puede ser MÁS CORTO que lo que muestra el
+    // menú: en el encabezado del panel el desplegable del micrófono tiene 34 px
+    // y el menú, desplegado, todo el ancho. Sin `corto` es la misma etiqueta.
     function labelFor(v) {
-      for (var i = 0; i < opts.length; i++) if (opts[i].value === v) return opts[i].label;
+      for (var i = 0; i < opts.length; i++) if (opts[i].value === v) return opts[i].corto || opts[i].label;
       return v || "—";
     }
     function markSelected() {
@@ -117,7 +120,9 @@
     trigger.addEventListener("click", toggle);
 
     api.setOptions = function (list, selected) {
-      opts = (list || []).map(function (o) { return { value: String(o.value), label: String(o.label) }; });
+      opts = (list || []).map(function (o) {
+        return { value: String(o.value), label: String(o.label), corto: o.corto == null ? "" : String(o.corto) };
+      });
       menu.innerHTML = "";
       opts.forEach(function (o) {
         var el = document.createElement("div");
@@ -128,7 +133,7 @@
           e.stopPropagation();
           var changed = (o.value !== value);
           value = o.value;
-          label.textContent = o.label;
+          label.textContent = o.corto || o.label;
           markSelected();
           close();
           if (changed && typeof api.onChange === "function") api.onChange(value);

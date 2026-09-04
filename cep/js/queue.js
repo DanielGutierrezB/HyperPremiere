@@ -13,7 +13,7 @@
  *
  * Colabora con los otros módulos por sus globals (mismo patrón que todo el
  * panel): HPStore (contexto + datos del marcador + uso de sesión), HPEngine
- * (motor Node), HPHost (colocar/recolorear clips en Premiere), HPConfigUI
+ * (motor Node), HPHost (colocar clips en Premiere), HPConfigUI
  * (proveedor activo) y HPTranscript. La UI se entera por HPQueue.on(cb).
  *
  * Vanilla JS, sin ES modules: se expone como window.HPQueue.
@@ -25,13 +25,13 @@
   var fmtDuration = HPUtil.fmtDuration;
   var addThousands = HPUtil.addThousands;
 
-  // Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
-  // café (marrón) = borrador; magenta = procesado en alta calidad;
-  // amarillo = corrección hecha desde la pestaña Corrections, para que en un
-  // timeline ya lleno se vea de un golpe qué se rehizo después de la revisión.
-  var COLOR_BROWN = 14;
-  var COLOR_MAGENTA = 11;
+  // Etiqueta de color con la que entra el clip. Amarillo (índice 15 del menú
+  // Etiqueta de Premiere) = corrección hecha desde la pestaña Corrections, para
+  // que en un timeline ya lleno se vea de un golpe qué se rehizo después de la
+  // revisión. Todo lo demás entra SIN etiqueta: la secuencia es del editor y sus
+  // colores significan lo que él quiera. -1 = no tocar la etiqueta.
   var COLOR_YELLOW = 15;
+  var COLOR_NONE = -1;
 
   // ── Timing auto-calibrado (estimación de la cola) ────────────────────
   // Promedio de CARRIL-segundos por job de modelo, y carril-segundos de render por
@@ -79,12 +79,6 @@
   function isPending(status) {
     return status === "queued" || isActive(status);
   }
-  // "mejorable con Render HQ" = clip OPACO (con fondo/mp4) hecho en borrador.
-  // Alpha siempre sale en ProRes 4444 (máxima calidad) → HQ sería un no-op.
-  function isUpgradable(job) {
-    return !!(job.payload && job.payload.draft && job.payload.background);
-  }
-
   // ── Persistencia por proyecto (queue.json) ────────────────────────
   // Estados en curso (modeling/ready/running) se guardan como "queued": si
   // cerraste a mitad, al reabrir quedan pendientes (no colgados).
@@ -111,8 +105,8 @@
       markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
       markerDuration: j.markerDuration, version: j.version, usage: j.usage,
       // Si el panel se reinicia a mitad, la corrección tiene que seguir
-      // colocándose en amarillo y con su material: sin esto volvería a salir
-      // magenta y sin las imágenes de la secuencia donde nació el recurso.
+      // colocándose en amarillo y con su material: sin esto volvería a entrar
+      // sin etiqueta y sin las imágenes de la secuencia donde nació el recurso.
       correction: j.correction, storeSeqName: j.storeSeqName,
       // Cuánto tardó cada etapa: el mensaje ya lo dice, pero guardar los números
       // deja que la vista los vuelva a componer sin parsear texto.
@@ -264,11 +258,7 @@
   // Las llamadas al host son callback-style (CEP): acá se vuelven promesas para
   // que colocar-y-cerrar sea una sola cadena y el carril se libere en un solo
   // lugar (ver startRender). Nunca rechazan: el host contesta "ok" o "error: …".
-  function hostRecolorHQ(job, movPath) {
-    return new Promise(function (resolve) {
-      HPHost.recolorClip(job.seqName, job.markerStart, COLOR_MAGENTA, movPath, resolve);
-    });
-  }
+  //
   // ¿El .mov que vamos a colocar trae audio? La pregunta la contesta el motor
   // con ffprobe: adentro de Premiere no hay con qué abrir el archivo. El host lo
   // necesita para NO agregar una pista de audio vacía con cada animación muda
@@ -345,23 +335,10 @@
   function finishPlace(job, res) {
     job.version = res.version;
     countUsage(job, res.usage);
-    // Render HQ = reemplazo en su lugar: el archivo ya se sobrescribió en disco;
-    // NO colocamos clip nuevo, solo recoloreamos el clip existente a MAGENTA.
-    if (res.replaced || job.kind === "renderVersionHQ") {
-      job.pct = 98; job.msg = "Marcando como HQ (magenta)…"; emit();
-      // El archivo es el mismo que ya está en el timeline (se sobrescribió en su
-      // lugar): su ruta es lo que identifica NUESTRO clip entre los del editor.
-      return hostRecolorHQ(job, res.movPath).then(function (r) {
-        markDone(job, r === "ok" ? "✓ HQ reemplazado (magenta)" : "HQ hecho; recoloreá a mano: " + r);
-      });
-    }
-    // Color: café = "borrador mejorable con Render HQ" — SOLO aplica a clips
-    // opacos (mp4) en borrador. Los clips con alpha ya salen en máxima calidad
-    // (PNG→ProRes 4444) aunque estés en borrador → magenta.
-    // Amarillo gana sobre los dos: una corrección vuelve a un timeline que ya
-    // está lleno de clips nuestros, y lo que el editor necesita ver es cuál es
-    // el nuevo, no con qué calidad salió.
-    var color = job.correction ? COLOR_YELLOW : (isUpgradable(job) ? COLOR_BROWN : COLOR_MAGENTA);
+    // Una corrección vuelve a un timeline que ya está lleno de clips nuestros, y
+    // lo único que el editor necesita ver es cuál es el nuevo: por eso entra en
+    // amarillo. Lo demás entra sin etiqueta.
+    var color = job.correction ? COLOR_YELLOW : COLOR_NONE;
     job.pct = 98; job.msg = "Colocando en " + job.seqName + "…"; emit();
     return hostPlace(job, res.movPath, color).then(function (place) {
       if (place === "ok") { job.notPlaced = false; markDone(job, "✓ Listo y colocado"); return; }
@@ -448,7 +425,7 @@
         hpLog("Job SIGUE SIN COLOCAR [" + job.label + "]: " + falta, "ERROR");
         return falta;
       }
-      return hostPlace(job, mov, job._placeColor || COLOR_MAGENTA).then(function (place) {
+      return hostPlace(job, mov, job._placeColor || COLOR_NONE).then(function (place) {
         if (place === "ok") {
           job.notPlaced = false;
           job.msg = "✓ Colocado (el render ya estaba hecho)";
@@ -477,7 +454,9 @@
       HPStore.withContext(job.projectPath, job.storeSeqName || job.seqName, function () {
         var segments = HPStore.getTranscript() || [];
         var md = HPStore.getMarkerData(job.markerKey) || {};
-        var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {}; // prompt general
+        // Las imágenes del prompt general siguen viviendo contra la secuencia
+        // (ver el README: por ahora no viajan). El TEXTO ya no: sale del disco.
+        var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {};
         // Si esa secuencia no tiene transcript acá, NO se pisa lo que el payload
         // ya trajera: rehidratar existe para completar, no para vaciar. Pasa al
         // corregir algo de otro corte en una máquina donde ese corte nunca se
@@ -505,7 +484,19 @@
           job.payload.stills = (md.stills || []).concat(gen.stills || []);
         }
         job.payload.resources = (md.resources || []).concat(gen.resources || []);
-        if (!job.payload.generalInstruction) job.payload.generalInstruction = gen.instruction || "";
+        // El estilo del curso se relee del proyecto y no se confía en lo que el
+        // job traiga: si el editor lo arregló porque las animaciones salían mal,
+        // reintentar tiene que salir con el arreglado. Lo único que no se hace
+        // es VACIARLO por no haber podido leer —el proyecto puede estar en un
+        // disco desmontado— porque un recurso generado sin la marca no falla,
+        // sale distinto y se descubre viendo el video. De ahí las dos mitades:
+        // si se leyó el disco manda el disco (aunque diga que no hay), y si no
+        // se pudo, solo se completa con lo que haya quedado en esta máquina.
+        var g = HPGeneral.state(job.projectPath, job.storeSeqName || job.seqName);
+        if (g.loaded || g.text) {
+          job.payload.generalInstruction = g.text;
+          job.payload.generalSource = g.source;
+        }
         if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
         if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
       });
@@ -547,12 +538,32 @@
       });
   }
 
+  /**
+   * Deja en la caché el prompt general de la secuencia de la que sale el
+   * material de este job. Es el estilo del curso —marca, paleta, tipografía— y
+   * vive al lado del .prproj, no en este panel: un job restaurado de otra
+   * sesión, o una corrección de un corte que nunca se abrió acá, igual tiene que
+   * salir con él. Nunca frena ni lanza: si no se puede leer, se genera con lo
+   * que haya y HPGeneral lo dice en el log.
+   *
+   * `load` y NUNCA `migrate`: acá se leen secuencias que el editor no tiene
+   * adelante, y migrar desde este camino significaba que encolar una corrección
+   * de otro corte podía promover a base del proyecto —para todos los editores—
+   * un texto que estaba en una sola máquina. Qué texto ganaba dependía de qué
+   * job se hubiera cargado primero.
+   */
+  function ensureGeneralPrompt(job) {
+    var seq = job.storeSeqName || job.seqName;
+    if (HPGeneral.state(job.projectPath, seq).loaded) return Promise.resolve();
+    return HPGeneral.load(job.projectPath, seq).then(function () {}).catch(function () {});
+  }
+
   function startModel(job) {
     modelRunning++; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
     job._modelStart = Date.now(); job._modelMs = 0; job.act = null; job._actSeen = false;
     job._modelLanes = modelRunning; // para calibrar en carril-segundos
     emit();
-    ensureTranscript(job).then(function () { runModel(job); });
+    Promise.all([ensureTranscript(job), ensureGeneralPrompt(job)]).then(function () { runModel(job); });
   }
 
   function runModel(job) {
@@ -605,11 +616,9 @@
     hpLog("Job RENDER [" + job.label + "] · kind=" + job.kind + " · en paralelo=" + renderRunning());
     var p = (job.kind === "renderManualHtml")
       ? HPEngine.callProg("renderManualHtml", job.payload, onP(job))
-      : (job.kind === "renderVersionHQ")
-        ? HPEngine.callProg("renderVersionHQ", job.payload, onP(job))
-        : (job.kind === "renderLatest")
-          ? HPEngine.callProg("renderLatest", job.payload, onP(job))
-          : HPEngine.callProg("renderPrepared", job.prepared, onP(job));
+      : (job.kind === "renderLatest")
+        ? HPEngine.callProg("renderLatest", job.payload, onP(job))
+        : HPEngine.callProg("renderPrepared", job.prepared, onP(job));
     // Render → colocación → cierre, en una sola cadena, y el carril se libera en
     // el último eslabón: pase lo que pase (error, cancelación, o que Premiere no
     // conteste) hay UN solo lugar que lo suelta.
@@ -640,7 +649,7 @@
   function isRenderable(job) {
     return job.status === "ready" ||
       (job.status === "queued" &&
-        (job.kind === "renderManualHtml" || job.kind === "renderVersionHQ" || job.kind === "renderLatest"));
+        (job.kind === "renderManualHtml" || job.kind === "renderLatest"));
   }
 
   function pump() {
@@ -745,7 +754,6 @@
     // Vocabulario de estados compartido con las vistas (un solo dueño).
     isActive: isActive,
     isPending: isPending,
-    isUpgradable: isUpgradable,
 
     // Chequeo que corre antes de CADA job de IA (el panel lo usa para asegurar
     // transcript + objetivo de la secuencia de ese job).
@@ -873,7 +881,7 @@
             j.payload = {
               projectPath: j.projectPath, sequenceName: j.seqName, markerSlug: j.markerKey,
               marker: { start: j.markerStart, end: j.markerStart + j.markerDuration, duration: j.markerDuration },
-              background: !!(j.payload && j.payload.background), draft: !!(j.payload && j.payload.draft)
+              background: !!(j.payload && j.payload.background)
             };
             j.status = "queued"; j.msg = "Reintentando el render (sin re-diseñar)…";
           }

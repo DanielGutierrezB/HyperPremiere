@@ -1,0 +1,95 @@
+{
+  "SPAudioDataType": [
+    {
+      "_items": [
+        {
+          "_name": "J560T09",
+          "coreaudio_device_manufacturer": "BOE",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_displayport",
+          "coreaudio_output_source": "spaudio_default"
+        },
+        {
+          "_name": "Odyssey G81SF",
+          "_properties": "coreaudio_default_audio_system_device",
+          "coreaudio_default_audio_output_device": "spaudio_yes",
+          "coreaudio_default_audio_system_device": "spaudio_yes",
+          "coreaudio_device_manufacturer": "SAM",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_displayport",
+          "coreaudio_output_source": "spaudio_default"
+        },
+        {
+          "_name": "OBSBOT Meet 2 Microphone",
+          "coreaudio_device_input": 2,
+          "coreaudio_device_manufacturer": "Remo Tech Co., Ltd.",
+          "coreaudio_device_srate": 32000,
+          "coreaudio_device_transport": "coreaudio_device_type_usb",
+          "coreaudio_input_source": "spaudio_default"
+        },
+        {
+          "_name": "MacBook Pro Microphone",
+          "coreaudio_default_audio_input_device": "spaudio_yes",
+          "coreaudio_device_input": 1,
+          "coreaudio_device_manufacturer": "Apple Inc.",
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_builtin",
+          "coreaudio_input_source": "MacBook Pro Microphone"
+        },
+        {
+          "_name": "MacBook Pro Speakers",
+          "coreaudio_device_manufacturer": "Apple Inc.",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_builtin",
+          "coreaudio_output_source": "MacBook Pro Speakers"
+        },
+        {
+          "_name": "iPhone de Daniel Microphone",
+          "coreaudio_device_input": 1,
+          "coreaudio_device_manufacturer": "Apple Inc.",
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_unknown",
+          "coreaudio_input_source": "spaudio_default"
+        },
+        {
+          "_name": "Steam Streaming Microphone",
+          "coreaudio_device_input": 2,
+          "coreaudio_device_manufacturer": "Valve Corporation",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 44100,
+          "coreaudio_device_transport": "coreaudio_device_type_virtual"
+        },
+        {
+          "_name": "Steam Streaming Speakers",
+          "coreaudio_device_input": 2,
+          "coreaudio_device_manufacturer": "Valve Corporation",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 44100,
+          "coreaudio_device_transport": "coreaudio_device_type_virtual"
+        },
+        {
+          "_name": "ZoomAudioDevice",
+          "coreaudio_device_input": 2,
+          "coreaudio_device_manufacturer": "zoom.us",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_virtual",
+          "coreaudio_input_source": "spaudio_default",
+          "coreaudio_output_source": "spaudio_default"
+        },
+        {
+          "_name": "Multi-Output Device",
+          "coreaudio_device_manufacturer": "Apple Inc.",
+          "coreaudio_device_output": 2,
+          "coreaudio_device_srate": 48000,
+          "coreaudio_device_transport": "coreaudio_device_type_unknown",
+          "coreaudio_output_source": "spaudio_default"
+        }
+      ],
+      "_name": "coreaudio_device"
+    }
+  ]
+}

@@ -352,42 +352,7 @@ test('si no se pudo conseguir pista de audio para un clip con sonido, no se colo
   eq(colocado(p.destino).length, 0);
 });
 
-// ── El mismo agujero en otras operaciones: recolorear ────────────────
-
-test('recolorear en HQ no le toca la etiqueta a un clip del editor', function () {
-  // hp_recolorClipAt buscaba "el clip que arranca en este segundo", de arriba
-  // hacia abajo. Alcanzaba con que el editor tuviera algo empezando ahí en una
-  // pista más alta para que se llevara la etiqueta de color de nuestro HQ. No es
-  // destructivo, pero es su proyecto: se identifica por ruta de medio, igual que
-  // al colocar.
-  const p = armarPremiere({ video: [[[10, 15, '/tmp/nuestro v2.mov']], [[10, 40, '/editor/camara-A.mov']]] });
-  const delEditor = p.destino.videoTracks[1].clips[0].projectItem;
-  const nuestro = p.destino.videoTracks[0].clips[0].projectItem;
-
-  const r = p.host.hp_recolorClipAt('Clase 01', 10, 11, '/tmp/nuestro v2.mov');
-
-  eq(r, 'ok');
-  eq(nuestro.colorLabel, 11, 'el nuestro quedó magenta');
-  eq(delEditor.colorLabel, undefined, 'y el del editor, intacto');
-});
-
-test('si nuestro clip no está, recolorear falla en vez de pintar el de al lado', function () {
-  const p = armarPremiere({ video: [[[10, 40, '/editor/camara-A.mov']]] });
-  const delEditor = p.destino.videoTracks[0].clips[0].projectItem;
-
-  const r = p.host.hp_recolorClipAt('Clase 01', 10, 11, '/tmp/nuestro v2.mov');
-
-  has(r, 'error:');
-  has(r, 'nuestro v2.mov', 'dice qué archivo buscaba');
-  eq(delEditor.colorLabel, undefined);
-});
-
 // ── El lado del panel ────────────────────────────────────────────────
-
-/** Deja correr las promesas pendientes (la cola encadena varias). */
-function vuelta() {
-  return new Promise(function (r) { setImmediate(r); });
-}
 
 /** Carga cep/js/host-client.js con un CSInterface de mentira. */
 function armarPanel() {
@@ -407,15 +372,6 @@ function armarPanel() {
   llamadas.length = 0; // la primera llamada es el $.evalFile de arranque
   return ctx;
 }
-
-test('el panel le manda al host la ruta del video al recolorear', async function () {
-  const panel = armarPanel();
-  panel.HPHost.recolorClip('Clase 01', 12, 11, '/tmp/marcador-3_v2.mov', function () {});
-  await vuelta();
-  has(panel.llamadas[0].expr,
-    'hp_recolorClipAt("Clase 01", 12, 11, "/tmp/marcador-3_v2.mov")',
-    'sin la ruta el host no puede saber cuál clip es el nuestro');
-});
 
 test('abrir una secuencia por necesidad nuestra no mueve el playhead', function () {
   // Transcribir abre la secuencia del panel para exportar SU audio y después

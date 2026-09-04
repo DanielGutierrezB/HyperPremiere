@@ -694,8 +694,8 @@ function hp_noPlaceMsg(seqName, motivo) {
 // Coloca el .mov en una secuencia ESPECÍFICA (por nombre), aunque no sea la
 // activa — es el caso NORMAL, no la excepción: mientras se renderiza, el editor
 // se va a trabajar a otra secuencia. Devuelve "ok" o "error: ...".
-// Índices de etiqueta de color de Premiere (orden del menú Etiqueta):
-// 11 = Magenta, 14 = Marrón (café). Ver hp_recolorClipAt / colorLabel.
+// `colorLabel`: índice del menú Etiqueta de Premiere (15 = Amarillo, la marca de
+// una corrección) o -1 para dejarle al clip la etiqueta que Premiere le ponga.
 // `hasAudio` (1/0): si el ARCHIVO trae pista de audio. Lo resuelve el motor con
 // ffprobe antes de llamar (ver mediaHasAudio en bridge/engine.js): acá adentro
 // no hay con qué mirar el contenido de un .mov. Solo decide si RESERVAMOS una
@@ -768,7 +768,7 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
         // lo baja solo a las pistas de audio (por eso "video + audio" sigue
         // funcionando sin código aparte); si es mudo, no toca el audio de nadie.
         target.overwriteClip(item, start);
-        // Color de etiqueta (café=borrador / magenta=HQ) sobre el projectItem.
+        // Etiqueta de color sobre el projectItem, si el panel pidió una.
         try {
             var cl = Number(colorLabel);
             if (!isNaN(cl) && cl >= 0 && item.setColorLabel) item.setColorLabel(cl);
@@ -861,44 +861,3 @@ function hp_purgeClipsByPath(pathsJoined) {
         return "error: " + e.toString();
     }
 }
-
-// Recolorea NUESTRO clip que está en `atSeconds` (busca en las pistas de video,
-// de arriba hacia abajo, el clip que arranca ahí Y apunta a `mediaPath`). Sirve
-// para marcar como HQ (magenta) tras reemplazar el archivo, sin colocar un clip
-// nuevo. Devuelve "ok" o "error: ...".
-//
-// `mediaPath` es obligatorio y es la misma regla de identidad que al colocar: sin
-// ella alcanzaba con que un clip del EDITOR arrancara en ese mismo segundo (en
-// una pista más alta que la nuestra, por ejemplo) para llevarse la etiqueta de
-// color. No es destructivo, pero es su proyecto y no lo tocamos. Si no aparece,
-// esto falla y el panel dice "recoloreá a mano": una etiqueta es cosmética.
-function hp_recolorClipAt(seqName, atSeconds, colorLabel, mediaPath) {
-    try {
-        var seq = (app.project.activeSequence && app.project.activeSequence.name === seqName)
-            ? app.project.activeSequence : hp_findSequenceByName(seqName);
-        if (!seq) return hp_seqNotFound(seqName);
-        var cl = Number(colorLabel);
-        if (isNaN(cl) || cl < 0) return "error: color inválido";
-        var want = String(mediaPath || "");
-        if (!want) return "error: me falta la ruta del video: sin ella no sé cuál clip es el mío";
-        try { want = String(new File(want).fsName); } catch (eF) {}
-        var start = Number(atSeconds) || 0;
-        var tol = 0.25; // tolerancia en segundos para ubicar el clip
-        var vTracks = seq.videoTracks;
-        for (var t = vTracks.numTracks - 1; t >= 0; t--) {
-            var track = vTracks[t];
-            for (var i = 0; i < track.clips.numItems; i++) {
-                var c = track.clips[i];
-                if (Math.abs(c.start.seconds - start) > tol) continue;
-                if (!c.projectItem || !c.projectItem.setColorLabel) continue;
-                if (!hp_mediaPathIs(c.projectItem, want)) continue;
-                c.projectItem.setColorLabel(cl);
-                return "ok";
-            }
-        }
-        return "error: no encontré nuestro clip (" + want.replace(/^.*[\/\\]/, "") + ") en " + start + "s";
-    } catch (e) {
-        return "error: " + e.toString();
-    }
-}
-

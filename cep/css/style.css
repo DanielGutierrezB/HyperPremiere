@@ -968,6 +968,47 @@ textarea:focus {
 .general-section { margin-bottom: 2px; }
 /* La state del "Prompt general" tiene ambas clases; el id gana a .cfg-summary. */
 #general-summary { margin-left: auto; }
+
+/* De dónde sale el estilo del curso. Es la línea que faltaba: el editor que
+   abría el proyecto de otro no tenía forma de saber con qué contexto generaba. */
+.general-source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.general-source { font-size: 11px; line-height: 1.4; color: var(--text-muted); }
+.general-source.is-override { color: var(--accent); }
+.general-source.is-warn { color: var(--warn); }
+.general-scope-btn { font-size: 11px; padding: 4px 8px; margin-left: auto; }
+.general-scope-btn[data-hidden="true"] { display: none; }
+/* La base que la secuencia está pisando, a mano para poder compararla. */
+.general-base[data-hidden="true"] { display: none; }
+.general-base > summary { font-size: 11px; color: var(--text-muted); cursor: pointer; }
+.general-base-text {
+  margin-top: 6px; padding: 6px 8px;
+  font-size: 11px; line-height: 1.5; white-space: pre-wrap;
+  color: var(--text-secondary);
+  background-color: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+}
+/* Dos versiones distintas del mismo prompt: no se pisa ninguna hasta que el
+   editor diga cuál vale, así que esto tiene que verse y no cerrarse solo. */
+.general-conflict {
+  padding: 8px; border-radius: var(--radius);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.08);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.general-conflict[data-hidden="true"] { display: none; }
+.general-conflict-title { font-size: 11px; line-height: 1.45; color: var(--warn); }
+.general-conflict-text {
+  font-size: 11px; line-height: 1.5; white-space: pre-wrap;
+  max-height: 120px; overflow-y: auto;
+  color: var(--text-secondary);
+  background-color: var(--bg-inset);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.general-conflict-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.general-conflict-actions button { font-size: 11px; padding: 5px 9px; }
 .help-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .help-body p { font-size: 12px; font-weight: 300; color: var(--text-secondary); line-height: 1.55; }
 .help-body strong { color: var(--text-primary); font-weight: 500; }
@@ -989,6 +1030,8 @@ textarea:focus {
 .provider-note[data-hidden="true"] { display: none; }
 .cfg-row { display: flex; flex-direction: column; gap: 6px; }
 #baseurl-hint { white-space: normal; line-height: 1.4; }
+/* Son dos o tres frases: sin esto, .muted las corta en la primera línea. */
+#cfg-context { white-space: normal; line-height: 1.45; }
 
 /* ── v0.1.13: zona drag & drop de recursos ────────────────────── */
 .dropzone {
@@ -1308,15 +1351,6 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 }
 .bg-toggle input { flex: none; width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
 
-/* v1.0.0 — toggle de modo borrador (global, bajo la barra de acciones) */
-.draft-toggle {
-  display: flex; align-items: center; gap: 7px;
-  padding: 4px 16px 8px; margin: 0;
-  font-size: 11px; color: var(--text-secondary); cursor: pointer; user-select: none;
-  background: var(--bg-panel); border-bottom: 1px solid var(--hairline);
-}
-.draft-toggle input { flex: none; width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
-
 /* v1.0.1 — botón Iniciar cola (verde) en el head de la cola */
 .queue-start {
   flex: none; width: auto; text-transform: none; letter-spacing: 0;
@@ -1325,10 +1359,6 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   border-radius: var(--radius-sm); padding: 3px 9px; cursor: pointer;
 }
 .queue-start:hover { background: rgba(10, 233, 141, 0.18); border-color: var(--ok); color: var(--ok); }
-
-/* v1.0.2 — botón Render HQ por secuencia en la cola */
-.qbtn-hq { width: auto; font-size: 10px; color: var(--ok); border-color: rgba(10,233,141,0.4); padding: 2px 7px; letter-spacing: 0.02em; }
-.qbtn-hq:hover { color: var(--ok); border-color: var(--ok); background: rgba(10,233,141,0.1); }
 
 /* v1.0.3 — pestañas Marcadores / Cola / Corrections (vistas conmutables) */
 .tabs {
@@ -1395,8 +1425,18 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   margin: 8px 0; padding: 10px 12px; border-radius: 8px;
   background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.35);
 }
-.engine-prep .ep-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
-.engine-prep .ep-text { font-size: 12px; color: var(--text-primary); }
+/* El botón conserva su ancho y, si no cabe al lado del texto, baja de línea.
+   El `button { flex: 1; min-width: 0 }` global es para la barra de acciones,
+   donde los botones se reparten la fila; acá, al lado de un texto largo, dejaba
+   a "Preparar motor" en 22 px con la etiqueta chorreando 18 px afuera del panel
+   (medido a 360, 400, 440, 470, 520 y 600 px: el desborde era el mismo en
+   todos). Envuelve además de blindarse porque estos textos los escribe el JS y
+   cambian de largo —qué Whisper falta, cuánto pesa, por qué acá no se puede— y
+   el botón también ("Instalar Whisper" → "Reintentar instalación"): apretar el
+   texto a cuatro palabras por línea para no bajar el botón se lee peor. */
+.engine-prep .ep-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.engine-prep .ep-text { flex: 1 1 240px; font-size: 12px; color: var(--text-primary); }
+.engine-prep .ep-row > button { flex: 0 0 auto; }
 .engine-prep .ep-msg { margin-top: 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .engine-prep .hp-bar { margin-top: 8px; }
 .engine-prep .hp-bar[data-hidden="true"] { display: none; }
@@ -1571,3 +1611,191 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
    reparte entre las dos y quedan separadas a los extremos. */
 .corr-actions .qbtn-stage { margin-left: auto; font-size: 12px; padding: 8px 14px; }
 .corr-actions .qbtn-stage ~ .qbtn-react { margin-left: 0; }
+
+/* v1.4.49 — la barra del micrófono, debajo de cada campo de prompt.
+   Va abajo y no encima del textarea a propósito: pegada a la esquina se
+   superpone con el agarre de redimensionar (los cuatro campos son
+   `resize: vertical`) y en el panel acoplado, que es angosto, le come el ancho
+   al placeholder. Abajo envuelve sola y le deja lugar a la línea de estado,
+   que es donde se lee con qué se refinó y por qué falló cuando falla.
+   El botón NO se encoge: la regla global `button { flex: 1; min-width: 0 }` es
+   para la barra de acciones, y acá lo aplastaba a nada al lado del texto de
+   estado (el mismo bug que tuvo el cartel de "Preparar motor"). */
+.mic-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px;
+}
+.mic-btn {
+  flex: 0 0 auto; min-width: 30px; padding: 2px 8px; font-size: 12px; line-height: 1.5;
+}
+.mic-btn:disabled { opacity: 0.45; cursor: default; }
+/* Apagado por la plataforma (Windows) o por falta de Whisper: se VE, con el
+   motivo en el tooltip. Esconderlo dejaría al editor sin saber que la función
+   existe ni por qué no la tiene. */
+.mic-btn.is-off { opacity: 0.4; }
+.mic-btn.is-rec {
+  color: #ff6b6b; border-color: rgba(255, 107, 107, 0.5); background: rgba(255, 107, 107, 0.12);
+}
+.mic-btn.is-busy { opacity: 0.7; }
+/* La línea de estado reclama su ancho mínimo y se lleva el sobrante: es lo que
+   decide cuándo el "↩ dictado crudo" baja de renglón en vez de desbordarse. */
+.mic-state {
+  flex: 1 1 120px; min-width: 0; font-size: 10px; line-height: 1.35;
+  color: var(--text-secondary, rgba(255,255,255,0.6)); white-space: normal;
+}
+.mic-state.is-ok { color: #0ae98d; }
+.mic-state.is-warn { color: #fbbf24; }
+.mic-state.is-error { color: var(--error, #e08a8a); }
+.mic-undo {
+  flex: 0 0 auto; font-size: 10px; padding: 1px 7px;
+  color: var(--text-secondary); border-color: var(--border, rgba(255,255,255,0.18));
+}
+.mic-undo[data-hidden="true"] { display: none; }
+
+/* v1.4.49 — la fila "Micrófono" de ⚙ y el medidor de la prueba.
+   El desplegable se lleva el ancho; los dos botones no se encogen (otra vez la
+   regla global `button { flex: 1 }`, que acá los aplastaría contra un nombre
+   de dispositivo largo). La barra va de −60 dBFS a 0: la marca vertical es la
+   compuerta del dictado (−34) y el tic fino, el pico sostenido. Se colorea por
+   lo que importa —¿pasa la compuerta o no?— y no por bonito. */
+.mic-row { display: flex; align-items: center; gap: 6px; }
+.mic-row .hp-select { flex: 1 1 auto; min-width: 0; }
+.btn-mic-test { flex: 0 0 auto; }
+#mic-status { white-space: normal; line-height: 1.4; }
+#mic-status.is-warn { color: #fbbf24; }
+#mic-status.is-error { color: var(--error, #e08a8a); }
+.mic-meter { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.mic-meter[data-hidden="true"] { display: none; }
+.mic-meter-track {
+  position: relative; height: 10px; border-radius: 3px; overflow: hidden;
+  background: #12161d; border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.mic-meter-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  background: #fbbf24; transition: width 90ms linear, background-color 120ms;
+}
+.mic-meter-fill.is-ok { background: #0ae98d; }
+.mic-meter-gate {
+  position: absolute; top: -1px; bottom: -1px; width: 2px; background: #fff; opacity: 0.85;
+}
+.mic-meter-peak {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: #e8e6df; opacity: 0.7;
+  transition: left 90ms linear;
+}
+.mic-meter-text {
+  font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: normal;
+}
+.mic-verdict { font-size: 11px; line-height: 1.4; white-space: normal; color: var(--text-secondary); }
+.mic-verdict.is-ok { color: #0ae98d; }
+.mic-verdict.is-warn { color: #fbbf24; }
+.mic-verdict.is-error { color: var(--error, #e08a8a); }
+.mic-verdict b { color: inherit; font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════
+   v1.4.49 — el encabezado, responsive de verdad, con el micrófono adentro.
+
+   En un panel angosto "HyperPremiere" se dibujaba ENCIMA de la insignia de
+   estado y el ? encima del ⟳, que además quedaba cortado. Medido en la maqueta:
+   el nombre de la marca se salía 26 px de su caja a 320 y la etiqueta de versión
+   18 px a 470.
+
+   Dos causas distintas, las dos por dejar encoger lo que no puede:
+
+   1. `.brand` traía `min-width: 0`, o sea permiso para quedar más chica que su
+      contenido. El nombre es `white-space: nowrap` y sin recorte, así que lo que
+      no entraba en la caja se pintaba afuera, sobre las herramientas.
+
+   2. La etiqueta de versión es la enésima aparición del `button { flex: 1;
+      min-width: 0 }` global —el que reparte la barra de acciones—. `.hdr-chip`,
+      `.icon-btn` y `.btn-log` ya se blindaban uno por uno con `flex: none`;
+      `.btn-update` era el que faltaba, y a 470 px quedó en 19 px con su
+      "⟳ v1.4.49" (70 px) chorreando sobre el ?. Acá el blindaje va al
+      CONTENEDOR y no al botón: cualquier control que entre al encabezado de
+      ahora en más nace sin permiso para aplastarse, y el que necesite ceder lo
+      pide explícito (los dos que lo piden son la insignia y el micrófono).
+
+   La invariante que sostiene todo esto: en el encabezado, cada hoja o tiene su
+   ancho natural (`flex: none`) o puede ceder Y recorta con ellipsis
+   (`min-width: 0` + `overflow: hidden`). Con el encabezado envolviendo, así
+   ninguna hoja puede pintar fuera de su caja, y sin eso no hay solapamiento
+   posible a ningún ancho ni con ningún texto.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* El encabezado envuelve, y es el contenedor del menú del micrófono. */
+.panel-header { flex-wrap: wrap; row-gap: 6px; position: relative; z-index: 20; }
+
+/* La marca no cede: recortar el nombre del producto se ve roto, y son 109 px
+   fijos que a 320 entran de sobra. El ellipsis es la red de último recurso —con
+   `max-width` no puede pasarse del ancho de la fila ni en el caso imposible—. */
+.brand { flex: 0 0 auto; max-width: 100%; }
+.brand-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* La insignia es la que cede: ya recortaba con ellipsis, ahora también puede
+   quedar más angosta que su texto (antes era `flex: none` y el que cedía
+   terminaba siendo el vecino). El tope de 42vw sigue estando.
+
+   En la fila propia (panel angosto) el `margin-right: auto` la deja pegada a la
+   marca en vez de mandarla al borde derecho, que es lo que hacía el
+   `space-between` del encabezado con la fila a medio llenar. En una sola fila no
+   hace nada: ahí no sobra espacio, se lo lleva el grupo de herramientas. */
+.hdr-chip { flex: 0 1 auto; min-width: 0; margin-right: auto; }
+
+/* El grupo de herramientas: NO envuelve por dentro (envolver por el medio del
+   grupo era lo que ponía el ? encima del ⟳) y crece para que el micrófono use
+   lo que sobra. Se va entero a la fila de abajo cuando no cabe. */
+.header-tools { flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
+.header-tools > * { flex: none; }
+
+/* Debajo de 560 las herramientas se llevan una fila propia SIEMPRE, en vez de
+   depender de cuán largo sea el nombre de la secuencia: así el ancho del
+   micrófono es el mismo para el mismo panel, y no cambia al cargar otra
+   secuencia. */
+@media (max-width: 559px) {
+  .header-tools { flex: 1 1 100%; }
+}
+
+/* ── El micrófono del dictado en el encabezado ────────────────────── */
+
+/* El único del grupo con permiso para ceder y crecer. La base es el ancho del
+   ícono solo: así el largo del nombre del dispositivo NO decide a qué ancho
+   envuelve la fila (con base `auto`, enchufar un dispositivo de nombre largo
+   movía el punto de quiebre del encabezado). */
+/* El `margin-right: auto` lo agrupa con la insignia: el micrófono es un ajuste,
+   como ella, y los cuatro botones de al lado son acciones. Se lleva el espacio
+   que sobra DESPUÉS de que el desplegable creció hasta su techo, así que en los
+   anchos donde crece no hace nada, y en los otros evita que quede flotando en
+   el medio de una fila casi vacía. */
+.hdr-mic { flex: 1 1 34px; min-width: 34px; max-width: 176px; margin-right: auto; position: static; }
+.hdr-mic[data-hidden="true"] { display: none; }
+.hdr-mic .hps-trigger {
+  height: 24px; padding: 0 7px; gap: 5px;
+  justify-content: flex-start;
+  font-size: 11px; line-height: 1;
+  color: var(--text-secondary);
+  background: transparent; border-color: var(--hairline-strong);
+}
+.hdr-mic .hps-trigger:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+.hdr-mic .hps-trigger::before { content: "🎙"; flex: none; font-size: 11px; }
+.hdr-mic .hps-label { flex: 0 1 auto; min-width: 0; }
+.hdr-mic .hps-arrow { margin-left: auto; }
+/* El elegido no está enchufado: el mismo ámbar que usa la fila de ⚙. */
+.hdr-mic.is-warn .hps-trigger { color: #fbbf24; border-color: rgba(251, 191, 36, 0.45); }
+
+/* El menú se cuelga del ENCABEZADO, no del botón: el botón mide 34 px en un
+   panel angosto y un menú de 34 px no serviría para nada. Desplegado toma el
+   ancho del panel, que es donde "MacBook Pro Microphone" se lee entero. (En el
+   resto del panel el menú va en-flujo y empuja lo de abajo; acá no puede, porque
+   empujaría la barra de acciones.) */
+.hdr-mic .hps-menu {
+  position: absolute; top: 100%; left: 10px; right: 10px;
+  margin-top: 2px; z-index: 5;
+  box-shadow: var(--shadow-pop);
+}
+
+/* Panel mínimo: el nombre del dispositivo no entra en ningún ancho que deje
+   libre la fila, así que queda el ícono y el nombre se lee en el tooltip (y en
+   el menú, al desplegarlo). Media un cuarto de lo que mediría con la etiqueta:
+   es la diferencia entre dos filas de encabezado y tres. */
+@media (max-width: 380px) {
+  .hdr-mic { flex: 0 0 34px; max-width: 34px; }
+  .hdr-mic .hps-label { display: none; }
+}

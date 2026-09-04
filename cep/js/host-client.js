@@ -92,7 +92,9 @@
       call("hp_getSequenceDuration()", cb);
     },
     /**
-     * Importa el video y lo coloca en la secuencia con etiqueta de color.
+     * Importa el video y lo coloca en la secuencia. `colorLabel` es el índice
+     * del menú Etiqueta de Premiere, o -1 para no tocarla (lo normal: solo las
+     * correcciones se marcan, en amarillo).
      * Serializada (ver callMutating): toca el bin y las pistas.
      *
      * `hasAudio` viaja como 1/0 y lo resuelve el motor con ffprobe (mediaHasAudio):
@@ -104,15 +106,6 @@
       callMutating("hp_placeClipInSequence(" + JSON.stringify(movPath) + ", " + JSON.stringify(seqName) + ", " +
         Number(startSec) + ", " + Number(durationSec) + ", " + Number(colorLabel) + ", " +
         (hasAudio ? 1 : 0) + ")", cb);
-    },
-    /**
-     * Recolorea el clip que arranca en startSec (marca "procesado en HQ").
-     * `movPath` identifica cuál clip es NUESTRO: sin él, un clip del editor que
-     * arranque en el mismo segundo se llevaría la etiqueta (ver hp_recolorClipAt).
-     */
-    recolorClip: function (seqName, startSec, colorLabel, movPath, cb) {
-      callMutating("hp_recolorClipAt(" + JSON.stringify(seqName) + ", " + Number(startSec) + ", " +
-        Number(colorLabel) + ", " + JSON.stringify(movPath || "") + ")", cb);
     },
     /**
      * Saca clips/ítems del proyecto ANTES de borrar sus archivos del disco.

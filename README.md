@@ -121,16 +121,24 @@ avisa si el marcador que nombraste todavía no tiene ninguna versión generada**
 se generaba igual y parecía que la referencia se había ignorado. Cuesta ~1.100 tokens
 extra, solo cuando lo usás.
 
-## Fondo, modo borrador y calidad
+## Fondo o alpha
 
-- Un marcador se genera **sin fondo** (`.mov` con **alpha**, transparente) o **con fondo**
-  (`.mp4` opaco HD, fondo minimalista temático con buen contraste).
-- **Modo borrador** = render más liviano para previsualizar, pero **solo afecta a los
-  clips con fondo** (baja la compresión del mp4). Los clips con **alpha salen SIEMPRE en
-  ProRes 4444** (máxima calidad): para alpha, borrador y HQ son idénticos.
-- **Render HQ** re-renderiza en alta los clips **con fondo** hechos en borrador (reusa el
-  HTML, sin volver a llamar a la IA). Solo aparece cuando hay algo mejorable (nunca sobre
-  alpha, que ya está al máximo).
+Un marcador se genera **sin fondo** (`.mov` con **alpha**, transparente, para que quede
+como overlay sobre tu imagen) o **con fondo** (`.mp4` opaco HD, fondo minimalista temático
+con buen contraste). Es la única decisión de salida que hay que tomar, y se toma por
+marcador con el toggle **Con fondo** de la tarjeta.
+
+**Todo se renderiza siempre en alta**: el alpha en **ProRes 4444** y el mp4 con fondo en
+H.264 con calidad de lectura (`--crf 18`), que es lo que hace falta cuando el gráfico se
+va a ver proyectado en una clase. No hay dial de calidad, ni casilla que apagar, ni nada
+que rehacer después de aprobar una animación.
+
+Hubo un **modo borrador** —render más liviano para previsualizar, con su **Render HQ**
+para rehacer en alta lo que hubiera gustado— y se sacó en la v1.4.49. Nunca sirvió mucho:
+solo tocaba al mp4 con fondo (los clips con alpha ya salían al máximo, así que para ellos
+borrador y alta eran el mismo archivo), y a cambio metía dos calidades posibles y dos
+etiquetas de color en el timeline para poder distinguirlas. Los clips que se hicieron en
+borrador **quedaron como están**, en café: si querés alguno en alta, regeneralo.
 
 ## Optimización de tokens
 
@@ -183,6 +191,21 @@ Una advertencia para el día de la actualización: **el acumulado que ya tenías
 reparar hacia atrás** (los tokens de caché de esas generaciones no los guardaba nadie), así
 que queda marcado como mezclado —lo dice el ⬇ Log al abrir y el tooltip— hasta que toques
 **reiniciar**. De ahí en adelante, todo se cuenta igual.
+
+El mismo gasto se lleva además **por proveedor**, y de ahí sale el "una generación con X
+gastó ≈ N" que dice ⚙ debajo del selector de modelo. Va aparte del total porque el promedio
+solo quiere decir algo adentro de una puerta: medido acá, la misma clase da **≈ 92k de
+entrada por generación con Claude** y **≈ 128k con Cursor**, y la diferencia no es del
+prompt —es idéntico— sino del contexto que el agente de Cursor arrastra en cada llamada.
+Mostrar el promedio de uno como si describiera al otro es el mismo tipo de error que
+mostraba `inputTokens` a secas. Va por proveedor y no por modelo porque lo que domina es de
+quién es la puerta, y porque en Cursor el ID del modelo cambia con el nivel de pensamiento:
+por modelo, la muestra se partiría en pedazos de una o dos generaciones.
+
+Estos bolsillos **nacen vacíos**: el acumulado que ya tenías no se reparte entre proveedores
+—no se sabe de cuál salió cada generación, y encima tiene la entrada contada a medias—, así
+que hasta que generes de nuevo ⚙ dice *"todavía no generaste con esto, así que no sé cuánto
+gasta acá"*. Es la respuesta honesta; un promedio prestado del otro proveedor no lo es.
 
 De paso se arregló el **estimado de la cola**, que se calibraba con esto. Dividía el costo
 acumulado por esos tokens de entrada de mentira, así que le salía una tarifa de cientos de
@@ -242,10 +265,12 @@ contexto del agente no lo podemos prever.
   coloca: pisarte el sonido es tan grave como pisarte el video. Quién trae audio y quién
   no lo mira el motor con `ffprobe` antes de llamar: adentro de Premiere no hay con qué
   abrir el archivo.
-- **El panel solo toca clips que son suyos.** Al marcar un marcador como HQ (magenta) el
-  clip se busca por su **ruta de media**, igual que al colocarlo. Antes alcanzaba con que
-  un clip tuyo arrancara en ese mismo segundo para llevarse la etiqueta de color; ahora,
-  si el nuestro no aparece, el panel te dice "recoloreá a mano" y no toca nada.
+- **El panel solo toca clips que son suyos, y no te pinta el timeline.** El clip importado
+  se identifica por su **ruta de media** y no por nombre ni por posición, así que ninguna
+  operación nuestra puede agarrar un clip tuyo por error. Y salvo las correcciones —que
+  entran en **amarillo** a propósito, para que se vean entre los que ya estaban— los clips
+  llegan **sin etiqueta de color**: los colores de tu secuencia significan lo que vos
+  quieras.
 - **Pestañas Marcadores | Cola**: la Cola es una vista completa para lotes largos.
 - **Qué está haciendo, en vivo, y cuánto lleva.** La barra ya no dice una sola frase
   durante tres minutos. Debajo de la etapa va una línea que se refresca sola con lo
@@ -345,8 +370,8 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
 - **Clic en el nombre** del marcador: te lleva a ese punto del timeline de la secuencia
   que tenés abierta, para ver qué hay ahí antes de escribir la corrección.
 - El clip corregido llega en **amarillo** y en una **pista nueva**, para verlo de un golpe
-  entre los que ya estaban. (Si después le corrés **Render HQ**, el recoloreo lo pasa a
-  magenta.)
+  entre los que ya estaban. Es la **única** etiqueta de color que el panel pone: lo que se
+  genera normalmente entra sin pintar.
 
 Si un recurso es **anterior** a que existiera la ficha, el tramo se busca en la cola
 guardada (`queue.json`) y, si no, en el `data-duration` del HTML —que da la duración pero
@@ -406,7 +431,7 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
   `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
   marcadores + wiring). `css/style.css`.
 - **ExtendScript** (`cep/jsx/host.jsx`) — lee marcadores, mueve el playhead, importa y
-  coloca/recolorea el clip (buscándolo por su ruta de media) sin agregar pistas de más y
+  coloca el clip (buscándolo por su ruta de media) sin agregar pistas de más y
   **sin escribir nunca sobre un tramo ocupado**, exporta el frame del programa, purga
   clips al limpiar.
 - **Motor Node in-process** (`bridge/`) — corre **dentro del panel** vía `require` (sin
@@ -986,10 +1011,309 @@ comparar el log de otra máquina contra el propio: dos corridas con el mismo mod
 distinto nivel no son la misma corrida. El modelo, además, se refresca al cambiarlo: antes
 el log repetía el que había al **abrir** el panel.
 
-Sobre el **1M de contexto**, para que no queden expectativas cruzadas: se consigue por
-**Cursor**, que ofrece esas variantes en su lista. En el CLI de Claude, la ventana de 1M es
-un beta que su propia ayuda marca como *API key users only* (`--betas`), así que por
-suscripción no está disponible y el panel no la promete.
+Del mismo editor vino el resto del pedido: *"ahí no me dice claramente cuántos tokens
+consume, tipo 300k o 1M"*. Ahora el desplegable lleva la **ventana de contexto** pegada al
+nombre (`Claude Sonnet 5 · 1M`) y debajo del selector hay un renglón que contesta la
+pregunta con la que se abre ⚙ —cuánto de esa ventana se está usando de verdad—, con el
+promedio medido en esta máquina: *"Ventana de contexto: 1M. Una generación con Cursor gastó
+≈ 128k de entrada (promedio de 12), o sea ~13% de 1M."*
+
+**De dónde sale ese número, porque no sale del proveedor.** Ni la lista de Cursor
+(`cursor-agent --list-models` devuelve `<id> - <nombre>` y nada más) ni la que lee el motor
+de Anthropic traen la ventana, así que hay una **tabla nuestra por familia** en
+`cep/js/util.js` (`VENTANA_CLAUDE`), sacada de la documentación de Anthropic —*Context
+window sizes by model*— el **2026-09-03**: 1M para Fable 5.1, Mythos 5.1, Fable 5, Mythos 5,
+Opus 5, Opus 4.8/4.7/4.6, Sonnet 5 y Sonnet 4.6; 200k para el resto. Una tabla a mano **se
+desactualiza**: los modelos nuevos entran solos al panel (la lista se pide a tu cuenta) pero
+acá hay que agregarlos, y hasta que alguien lo haga **se ven sin ventana**. Ese es el modo
+de fallar correcto: un modelo sin número se nota, un número inventado no. Hay una excepción
+donde el dato sí viene de la fuente: la lista de Anthropic trae `max_input_tokens` y el
+motor ahora lo pasa; cuando llega, le gana a la tabla.
+
+Sobre el **1M**, para que no queden expectativas cruzadas: **la ventana depende de por dónde
+entres, no solo del modelo**. Por **Cursor** el dato es del propio proveedor —esas variantes
+se llaman así en su lista— y el panel lo promete. Por la **API de Claude**, la documentación
+dice 1M y ya no hace falta ningún beta. Por el **CLI de Claude depende de la credencial**:
+con una API key va por la API y vale lo mismo, y ahí el selector dice `1M`. Con la sesión de
+`claude.ai` o un token de suscripción, **nadie nos dice qué ventana efectiva te toca** — el
+CLI contesta con qué te autenticás (`claude auth status`), no cuánto te entra. Ahí el panel
+muestra el piso, `200k+`, marcado como piso, y **no promete los 1M**: mentir en el dato con
+el que el editor decide cuánto material le mete a una generación es peor que quedarse corto.
+Lo mismo mientras no se sepa (el CLI todavía no contestó, o es una versión que no conoce el
+comando): no saber se parece más a no prometer que a prometer.
+
+Una corrección de lo que decía antes esta sección: el motivo que dábamos —que el 1M era un
+beta *API key users only*— ya no es el correcto. Ese cartel existe (`claude --help` lo dice
+sobre `--betas`) pero es sobre los headers beta en general, y para esta generación de
+modelos el 1M **ya no es un beta**. Lo que de verdad no se puede saber es la otra cosa: qué
+ventana da Claude Code con una suscripción. La conclusión no cambia; el motivo sí.
+
+## Cuando el estilo del curso no viaja con el proyecto
+
+Dos editores, el mismo `.prproj`, animaciones distintas. Diagnosticando por qué al
+compañero le salían peores apareció esta línea, igual en las tres generaciones de su log:
+
+```
+prompt general no
+```
+
+El **Prompt general** —marca, paleta, tipografía, tono, todo lo que define el estilo de un
+curso— vivía en el `localStorage` del panel, con una clave por proyecto y secuencia. Es
+decir: en la máquina donde se escribió, y en ninguna otra. El editor que lo llenó generaba
+con el estilo puesto; el que abría el mismo proyecto generaba **con el campo vacío**, sin
+manera de darse cuenta. Ese `no` del log era el único rastro, y había que ir a buscarlo.
+
+**El estilo ahora es un archivo al lado del `.prproj`.** En la carpeta `HyperPremiere` que
+ya se crea junto al proyecto —la misma donde viven los renders y las transcripciones— hay
+un `prompt-general.md` que es texto plano y se puede abrir con cualquier editor, corregir a
+mano y mandar por chat. Va **arriba** de las carpetas por secuencia, no adentro, porque es
+del curso entero y no de una clase: esa distinción no existía en el proyecto y hubo que
+crearla (`projectRootPath`, que ya estaba escondido dentro de `outputDirPath`). Y como está
+junto al `.prproj`, viaja con él por el mismo camino que ya usan los editores para pasarse
+el proyecto, sin que nadie tenga que acordarse de nada.
+
+Una clase puede necesitar algo distinto —un módulo con otra paleta, una clase invitada— y
+para eso cada secuencia puede tener su propio `prompt-general.md` adentro de su carpeta.
+Ese **reemplaza** la base, no se le suma. Sumar era tentador y es lo que más rompe: el
+editor escribe *"esta clase va en blanco y negro"* esperando que mande, y le llega pegado
+al *"paleta azul institucional"* de la base, con el modelo eligiendo cuál gana. Reemplazar
+es lo que el editor puede predecir leyendo lo que escribió. Vaciar el prompt de una
+secuencia **borra el archivo**, que es la manera de no dejar uno vacío que después parece
+una decisión: mientras esté vacío, esa clase usa la base y el panel lo dice.
+
+Lo que **no** hace vaciar el campo es cambiar dónde se escribe. Volver a la base es el
+botón que pregunta antes, no una consecuencia de haber borrado el texto, y esa distinción
+es la diferencia entre arreglar el prompt de una clase y reescribirle el estilo al curso
+entero. El que selecciona todo y borra casi siempre lo hace para volver a escribir; si el
+destino se moviera solo, lo que teclee a continuación se estaría guardando en la base que
+comparten todos, sin que nada falle y sin que nadie se entere hasta ver los videos del
+compañero. El campo muestra siempre el archivo al que escribe —el propio de la clase, o la
+base—, así que lo que se lee y lo que se guarda no pueden separarse.
+
+**Lo que ya estaba escrito no se pierde.** Al abrir el panel por primera vez con esta
+versión, lo que había en el `localStorage` se sube al proyecto si el proyecto todavía no
+tiene nada, y recién ahí se limpia lo local. Si el proyecto ya tiene un texto **idéntico**,
+se limpia sin decir nada: no hay nada que preguntar. Y si tiene uno **distinto**, no se
+pisa ninguno de los dos: el panel muestra los dos textos y pregunta cuál vale, con tres
+respuestas —*es el de esta clase* (lo guarda como prompt de la secuencia y deja la base
+intacta), *que sea la base* (reemplaza la del proyecto, y le llega a todos) o descartarlo.
+Pisar en silencio hubiera sido perder trabajo escrito de un editor sin avisarle, que es
+exactamente la clase de cosa por la que este bug existió. Mientras no se conteste, el texto
+local queda guardado: cerrar el panel no es una respuesta. Y si el motor no puede leer el
+proyecto —disco de red caído, permisos—, el texto local se sigue mostrando y usando: la
+alternativa era volver a generar sin estilo por un error de lectura, que es el bug original
+otra vez.
+
+**El panel dice de dónde sale.** Arriba del campo hay una línea que aclara si lo que está
+escrito es la base del proyecto o el prompt propio de esa secuencia, y cuando una secuencia
+está pisando la base se ve que la está pisando y se puede leer la base que quedó abajo.
+El log tampoco vuelve a decir `no` a secas:
+
+```
+prompt general de la base del proyecto
+prompt general de esta secuencia (pisa la base del proyecto)
+```
+
+El caso sin estilo sigue diciendo `prompt general no`, palabra por palabra. Es el texto por
+el que se buscó en el log del editor, y cambiarlo dejaría los logs de las versiones
+anteriores sin con qué compararse. Lo que cambió es que ahora ese `no` **quiere decir algo
+distinto**: antes podía significar *nadie definió el estilo* o *lo definieron en la otra
+máquina y a vos no te llegó*, que es justo la ambigüedad que hizo falta desenredar a mano.
+Ahora el estilo está en el proyecto, así que `no` es una sola cosa: no hay estilo escrito
+en ningún lado. Y cuando sí lo hay, el log dice de cuál de los dos lugares salió.
+
+Todo lo que arma un pedido al modelo lee ahora del mismo lugar: la generación normal por
+marcador, los reintentos de la cola —que releen el archivo al momento de generar, así que
+arreglar el estilo y reintentar sale con el arreglado, no con el que tenía pegado el job— y
+la pestaña de correcciones, que dejó de armar el prompt por su cuenta.
+
+Lo que **quedó afuera** son las imágenes de referencia del prompt general, que tienen el
+mismo problema: las que se arrastran al panel se guardan como data URL en el mismo
+`localStorage`, y tampoco viajan. No entraron acá porque el peso las hace otro problema: un
+solo cuadro de 1920×1080 en base64 pesa alrededor de 1,5 MB y se reescribe entero en cada
+tecleo del campo de texto (medido: +1,6 ms por `setItem`), y el `localStorage` de CEP tiene
+un techo que al pasarse **falla en silencio**. Hacerlas viajar es guardarlas en archivos y
+migrar lo que ya está guardado, con su propio caso de conflicto; es un cambio del mismo
+tamaño que éste y merece el suyo. Las capturas de Premiere, que ya se guardan como ruta y
+no como data URL, están a mitad de camino de esa solución.
+
+## Dictar la instrucción en vez de escribirla
+
+Al lado de cada campo donde se escribe un pedido —la instrucción de cada marcador, las
+Indicaciones generales, el feedback de la Cola y el de Corrections— hay un botón **🎙**.
+Un clic arranca, otro para; no hay que mantenerlo apretado. Mientras se habla, el texto va
+apareciendo de a frases con un par de segundos de retraso, y al parar un modelo chico lo
+convierte en una instrucción de diseño legible: reordena y estructura, conserva todo lo que
+se pidió y **no inventa** nada que no se haya dicho. Queda en español, con los términos
+técnicos en inglés como se dijeron —nadie quiere leer *fotograma clave*. Y al lado aparece
+un **↩ dictado crudo** que devuelve lo que se dijo textual, por si el refinado no gustó.
+
+Lo que ya estaba escrito en el campo no se pisa nunca: el dictado se agrega abajo mientras
+se habla, y al parar las dos partes se refinan **juntas, como una sola idea**, no una atrás
+de la otra. El texto en vivo, en cambio, se reescribe entero en cada refresco. No es un
+detalle cosmético, es consecuencia de cómo está armado: el motor no trocea el audio en
+pedazos de dos o tres segundos, retranscribe **todo el buffer** cada segundo y medio. Suena
+caro y es al revés —con el modelo cargado en memoria, treinta segundos de habla se
+transcriben en medio segundo— y a cambio la frase se corrige sola a medida que crece el
+contexto, en vez de quedar cosida de pedazos que no se conocen entre sí.
+
+**El campo se abre y crece con lo que se va diciendo**, para poder ir leyéndolo. Al arrancar
+se despliega si estaba plegado y se sube a la vista, después se agranda con el texto y, en el
+tope, se queda ahí mostrando siempre **el final** —lo último que se dijo—, que hay que
+volver a poner a la vista en cada refresco justamente porque el texto se reescribe entero. El
+tope es una fracción del alto del panel y no un número de píxeles, porque el panel se
+redimensiona (abre en 400×600, va de 320×400 a 2200×2200): son 180 px de campo en un panel
+en su alto mínimo y 270 en el de arranque. Lo que manda es que el **🎙 quede alcanzable para
+parar**; un campo que lo empuja fuera de la vista deja al editor dictando sin poder frenar, y
+eso es peor que no tener la función. Al terminar, el campo vuelve al alto de lo que quedó
+escrito.
+
+**El micrófono lo abre ffmpeg, no el navegador del panel.** `getUserMedia` dentro de un
+panel CEP no tiene un solo reporte público de funcionar, y apoyar la función entera en eso
+era una apuesta; ffmpeg ya es requisito del proyecto y capturar con él está medido. Saca
+PCM crudo por `stdout` y el motor lo acumula en memoria —escribir un `.wav` e ir leyéndolo
+no sirve, porque ffmpeg lo vacía en bloques de ocho segundos—. Por eso el dictado es **solo
+para Mac por ahora**: la captura usa avfoundation, y el equivalente de Windows no está
+probado. En Windows el botón se ve, deshabilitado, y dice exactamente eso; la instrucción
+se escribe a mano como siempre. Lo mismo si falta ffmpeg o el Whisper local: el botón lo
+dice y apunta al arreglo, y **el campo sigue funcionando igual**. El dictado es un
+agregado, nunca un requisito: si el módulo no carga, ningún campo de prompt deja de
+dibujarse.
+
+**Whisper para dictar es otro, y es `small`.** El de las clases (`large-v3`) es la peor
+elección para esto: 0,84 s de inferencia contra 0,29 s, por una precisión que en una frase
+dictada no aparece. Y no se bajó más porque `base`, que es más rápido, rompe justo lo que el
+editor no puede dejar pasar —medido con la misma frase, `base` devolvió *"que entre con un
+FAKE… los QUE Y FRAMES"* donde `small` escribió *fade* y *keyframes*—. La primera vez que se
+dicta en una máquina hay que bajar el modelo (~480 MB) y el botón lo dice en vez de quedarse
+colgado. El proceso de Whisper se levanta al primer dictado y se queda vivo, porque cada
+invocación suelta del CLI paga un piso de 1,2 s que es entre ocho y quince veces lo que
+cuesta transcribir; tras cinco minutos sin usarse se baja solo, que son ~500 MB de modelo
+que no vale la pena tener residentes al lado de Premiere. Como usa su propio modelo, un
+dictado nunca frena una transcripción de secuencia que esté corriendo.
+
+**El silencio hace inventar a Whisper**, y no es teoría: un segundo de sala callada volvió
+como *"¡Suscríbete!"*, y en otra corrida como *"! las las las las"*. Son las frases más
+repetidas en los subtítulos con los que se entrenó. Lo único que lo evita es no llamar al
+modelo, así que hay una compuerta de volumen medida con este micrófono: la sala callada
+está entre −44 y −37 dBFS y el habla llegando en −21, y el umbral va en −34, del lado
+estricto a propósito. Si queda alto, alguien que habla bajito lee *"entró audio pero está
+en silencio"* y sabe qué tocar; si quedara bajo, leería *"¡Suscríbete!"* metido en la
+instrucción de su marcador y pensaría que la función está rota. Para una sala ruidosa o un
+micrófono flojo, `HYPERPREMIERE_DICTADO_RMS` lo ajusta. Lo que igual se cuele tiene una red
+abajo: si la transcripción entera es una de esas frases, se descarta.
+
+**El refinado no depende de una credencial que quizás no esté.** El resto del panel usa el
+proveedor elegido en ⚙, y para generar una animación está bien esperar tres minutos; para
+refinar dos frases cada vez que se suelta el botón, no. Así que se mira qué hay en la
+máquina y se usa el mejor disponible, diciéndolo: la **API de Anthropic** si hay key
+configurada (HTTP directo, sin arranque de ningún CLI), el **CLI de Claude con Haiku** si
+esta máquina tiene con qué autenticarse, **Ollama local** si está corriendo, y si no hay
+ninguno el dictado no se rompe: queda el texto crudo en el campo y se dice por qué no se
+pudo refinar. Cursor no está en la lista y no es un olvido: medido acá, una llamada mínima a
+su CLI tarda entre 5 y 10 segundos y escribe ~31.800 tokens de su propio contexto a la
+caché. Para dos frases es la herramienta equivocada por dos órdenes de magnitud. Lo que
+vuelve del refinador pasa por un control de tamaño antes de tocar el campo —con un modelo
+chico corriendo local, `llama3` se comió dónde iba el título y agregó un *"sin pérdida"* que
+nadie dijo— y si no lo pasa se conserva el crudo con el motivo escrito. El log dice qué
+modelo refinó y cuánto tardó, que es lo primero que hace falta cuando alguien dice *"el
+dictado me sale raro"*. Y el gasto va a un bolsillo **aparte** en el contador de la sesión,
+para que no se confunda con lo que cuestan las animaciones.
+
+Dos asperezas honestas. El texto en vivo **va quedando atrás** del que habla: medio segundo
+al principio, unos dos y medio a los veinte segundos. Se aisló capturando sin transcribir y
+el retraso es idéntico, así que es de ffmpeg/avfoundation, no del modelo; probar a 48 kHz
+nativo sin resamplear no cambió nada. Para el texto final no importa, porque al parar se
+procesa el buffer completo, pero la sensación de "en vivo" se degrada en dictados largos. Y
+un dictado se corta solo a los cinco minutos, con aviso: para una instrucción de marcador
+es muchísimo, y el costo de cada refresco crece con el largo del buffer.
+
+### Qué micrófono, y cómo saber que anda
+
+Con una interfaz de audio, unos auriculares Bluetooth y una webcam enchufados, "el
+micrófono" no dice nada. En la máquina donde se armó esto, ffmpeg lista **seis** entradas
+de audio y una sola es un micrófono de verdad que suena: el `[0]` es el iPhone por
+Continuidad, el `[1]` la webcam, tres son dispositivos virtuales de Steam y Zoom, y el `[2]`
+es el de la MacBook. Por eso el desplegable de micrófono está **en el encabezado del panel**,
+al lado del ⬇ Log: cambiar de micrófono es algo que pasa entre marcador y marcador —te
+sacás los auriculares, enchufás la interfaz— y hacerlo abriendo la configuración era
+esconderlo detrás de dos clics. En ⚙ sigue estando la fila **Micrófono** completa, que es
+donde se diagnostica: el mismo desplegable con el nombre entero, un ↻ para volver a
+preguntar cuando enchufás algo sin cerrar el panel, la línea que dice cuál se está usando y
+por qué, y **Probar micrófono** con su medidor. Es **un solo control con dos vistas**, no dos
+desplegables: elegís arriba y ⚙ ya muestra el nuevo sin recargar nada, y abrir el panel corre
+ffmpeg una vez y no una por vista. Y el botón 🎙 de cada campo dice en su tooltip cuál va a
+abrir; mientras dicta, la línea de estado también lo nombra.
+
+**Arriba hay 34 px, así que arriba se dice distinto.** En un panel angosto el desplegable
+queda en el ícono 🎙 solo y el nombre del dispositivo se lee en el tooltip: media palabra
+—"MacBoo…"— no es información. Con algo más de ancho aparece el nombre sin el "Microphone"
+que repiten los seis dispositivos de esta máquina ("MacBook Pro", "OBSBOT Meet 2"), y si es
+larguísimo —los virtuales de Steam lo son— se acorta por el medio, que conserva el sufijo que
+diferencia uno del otro. El **menú desplegado no se cuelga del botón sino del encabezado**:
+toma el ancho del panel, y ahí los nombres completos entran enteros incluso en 320 px. Si el
+elegido no está enchufado, el desplegable de arriba se pone en ámbar y lo dice en el tooltip.
+
+**Donde no se puede dictar, no hay desplegable arriba.** En Windows, sin ffmpeg o sin el
+Whisper de Apple Silicon, el encabezado no dibuja un control de una función que no corre —un
+desplegable vacío es peor que ninguno—, y el porqué lo siguen diciendo ⚙ y el 🎙 de cada
+campo. Si el motor no contesta si se puede dictar, se muestra igual: no saber no es "no hay".
+Cambiar de micrófono **con un dictado andando** no lo rompe ni lo cambia: el motor resolvió
+nombre → índice al abrir el dispositivo y su ffmpeg ya está corriendo con ése. Vale desde el
+próximo dictado, y eso se dice en la fila en vez de dejar creer que el cambio fue en vivo.
+
+**Se guarda el nombre, no el índice.** Los índices de avfoundation son la posición en la
+lista de ese momento: enchufar unos auriculares corre a todos los demás un lugar, y sin el
+iPhone cerca el micrófono de la MacBook pasa de `[2]` a `[1]`. Un índice guardado abriría
+mañana otro dispositivo sin avisar. El nombre es lo único estable, así que la elección se
+guarda por nombre —en la config de la máquina, junto al proveedor, porque un micrófono es de
+la computadora y no del proyecto— y se resuelve al índice de hoy en el momento de capturar,
+con la lista fresca. Si el elegido no está, se cae al del sistema **diciéndolo**: en amarillo
+en ⚙, en el tooltip del 🎙, en la línea mientras escucha y en el log, nunca en silencio, y
+el elegido sigue apareciendo en el desplegable como "no conectado ahora" para que no se
+pierda cuando lo vuelvas a enchufar. Sin elección se usa `:default`, que avfoundation acepta
+para audio —está verificado con ffmpeg acá, no supuesto— y abre el que macOS tiene como
+entrada en Ajustes del Sistema → Sonido → Entrada; es mejor que "el primero de la lista",
+que en esta máquina sería el iPhone. Para poder **decir** cuál es ese default sin abrir el
+micrófono (abrirlo dispararía el permiso de macOS por el solo hecho de abrir ⚙) se le
+pregunta a `system_profiler`, que tarda 0,14 s y usa los mismos nombres que avfoundation. La
+fila lo dice tal cual: *"todavía no elegiste micrófono: uso el que macOS tiene por defecto,
+«MacBook Pro Microphone»"*.
+
+**La prueba abre el micrófono con el mismo comando que el dictado**, hasta el último
+argumento: si el medidor anduviera y el dictado no, la prueba habría mentido, y para eso no
+sirve. Durante siete segundos muestra una barra con el nivel en dBFS, un tic con el pico
+sostenido y una marca fija donde está la compuerta de silencio del dictado (−34 dBFS): la
+barra se pone verde cuando tu voz la cruza, que es lo único que hay que mirar. Al final, un
+veredicto en palabras. Si entra audio y pasa la compuerta, podés dictar. Si entra señal pero
+floja, dice el promedio y el pico en números y qué tocar (el volumen de entrada, acercarse,
+otro micrófono), y distingue el caso de haber hablado poco: el dictado mira el **promedio de
+todo lo grabado**, así que si el pico pasa pero el promedio no, lo que hace falta es hablar
+seguido, no cambiar de micrófono. Si el dispositivo abrió pero no entregó **ni una muestra**
+—medido acá con el iPhone por Continuidad y el teléfono lejos— o entregó muestras **todas en
+cero exacto** —lo que dan los dispositivos virtuales y un micrófono con el permiso negado— lo
+dice por su nombre, y en los dos casos nombra el camino que el editor no puede adivinar: la
+captura la hace ffmpeg, hijo del panel, hijo de Premiere, así que el permiso de micrófono lo
+pide y lo tiene **Adobe Premiere Pro** como app anfitriona; el diálogo del sistema dice
+"Adobe Premiere Pro 2026", y si alguna vez se le dijo que no, macOS no vuelve a preguntar:
+Ajustes del Sistema → Privacidad y seguridad → Micrófono, prender Adobe Premiere Pro y
+reiniciar Premiere. Si ffmpeg directamente no pudo abrir el dispositivo, el veredicto trae su
+error textual, y sabe leerlo: un índice que ya no existe se diagnostica como "refrescá la
+lista", no como un problema de permisos, aunque ffmpeg lo reporte con el mismo
+`Input/output error` genérico.
+
+**Todo queda en el log**, pensado para diagnosticar desde otra máquina, con el archivo que
+baja ⬇ Log y nada más: la lista de dispositivos con nombre e índice cada vez que se enumera y
+cuál es el default del sistema; cuál está elegido, si lo eligió el editor o es el del
+sistema, y si el elegido no apareció y se cayó a otro; al arrancar cada dictado y cada prueba,
+el dispositivo, el índice resuelto y el comando exacto de ffmpeg que se lanzó; durante la
+prueba, un resumen de niveles (mínimo, máximo, promedio, cuántas lecturas, cuántas muestras
+en cero) y no las setenta lecturas una por una; el veredicto; y, si algo falló, el `stderr`
+de ffmpeg tal cual. Una línea que sí aparece siempre en esta máquina y no es un error:
+`CMIOMS: EOSWebcamUtilityMain`, que la deja un plugin de CoreMediaIO en cada arranque de
+ffmpeg. Se filtra para decidir si ffmpeg se quejó —sin eso, "no entró audio y stderr dice
+algo" se dispararía en falso con el micrófono andando— y se conserva en el log, por si algún
+día sí importa.
 
 ## Cuando la generación se cae
 
@@ -1259,8 +1583,11 @@ tome la última versión, que el **tramo** se recupere por las tres fuentes en o
 cuando no hay ninguna **se diga** en vez de inventarlo, que no se tome el tramo de un
 trabajo de **otra secuencia** con el mismo nombre de marcador, que abrir la pestaña **no
 cree carpetas**, que la corrección lleve el HTML de la versión **elegida** (no la
-anterior), que vuelva al segundo original y **en amarillo**, que una generación normal siga
-saliendo magenta, y que la marca de corrección **sobreviva** a reiniciar el panel. Las
+anterior), que vuelva al segundo original y **en amarillo**, que una generación normal
+entre **sin etiqueta de color** (si todo saliera pintado, el amarillo no distinguiría
+nada), que un job viejo con el campo `draft` colgado en su payload se coloque igual —ese
+campo ya no lo lee nadie—, y que la marca de corrección **sobreviva** a reiniciar el
+panel. Las
 **tres pestañas** se prueban aparte: exactamente una vista visible, siempre.
 
 Y el caso de la clase **re-cortada**, que es el que apareció en producción: que estando
@@ -1282,6 +1609,38 @@ imágenes), que el "📌 Colocar" del intento viejo deje de ofrecerse al reencol
 filtro: que solo aparezca cuando hay más de una secuencia, que oculte sin tocar la cola
 —los contadores siguen siendo del total—, que diga cuántos quedaron afuera y que se
 recuerde entre sesiones.
+
+Y el **cartel de "Preparar motor"**, el primero de los dos tests de ancho del repo y por eso
+vale aclarar qué fija y qué no. El botón quedaba **aplastado a 22 px** al lado del texto largo
+del cartel —culpa del `button { flex: 1; min-width: 0 }` global, que está para la barra de
+acciones, donde tres botones se reparten la fila— y su etiqueta se iba **18 px afuera del
+panel**, con scroll horizontal en todo el panel y a **cualquier** ancho (medido a 360, 400,
+440, 470, 520 y 600). El DOM de mentira no calcula cajas, así que estos tests **no miden**:
+fijan la regla de CSS donde vivía el bug —que el botón no se encoja, que la fila envuelva y
+que el texto reclame su ancho mínimo, que es lo que decide cuándo el botón baja de línea— y
+que el HTML siga teniendo el botón **donde la regla lo busca** (un `<div>` en el medio lo
+dejaría afuera sin que nadie toque el CSS). Medir se mide con la **maqueta**
+(`test/manual/panel-demo`, que usa el HTML y el CSS de verdad): `scrollWidth` contra
+`clientWidth` a esos seis anchos, antes y después.
+
+Y el **encabezado**, que es el otro, y donde la misma regla global picó de nuevo. En un panel
+angosto "HyperPremiere" se dibujaba **encima** de la insignia verde de estado y el `?` encima
+del `⟳ v1.4.4…`, que además quedaba cortado. Son dos causas: `.brand` tenía permiso para
+quedar más chica que su contenido y su nombre no recortaba, así que lo que no entraba se
+pintaba **afuera** de la caja; y la etiqueta de versión quedaba en **19 px a 470** por el
+mismo `button { flex: 1 }` global —en el encabezado ya había tres blindajes uno por uno
+contra esa regla y el de `.btn-update` era el que faltaba—. El arreglo blinda el
+**contenedor** y no cada botón (`.header-tools > * { flex: none }`), así que el control que se
+sumó ahora, el micrófono, y el que se sume mañana nacen sanos; el grupo de herramientas dejó
+de envolver **por dentro**, que era lo que ponía el `?` sobre el `⟳`, y se va entero a la fila
+de abajo cuando no cabe. La invariante que sostiene todo: cada hoja del encabezado o tiene su
+ancho natural o puede ceder **y recorta**, y con el encabezado envolviendo así no hay
+solapamiento posible a ningún ancho ni con ningún texto. Los tests fijan esas reglas leyendo
+el CSS real; medido en la maqueta a 320, 360, 400, 470, 600 y 900: desborde 0 px en todos
+(antes 4 px a 470), cero pares de elementos superpuestos (antes hasta dos por ancho) y la
+etiqueta de versión entera en sus 70 px siempre. `node test/manual/panel-demo/medir-encabezado.js`
+lo vuelve a medir: compara los `getBoundingClientRect` de todo el encabezado y avisa qué par
+se toca, que es la forma directa de ver lo que muestran las capturas.
 
 Aparte, dos scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué

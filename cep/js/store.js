@@ -129,6 +129,15 @@
     return Object.prototype.toString.call(value) === '[object Array]';
   }
 
+  // Quién quiere enterarse de que el acumulado de la sesión cambió. Ver
+  // onUsageChange, abajo.
+  var oyentesUso = [];
+  function avisarUso() {
+    for (var i = 0; i < oyentesUso.length; i++) {
+      try { oyentesUso[i](); } catch (e) {}
+    }
+  }
+
   var HPStore = {
     /**
      * Clave especial para el "Prompt general" (instruccion + stills + recursos
@@ -376,6 +385,29 @@
       writeState(state);
     },
 
+    // ── El prompt general que quedo en el limbo ────────────────────────
+    // El "Prompt general" ya no vive aca: vive al lado del .prproj, para que
+    // viaje con el proyecto (ver HPGeneral). Al actualizar puede pasar que esta
+    // maquina tenga uno guardado y el proyecto tenga OTRO distinto — dos
+    // editores, dos textos—. Ahi no se pisa ninguno: el de aca se aparta en
+    // `pendingLocal`, tal cual estaba, hasta que el editor diga cual vale.
+    //
+    // Va aparte de `instruction` a proposito: asi el campo puede mostrar lo que
+    // de verdad viaja al modelo sin que escribir encima borre lo apartado.
+
+    getGeneralPending: function () {
+      var entry = readState().markers[this.GENERAL_KEY];
+      return (entry && typeof entry.pendingLocal === 'string') ? entry.pendingLocal : '';
+    },
+
+    setGeneralPending: function (text) {
+      var state = readState();
+      var entry = ensureMarker(state, this.GENERAL_KEY);
+      var t = String(text == null ? '' : text);
+      if (t) entry.pendingLocal = t; else delete entry.pendingLocal;
+      writeState(state);
+    },
+
     /** Quita el recurso en `index` del marcador; ignora indices invalidos. */
     removeMarkerResource: function (markerKey, index) {
       var state = readState();
@@ -389,6 +421,7 @@
     },
 
     // ── Uso de tokens de la sesión (GLOBAL, no por secuencia) ──────────
+    // (los helpers del bolsillo del dictado están abajo de HPStore)
     // Cuánto se consumió en total desde que se reinició el contador.
     //
     // Lo que se acumula NO es "inputTokens": en los CLI de agente ese campo es
@@ -406,7 +439,8 @@
     getSessionUsage: function () {
       var empty = {
         inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
-        costUsd: 0, costGenerations: 0, costInputTokens: 0, generations: 0, legacyMix: false
+        costUsd: 0, costGenerations: 0, costInputTokens: 0, generations: 0, legacyMix: false,
+        porProveedor: {}, dictado: vacioDictado()
       };
       try {
         var raw = global.localStorage.getItem(STORAGE_PREFIX + 'session-usage');
@@ -428,7 +462,9 @@
           // el editor tiene que saber que ese acumulado viene mezclado y que
           // reiniciándolo ve un total limpio. Se pega y no se despega hasta el
           // reinicio: sumarle generaciones nuevas bien contadas no arregla las viejas.
-          legacyMix: !!u.legacyMix || (Number(u.generations) > 0 && Number(u.rule) !== 2)
+          legacyMix: !!u.legacyMix || (Number(u.generations) > 0 && Number(u.rule) !== 2),
+          porProveedor: leerPorProveedor(u.porProveedor),
+          dictado: leerDictado(u.dictado)
         };
       } catch (e) { return empty; }
     },
@@ -460,15 +496,70 @@
         cur.costInputTokens += this.totalInput(usage);
       }
       cur.generations += 1;
+      // Y lo mismo otra vez, en el bolsillo de SU proveedor. El total sirve
+      // para "cuánto llevo gastado"; para "cuánto gasta una generación" no,
+      // porque mezcla puertas que consumen distinto: con Cursor cada llamada
+      // arrastra ~31,8k de contexto del propio agente y con Claude directo no.
+      // Un editor que generó cien con Cursor y se pasa a Claude vería el
+      // promedio de Cursor descrito como si fuera el de Claude.
+      var quien = String(usage.provider || '');
+      if (quien) {
+        var b = cur.porProveedor[quien] ||
+          (cur.porProveedor[quien] = { entrada: 0, salida: 0, generaciones: 0, regla: 2 });
+        b.entrada += this.totalInput(usage);
+        b.salida += Number(usage.outputTokens) || 0;
+        b.generaciones += 1;
+      }
       // `rule` es con qué criterio se contó lo que hay guardado. Sin él, un
       // acumulado es de antes de que la entrada incluyera la caché.
       cur.rule = 2;
       try { global.localStorage.setItem(STORAGE_PREFIX + 'session-usage', JSON.stringify(cur)); } catch (e) {}
+      avisarUso();
       return cur;
+    },
+
+    /**
+     * Suma un refinado de DICTADO. Va a un bolsillo aparte y NO entra en los
+     * totales de arriba, que es todo el punto: el editor mira el contador para
+     * saber cuánto le costó una clase de animaciones, y unos refinados de dos
+     * frases metidos ahí adentro le mueven el promedio por generación sin que
+     * se entienda por qué. Son órdenes de magnitud distintos —una generación
+     * son decenas de miles de tokens, un refinado unos cientos— y encima
+     * pueden salir de otro proveedor que el de las animaciones.
+     */
+    addDictadoUsage: function (usage) {
+      if (!usage) return this.getSessionUsage();
+      var cur = this.getSessionUsage();
+      var d = cur.dictado;
+      d.inputTokens += Number(usage.inputTokens) || 0;
+      d.outputTokens += Number(usage.outputTokens) || 0;
+      d.cacheReadTokens += Number(usage.cacheReadTokens) || 0;
+      d.cacheCreationTokens += Number(usage.cacheCreationTokens) || 0;
+      if (typeof usage.costUsd === 'number') {
+        d.costUsd += usage.costUsd;
+        d.costRefinados += 1;
+      }
+      d.refinados += 1;
+      cur.dictado = d;
+      try { global.localStorage.setItem(STORAGE_PREFIX + 'session-usage', JSON.stringify(cur)); } catch (e) {}
+      avisarUso();
+      return cur;
+    },
+
+    /**
+     * Avisar cuando el acumulado cambia. Lo escribe la cola (una generación) y
+     * el micrófono (un refinado), y lo dibuja el header; que cada uno de los
+     * que suman tenga que acordarse de refrescar la barra es cómo apareció un
+     * `window.HPUpdateSessionBar` global para que HPDictado la tocara desde
+     * otro archivo. El que suma no tiene por qué conocer los ids del header.
+     */
+    onUsageChange: function (fn) {
+      if (typeof fn === 'function') oyentesUso.push(fn);
     },
 
     resetSessionUsage: function () {
       try { global.localStorage.removeItem(STORAGE_PREFIX + 'session-usage'); } catch (e) {}
+      avisarUso();
     },
 
     /** Estado completo del contexto activo (copia parseada). */
@@ -488,6 +579,45 @@
       }
     }
   };
+
+  // El bolsillo del dictado, aparte del de las animaciones. `refinados` cuenta
+  // todos y `costRefinados` solo los que informaron costo, igual que arriba:
+  // el CLI de Claude informa, Ollama es gratis y una API puede no decir nada.
+  function vacioDictado() {
+    return {
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+      costUsd: 0, costRefinados: 0, refinados: 0
+    };
+  }
+  // Los bolsillos por proveedor. `regla` es la misma marca que `rule` lleva en
+  // el total, y acá se EXIGE: un bolsillo sin ella se juntó cuando la entrada se
+  // contaba a medias, y un promedio por generación sacado de ahí sale diez veces
+  // más chico de lo que fue. Como estos bolsillos nacieron con la entrada ya
+  // completa, en la práctica lo que hace es que un acumulado viejo —que no tiene
+  // ninguno— no aporte un promedio de mentira: se dice "todavía no generaste con
+  // esto" hasta que haya generaciones nuevas, que es la verdad.
+  function leerPorProveedor(p) {
+    var out = {};
+    if (!p || typeof p !== 'object') return out;
+    Object.keys(p).forEach(function (k) {
+      var b = p[k];
+      if (!b || typeof b !== 'object' || Number(b.regla) !== 2) return;
+      out[k] = {
+        entrada: Number(b.entrada) || 0,
+        salida: Number(b.salida) || 0,
+        generaciones: Number(b.generaciones) || 0,
+        regla: 2
+      };
+    });
+    return out;
+  }
+
+  function leerDictado(d) {
+    var v = vacioDictado();
+    if (!d || typeof d !== 'object') return v;
+    Object.keys(v).forEach(function (k) { v[k] = Number(d[k]) || 0; });
+    return v;
+  }
 
   global.HPStore = HPStore;
 })(window);

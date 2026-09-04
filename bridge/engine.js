@@ -24,6 +24,12 @@ const { run, salidaDe } = require('./exec');
 const { transcribeMedia, cancelTranscription, whisperStatus, hasAudioStream } = require('./transcribe');
 // Instalar Whisper desde el panel (parte del mismo flujo de "preparar motor").
 const { whisperInstallPlan, installWhisper, cancelWhisperInstall } = require('./whisper-install');
+// Dictado por voz: micrófono → texto en el campo. Usa OTRO Whisper (small, en
+// un proceso que queda vivo) para no competir con la transcripción de clases.
+const dictado = require('./dictado');
+const dictadoRefinar = require('./dictado-refinar');
+// El micrófono del dictado: qué dispositivos hay y la prueba con medidor de ⚙.
+const microfono = require('./dictado-microfono');
 // Login de Claude en dos fases (URL + código) o token pegado directo.
 const claudeLogin = require('./claude-login');
 // Dónde está el CLI de Claude y qué versión es (diagnóstico para el editor).
@@ -41,9 +47,14 @@ const {
   slugify,
   ensureOutputDir,
   outputDirPath,
+  projectRootPath,
   paths,
   saveMeta,
   readMeta,
+  // El estilo del curso: dos archivos de texto al lado del .prproj. Acá solo se
+  // registran como handlers; el I/O vive con el resto del de esa carpeta.
+  loadGeneralPrompt,
+  saveGeneralPrompt,
   lastCompositionHtml,
   saveStills,
   saveResources,
@@ -160,6 +171,9 @@ function loadRawConfig() {
     // Compartido por los dos proveedores Claude (CLI y API): es "cuánto querés
     // que piense", no una credencial de un slot.
     effort: normalizeEffort(stored.effort),
+    // El micrófono del dictado, por NOMBRE ('' = el del sistema). Es de la
+    // máquina, como el resto de este archivo, no del proyecto ni del proveedor.
+    microfono: String(stored.microfono || '').trim(),
     perProvider: (stored.perProvider && typeof stored.perProvider === 'object') ? stored.perProvider : {},
   };
 
@@ -192,6 +206,7 @@ function loadConfig() {
     baseUrl: slot.baseUrl || '',
     oauthToken: raw.oauthToken || '',
     effort: raw.effort,
+    microfono: raw.microfono || '',
     perProvider: raw.perProvider,
   };
 }
@@ -218,8 +233,17 @@ function saveConfig(patch) {
   if (patch.effort !== undefined && patch.effort !== null && String(patch.effort).trim()) {
     raw.effort = normalizeEffort(patch.effort);
   }
+  // '' es una elección válida: "volvé al del sistema". Por eso no se filtra el vacío.
+  if (patch.microfono !== undefined && patch.microfono !== null) {
+    raw.microfono = String(patch.microfono).trim();
+  }
   raw.perProvider[provider] = slot;
   saveRawConfig(raw);
+  // Guardar la config es lo único que puede cambiar QUÉ refina el dictado sin
+  // reiniciar el panel (pegar una API key, por ejemplo). Sin esto, el editor
+  // configura la key y el dictado sigue refinando con lo de antes hasta que
+  // cierre Premiere.
+  dictadoRefinar.olvidarRefinador();
   return maskConfig(loadConfig());
 }
 
@@ -232,6 +256,7 @@ function maskConfig(cfg) {
     hasSession: Boolean(cfg.oauthToken),
     effort: cfg.effort || DEFAULT_EFFORT,
     usesEffort: usesEffortFlag(cfg.provider),
+    microfono: cfg.microfono || '',
   };
 }
 
@@ -411,6 +436,22 @@ function loadTranscript(body) {
 }
 
 /**
+ * Cómo se nombra el prompt general en el ⬇ Log de una generación.
+ *
+ * El "no" se escribe igual que siempre a propósito: es el texto por el que se
+ * buscó en el log del editor para descubrir todo esto, y los logs viejos se
+ * siguen pudiendo comparar contra los nuevos.
+ */
+function generalSourceLabel(text, source) {
+  if (!String(text || '').trim()) return 'no';
+  if (source === 'sequence') return 'de esta secuencia (pisa la base del proyecto)';
+  if (source === 'project') return 'de la base del proyecto';
+  // Un job encolado por una versión anterior del panel no manda el origen. Vino
+  // texto, así que se dice; inventarle una procedencia sería peor que no saberla.
+  return 'sí (origen desconocido)';
+}
+
+/**
  * Cuáles de estas secuencias ya tienen transcript en disco. Liviano a propósito
  * (no devuelve los segmentos): la vista de la Cola lo usa para marcar con ✓ las
  * secuencias listas, y puede haber muchas.
@@ -499,9 +540,15 @@ function isUsableClaudeModel(id) {
 /**
  * Modelos Claude disponibles para la cuenta activa (GET /v1/models).
  * Autentica con la API key si hay, o con el token de suscripción (Bearer +
- * header beta). Devuelve { ok, models: [{ id, name }], cached? } y no lanza.
- * Si falla (sin red, sin credenciales), devuelve ok:false y el panel se queda
- * con su lista de respaldo.
+ * header beta). Devuelve { ok, models: [{ id, name, maxInputTokens }], cached? }
+ * y no lanza. Si falla (sin red, sin credenciales), devuelve ok:false y el panel
+ * se queda con su lista de respaldo.
+ *
+ * `maxInputTokens` es la ventana de contexto que informa la propia API
+ * (`max_input_tokens`). Viaja porque es el único lugar de todo el panel donde
+ * ese número llega de la fuente en vez de una tabla nuestra: cuando está, el
+ * selector de ⚙ le hace caso. Puede venir null o 0 —la respuesta lo admite— y
+ * ahí el panel se cae a la tabla, que es el caso normal por CLI.
  */
 async function listClaudeModels(opts) {
   const force = Boolean(opts && opts.force);
@@ -532,7 +579,11 @@ async function listClaudeModels(opts) {
     const data = await res.json();
     const models = (Array.isArray(data.data) ? data.data : [])
       .filter((m) => m && m.id && isUsableClaudeModel(m.id))
-      .map((m) => ({ id: String(m.id), name: String(m.display_name || m.id) }));
+      .map((m) => ({
+        id: String(m.id),
+        name: String(m.display_name || m.id),
+        maxInputTokens: Number.isFinite(Number(m.max_input_tokens)) ? Number(m.max_input_tokens) : 0,
+      }));
     if (!models.length) return { ok: false, error: 'La API no devolvió modelos usables.', models: [] };
     claudeModelsCache = { at: now, models };
     return { ok: true, models };
@@ -801,7 +852,11 @@ async function prepareGeneration(body, mode, onProgress) {
     (Array.isArray(markerTranscript) ? markerTranscript.length : 0) + ' del marcador',
     'objetivo ' + ((objective || '').trim() ? 'sí' : 'NO'),
     'instrucción ' + ((instruction || '').trim() ? 'sí' : 'NO'),
-    'prompt general ' + ((body.generalInstruction || '').trim() ? 'sí' : 'no'),
+    // De dónde salió el estilo del curso. "prompt general no" fue la línea que
+    // dejó ver que el segundo editor generaba sin nada; decir SÍ y callar de
+    // dónde vino dejaría el mismo agujero un escalón más arriba, ahora que la
+    // base del proyecto y el propio de la secuencia pueden no coincidir.
+    'prompt general ' + generalSourceLabel(body.generalInstruction, body.generalSource),
     resourcesList.length + ' recursos',
     continuidadNota,
   ].join(' · ') });
@@ -866,7 +921,7 @@ async function prepareGeneration(body, mode, onProgress) {
   // "prepared": todo lo que renderPrepared necesita para renderizar + guardar meta.
   return {
     ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
-    durationSec, videoExt, draft: body.draft === true, version, markerSlug, baseDir,
+    durationSec, videoExt, version, markerSlug, baseDir,
     usage, background: withBackground, instruction, marker, assetsDir, sequenceName,
     model: config.model, provider: config.provider, mode, adjustment, modelMs,
   };
@@ -927,7 +982,7 @@ async function renderPrepared(prepared, onProgress) {
   const renderStartedAt = Date.now();
   await renderComposition({
     html: prepared.html, outMovPath: prepared.outMovPath, durationSec: prepared.durationSec,
-    onProgress: report, format: prepared.videoExt, quality: prepared.draft ? 'draft' : 'high',
+    onProgress: report, format: prepared.videoExt,
     assetsDir: prepared.assetsDir,
   });
   const renderMs = Date.now() - renderStartedAt;
@@ -1785,7 +1840,7 @@ async function renderManualHtml(body, onProgress) {
   const renderStartedAt = Date.now();
   await renderComposition({
     html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report,
-    format: videoExt, quality: body.draft ? 'draft' : 'high',
+    format: videoExt,
     assetsDir: path.join(baseDir, '_assets', markerSlug),
   });
 
@@ -1807,14 +1862,10 @@ async function renderManualHtml(body, onProgress) {
 }
 
 // Re-renderiza la ÚLTIMA versión de un marcador (HTML ya diseñado en disco) SIN
-// volver a llamar a la IA. Dos modos:
-//   hq=true  → "Render HQ": re-render en ALTA reemplazando EN SU LUGAR el video
-//              existente (el que ya está en el timeline); no crea versión nueva
-//              y el panel recolorea el clip a magenta. Falla si no hay video.
-//   hq=false → "reintentar render": el modelo ya había terminado pero el render
-//              falló. Respeta la calidad pedida (draft/alta) y, si el video no
-//              llegó a escribirse, usa la ruta nueva de esa versión.
-async function rerenderLatest(body, hq, onProgress) {
+// volver a llamar a la IA: es el "reintentar render" de la cola, para cuando el
+// modelo ya había terminado y lo que falló fue el render. Si el video no llegó a
+// escribirse, usa la ruta nueva de esa versión.
+async function rerenderLatest(body, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   body = body || {};
   const markerSlug = String(body.markerSlug || '').trim();
@@ -1836,21 +1887,11 @@ async function rerenderLatest(body, hq, onProgress) {
   let movPath = versionFile(baseDir, markerSlug, latest.version, '.' + videoExt) ||
     versionFile(baseDir, markerSlug, latest.version, '.mov') ||
     versionFile(baseDir, markerSlug, latest.version, '.mp4');
-  if (!movPath) {
-    if (hq) throw new Error('No se encontró el archivo de video de v' + latest.version + ' para reemplazar');
-    movPath = paths(baseDir, markerSlug, latest.version, latest.model || 'x', videoExt).mov;
-  }
+  if (!movPath) movPath = paths(baseDir, markerSlug, latest.version, latest.model || 'x', videoExt).mov;
 
-  const quality = (hq || !body.draft) ? 'high' : 'draft';
-  report({
-    pct: 30,
-    msg: hq ? 'Render HQ (reemplazando v' + latest.version + ' en alta)…'
-            : 'Re-render de v' + latest.version + ' (sin re-diseñar)…',
-  });
-  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, quality, assetsDir: path.join(baseDir, '_assets', markerSlug) });
-  const out = { ok: true, movPath, htmlPath: srcHtmlPath, version: latest.version, markerSlug, background: withBackground };
-  if (hq) out.replaced = true;
-  return out;
+  report({ pct: 30, msg: 'Re-render de v' + latest.version + ' (sin re-diseñar)…' });
+  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, assetsDir: path.join(baseDir, '_assets', markerSlug) });
+  return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest.version, markerSlug, background: withBackground };
 }
 
 // Limpia VIDEOS de versiones viejas de una secuencia —o de UN marcador, si viene
@@ -2010,6 +2051,39 @@ async function whisperStatusForPanel() {
   return st;
 }
 
+// ── Dictado por voz ────────────────────────────────────────────────────────
+// El motor pone acá las dos mitades: `dictado.js` captura y transcribe,
+// `dictado-refinar.js` elige con qué refinar. La única razón por la que pasan
+// por el motor y no los llama el panel directo es la CONFIG: el refinador
+// necesita las credenciales de verdad (`loadConfig`), no la vista enmascarada
+// que devuelve `getConfig` al panel.
+
+async function dictadoEstado() {
+  const cfg = loadConfig();
+  const estado = await dictado.dictadoEstado(cfg);
+  const cual = await dictadoRefinar.elegirRefinador(cfg).catch(() => null);
+  estado.refinador = cual ? (cual.nombre + (cual.detalle ? ' · ' + cual.detalle : '')) : '';
+  // Sin refinador el dictado NO se apaga: el texto crudo ya sirve. Pero el
+  // panel tiene que poder decir por qué el resultado va a venir en bruto, o el
+  // editor va a creer que el refinado falló en silencio.
+  estado.sinRefinador = cual ? '' : dictadoRefinar.porQueNoHayRefinador();
+  return estado;
+}
+
+function dictadoRefinarTexto(body) {
+  return dictadoRefinar.refinarDictado(body, loadConfig());
+}
+
+// Instalar Whisper cambia la respuesta de "¿se puede dictar acá?", y el sondeo
+// se guarda por sesión (mira el disco y corre `which`). Sin esto, el editor
+// instala Whisper con el botón y el micrófono sigue deshabilitado hasta que
+// reinicie Premiere.
+async function installWhisperYRevisarDictado(body, onProgress) {
+  const r = await installWhisper(body, onProgress);
+  dictado.olvidarMaquina();
+  return r;
+}
+
 async function prepareEngine(_arg, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   if (engineDepsReady()) return { ok: true, alreadyReady: true };
@@ -2039,16 +2113,11 @@ async function prepareEngine(_arg, onProgress) {
 
 // ── Persistencia de la cola por proyecto ────────────────────────────────
 // Guardamos la cola (liviana) en "<dir .prproj>/HyperPremiere/queue.json" para
-// que al reabrir el proyecto se recargue lo que había. Si el proyecto no está
-// guardado, usa ~/HyperPremiere (igual que las renders).
-function projectQueueRoot(projectPath) {
-  return projectPath
-    ? path.join(path.dirname(projectPath), 'HyperPremiere')
-    : path.join(os.homedir(), 'HyperPremiere');
-}
+// que al reabrir el proyecto se recargue lo que había. La carpeta la resuelve
+// projectRootPath, que es la misma que usan las salidas y la base del prompt.
 function saveQueue(body) {
   try {
-    const root = projectQueueRoot(body && body.projectPath);
+    const root = projectRootPath(body && body.projectPath);
     const file = path.join(root, 'queue.json');
     const jobs = (body && Array.isArray(body.jobs)) ? body.jobs : [];
     // Cola vacía: NO crear la carpeta solo por abrir el panel. Si ya existía un
@@ -2097,7 +2166,7 @@ function findRenderedVideo(body) {
 
 function loadQueue(body) {
   try {
-    const file = path.join(projectQueueRoot(body && body.projectPath), 'queue.json');
+    const file = path.join(projectRootPath(body && body.projectPath), 'queue.json');
     if (!fs.existsSync(file)) return { ok: true, jobs: [] };
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     return { ok: true, jobs: Array.isArray(data.jobs) ? data.jobs : [] };
@@ -2109,9 +2178,8 @@ module.exports = {
   prepareGenerate: (body, onProgress) => prepareGeneration(body, 'generate', onProgress),
   prepareFeedback: (body, onProgress) => prepareGeneration(body, body && body.mode === 'adjust' ? 'adjust' : 'regen', onProgress),
   renderPrepared,
-  // Re-render de la última versión sin IA (Render HQ / reintento del render):
-  renderVersionHQ: (body, onProgress) => rerenderLatest(body, true, onProgress),
-  renderLatest: (body, onProgress) => rerenderLatest(body, false, onProgress),
+  // Re-render de la última versión sin IA (reintento del render):
+  renderLatest: rerenderLatest,
   renderManualHtml,
   saveQueue,
   loadQueue,
@@ -2132,8 +2200,20 @@ module.exports = {
   cancelTranscription,
   whisperStatus: whisperStatusForPanel,
   whisperInstallPlan,
-  installWhisper,
+  installWhisper: installWhisperYRevisarDictado,
   cancelWhisperInstall,
+  // Dictado por voz. `dictadoArrancar` va por callProg: el texto parcial viaja
+  // por el mismo canal de progreso que ya usa la transcripción larga. La config
+  // se le pasa porque ahí está el micrófono elegido en ⚙.
+  dictadoEstado,
+  dictadoArrancar: (body, prog) => dictado.dictadoArrancar(body, prog, loadConfig()),
+  dictadoParar: dictado.dictadoParar,
+  dictadoRefinar: dictadoRefinarTexto,
+  // El micrófono: la lista para el desplegable de ⚙ (con cuál se usaría ahora)
+  // y la prueba con medidor, que va por callProg para mandar el nivel en vivo.
+  // El nombre elegido se guarda con `setConfig({ microfono })`.
+  microfonoListar: () => microfono.microfonoListar(loadConfig()),
+  microfonoProbar: (body, prog) => dictado.probarMicrofono(body, prog, loadConfig()),
   deriveObjective,
   getConfig,
   setConfig: saveConfig,
@@ -2144,6 +2224,9 @@ module.exports = {
   saveTranscript,
   loadTranscript,
   transcriptSummary,
+  // El estilo del curso, que ahora viaja con el .prproj en vez de con la máquina.
+  loadGeneralPrompt,
+  saveGeneralPrompt,
   newTempAudioPath,
   mediaHasAudio,
   loginClaudeStart,
@@ -2156,6 +2239,8 @@ module.exports = {
   checkUpdate,
   selfUpdate,
   saveCapture,
+  // Expuesto para el test del ⬇ Log: cómo se nombra el origen del prompt general.
+  _generalSourceLabel: generalSourceLabel,
   // Expuestos para los tests de continuidad (qué diseño se manda como referencia).
   _referencedMarkerNumbers: referencedMarkerNumbers,
   _listOtherResources: listOtherResources,

@@ -17,13 +17,21 @@
       </svg>
       <span class="brand-name">HyperPremiere</span>
     </div>
+    <!-- El chip de estado es hermano de .header-tools, no hijo: así, cuando el
+         panel es angosto, se queda arriba con la marca y las herramientas bajan
+         enteras a la fila de abajo. Adentro de .header-tools envolvía por el
+         medio del grupo y el ? terminaba encima del ⟳. -->
+    <span id="hdr-status" class="hdr-chip is-idle" title="Estado de la secuencia">sin secuencia</span>
     <div class="header-tools">
-      <span id="hdr-status" class="hdr-chip is-idle" title="Estado de la secuencia">sin secuencia</span>
+      <!-- El micrófono del dictado. Lo llena HPMicSelect (el MISMO control que
+           la fila de ⚙) y arranca escondido: en una máquina donde no se puede
+           dictar, o sin dispositivos, no se dibuja. -->
+      <div id="hdr-mic" class="hdr-mic" data-hidden="true"></div>
       <button id="btn-log" class="btn-log" type="button" title="Descargar log de diagnóstico a Descargas" aria-label="Descargar log"><span class="dl-ico">⬇</span> Log</button>
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.47</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.4.49</span>
       </button>
     </div>
   </header>
@@ -46,8 +54,8 @@
         <p class="help-diff"><strong>— Imágenes: referencia vs. usar —</strong><br>
         Cada imagen adjunta se etiqueta: <strong>referencia</strong> (el modelo la mira para leer composición/paleta/zonas libres, NO la incrusta) o <strong>✓ usar</strong> (la incrusta tal cual en el gráfico: un logo, ícono o foto, respetando su proporción). Las imágenes van <strong>numeradas</strong> en orden: en la instrucción podés decir "imagen 1 ponela arriba, imagen 2 es solo referencia".</p>
 
-        <p class="help-diff"><strong>— Fondo y modo borrador —</strong><br>
-        Un marcador se genera <strong>con fondo</strong> (mp4 opaco HD) o <strong>sin fondo</strong> (.mov con alpha, transparente). El <strong>Modo borrador</strong> hace un render más liviano para previsualizar, pero <em>solo afecta a los clips con fondo</em> (baja la compresión del mp4). Los clips con alpha salen SIEMPRE en máxima calidad (ProRes 4444): ahí borrador y alta son idénticos, por eso no se ofrece "Render HQ" sobre alpha.</p>
+        <p class="help-diff"><strong>— Fondo o alpha —</strong><br>
+        Un marcador se genera <strong>con fondo</strong> (mp4 opaco HD) o <strong>sin fondo</strong> (.mov con alpha, transparente). Es lo único que hay que decidir: los dos formatos salen <strong>siempre en máxima calidad</strong> (ProRes 4444 el alpha, H.264 de lectura el mp4), sin opción que apagar ni nada que re-renderizar después.</p>
 
         <p class="help-diff"><strong>— Las cuatro acciones —</strong><br>
         <strong>Generar</strong> (1ª vez): crea el recurso desde cero, con todo el contexto (objetivo + transcript completo + imágenes).<br>
@@ -61,8 +69,8 @@
         <p class="help-diff"><strong>— La cola —</strong><br>
         Procesa de a uno. Podés <strong>pausar/reanudar</strong> (si estaba diseñando, retoma desde el llamado a la IA; si estaba renderizando, reanuda el render), <strong>cancelar</strong> un ítem, <strong>reintentar</strong> si algo falló (si el modelo ya había terminado y falló el render, reintenta solo el render sin gastar IA), <strong>mover</strong> el orden y <strong>vaciar</strong> todo. Cada terminado se puede <strong>Ver</strong> (clic en el nombre del clip: abre esa secuencia y salta al marcador). Abajo, un <strong>estimado</strong> de tiempo, tokens y costo de lo pendiente.</p>
 
-        <p class="help-diff"><strong>— Render HQ y limpieza —</strong><br>
-        Si previsualizaste clips con fondo en borrador, <strong>Render HQ</strong> los re-renderiza en alta (por clip o toda la secuencia). Solo aparece cuando hay algo mejorable. <strong>🧹 Limpiar versiones viejas</strong> borra los videos de versiones anteriores (deja la última) para liberar disco; te muestra qué borra y pide confirmación.</p>
+        <p class="help-diff"><strong>— Limpieza —</strong><br>
+        <strong>🧹 Limpiar versiones viejas</strong> borra los videos de versiones anteriores (deja la última) para liberar disco; te muestra qué borra y pide confirmación.</p>
 
         <p class="help-diff">La herramienta <strong>guarda cada secuencia por separado</strong> (objetivo, instrucciones, imágenes y cola): cambiás de secuencia y al volver, todo intacto.</p>
       </div>
@@ -102,9 +110,6 @@
   </div>
 
   <div id="batch-status" class="muted"></div>
-  <label class="draft-toggle" title="Render más liviano para previsualizar. Solo afecta a clips CON FONDO (mp4, usa más compresión); los clips con transparencia (alpha) salen siempre en máxima calidad (ProRes 4444).">
-    <input type="checkbox" id="draft-mode"> <span>Modo borrador (render rápido · solo afecta clips con fondo)</span>
-  </label>
 
   <!-- Contador de uso de la sesión de Claude (tokens acumulados). -->
   <div id="session-usage" class="session-usage" title="Uso acumulado en esta sesión">
@@ -158,8 +163,19 @@
     <details id="general-section" class="context-section general-section">
       <summary><span class="section-title">Prompt general</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
       <div class="context-body">
+        <!-- Dos editores, un mismo .prproj: el que abre el proyecto tiene que
+             ver DE DÓNDE sale el estilo con el que va a generar. -->
+        <div id="general-conflict" class="general-conflict" data-hidden="true"></div>
+        <div class="general-source-row">
+          <span id="general-source" class="general-source"></span>
+          <button id="btn-general-scope" type="button" class="general-scope-btn" data-hidden="true"></button>
+        </div>
         <label class="field-label" for="general-instruction">Indicaciones para TODOS los marcadores</label>
         <textarea id="general-instruction" rows="3" placeholder="Estilo, marca, tipografía, colores, tono… lo que aplique a toda la clase. Se combina con la instrucción de cada marcador (no tenés que repetirlo)."></textarea>
+        <details id="general-base" class="general-base" data-hidden="true">
+          <summary>Ver la base del proyecto que esta secuencia está pisando</summary>
+          <div id="general-base-text" class="general-base-text"></div>
+        </details>
         <label class="field-label">Referencias generales (capturas, logos, PDFs)</label>
         <div id="general-stills-mount"></div>
       </div>
@@ -185,6 +201,9 @@
         <label class="field-label">Modelo</label>
         <div id="cfg-model" class="hp-select"></div>
         <span id="models-hint" class="muted"></span>
+        <!-- Cuánto le entra a este modelo y cuánto le mete de verdad una
+             generación en esta máquina. Lo arma HPUtil.lineaDeContexto. -->
+        <div id="cfg-context" class="muted"></div>
         <div id="provider-note" class="provider-note" data-hidden="true"></div>
 
         <div id="row-effort" class="cfg-row">
@@ -242,6 +261,21 @@
           <span class="muted">el render sigue de a uno · local = 1</span>
         </div>
 
+        <!-- El micrófono del dictado por voz. Se guarda por NOMBRE (los índices de
+             avfoundation cambian al enchufar algo) y es de esta máquina, no del
+             proyecto. "Probar" abre el elegido con el mismo comando que usa el
+             dictado y muestra el nivel en vivo; el veredicto queda en el ⬇ Log. -->
+        <div id="row-mic" class="cfg-row">
+          <label class="field-label">Micrófono (dictado por voz)</label>
+          <div class="mic-row">
+            <div id="cfg-mic" class="hp-select"></div>
+            <button id="btn-mic-refresh" type="button" class="icon-btn" title="Vuelve a preguntar qué micrófonos hay. Enchufaste algo y querés verlo sin cerrar el panel.">↻</button>
+            <button id="btn-mic-test" type="button" class="btn-mic-test" title="Abre el micrófono elegido con el mismo comando que usa el dictado y muestra el nivel durante 7 segundos. Hablá normal: la barra tiene que pasar la marca de la compuerta.">Probar micrófono</button>
+          </div>
+          <span id="mic-status" class="muted"></span>
+          <div id="mic-meter"></div>
+        </div>
+
         <div class="config-actions">
           <button id="btn-save-config" type="button" class="btn-primary" title="Guarda la configuración del modelo (proveedor, modelo y credenciales)">Guardar</button>
           <span id="config-status" class="muted"></span>
@@ -288,12 +322,17 @@
   <script src="js/seq-watch.js"></script>
   <script src="js/tabs.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/general-prompt.js"></script>
   <script src="js/transcript.js"></script>
   <script src="js/widgets.js"></script>
+  <script src="js/dictado.js"></script>
   <script src="js/stills.js"></script>
   <script src="js/queue.js"></script>
   <script src="js/queue-view.js"></script>
   <script src="js/corrections.js"></script>
+  <script src="js/general-view.js"></script>
+  <script src="js/mic-medidor.js"></script>
+  <script src="js/mic-select.js"></script>
   <script src="js/config-ui.js"></script>
   <script src="js/main.js"></script>
 </body>

@@ -9,6 +9,11 @@
 // engine.js, el login de Claude y el proveedor claude-cli), cada copia con
 // sus propios bugs potenciales de settled/clearTimeout.
 //
+// Para los procesos que NO entran en ese patrón —audio binario que hay que ir
+// consumiendo, un proceso bidireccional que vive entre dictados— está
+// `startProcess`, más abajo: hace el spawn con lo mínimo que `killTree`
+// necesita y devuelve el hijo.
+//
 // opts:
 //   timeoutMs  — tope total; 0 = sin timeout (ej. npm install, que baja un
 //                Chromium y puede tardar muchos minutos). Default 120000.
@@ -66,6 +71,40 @@ function killTree(child) {
   } catch (e) {
     try { child.kill('SIGKILL'); } catch (e2) {}
   }
+}
+
+// Arranca un proceso LARGO y devuelve el hijo, sin acumular su salida.
+//
+// `run()` no sirve para todo: acumula stdout en un string y resuelve al
+// terminar. Eso es exactamente lo que NO se puede hacer con la captura de audio
+// del dictado (PCM binario que crece a 32 KB por segundo y hay que ir
+// consumiendo) ni con el proceso persistente de Whisper (bidireccional, vive
+// entre dictados). Por eso esos tres spawn son directos.
+//
+// Lo que sí tienen que compartir con `run()` es el detalle que hace que
+// `killTree` funcione: en POSIX el hijo se lanza como LÍDER DE GRUPO, porque
+// killTree mata el grupo entero (`process.kill(-pid)`). Sin `detached`, ese
+// kill falla y killTree degrada en silencio a `child.kill()`, que mata al padre
+// y deja a los nietos vivos — un ffmpeg con el micrófono tomado, o los workers
+// de Python que levanta Whisper.
+//
+// opts:
+//   stdin  — true si hay que escribirle (el worker de Whisper). Sin esto, su
+//            stdin va a 'ignore', como en run().
+//   cwd, env — passthrough a spawn.
+function startProcess(cmd, args, opts) {
+  opts = opts || {};
+  const child = spawn(cmd, args || [], {
+    stdio: [opts.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    cwd: opts.cwd,
+    env: opts.env,
+    detached: !IS_WIN,
+  });
+  // 'error' sin oyente es una excepción que se lleva puesto el proceso entero
+  // (un binario que no está alcanza para tirarlo). Quien llama agrega el suyo y
+  // se entera igual: esto solo garantiza que haya al menos uno.
+  child.on('error', () => {});
+  return child;
 }
 
 function run(cmd, args, opts) {
@@ -156,4 +195,4 @@ function salidaDe(r, siNada) {
   return err || out || (siNada || '');
 }
 
-module.exports = { run, killTree, quoteForShell, salidaDe };
+module.exports = { run, startProcess, killTree, quoteForShell, salidaDe };

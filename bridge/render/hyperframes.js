@@ -232,7 +232,7 @@ function argsDeRender(o) {
     o.workDir,
     '-o', o.outPath,
     '--format', o.format,
-    '--quality', o.quality,
+    '--quality', 'high',
     '--workers', String(o.workers),
   ]);
   if (o.lowMemory) {
@@ -250,7 +250,7 @@ function argsDeRender(o) {
     a.push('--target-chunk-frames', '300');
   }
   if (o.format === 'mp4') {
-    a.push('--crf', o.quality === 'draft' ? '28' : '18');
+    a.push('--crf', '18'); // calidad de lectura: el clip se ve proyectado en una clase
     // Encode H.264 por hardware (VideoToolbox). En Apple Silicon esto usa el
     // motor de media dedicado, que es INDEPENDIENTE del GPU del browser (ANGLE
     // Metal, el que crasheaba) → seguro y bastante más rápido en la etapa de
@@ -267,7 +267,7 @@ function argsDeRender(o) {
  * Está suelta —y no adentro de renderComposition— para que la calibración use
  * este mismo camino: si midiera con otro comando, mediría otra cosa.
  *
- * @param {object} o  bin, baseArgs, workDir, outPath, format, quality, workers,
+ * @param {object} o  bin, baseArgs, workDir, outPath, format, workers,
  *                    lowMemory, gpu ('software' | otro), onData (opcional).
  */
 function correrCli(o) {
@@ -474,7 +474,7 @@ function removeGhostFiles(dir) {
  *                                    la duración real la define la composición HTML).
  * @returns {Promise<{movPath: string, htmlPath: string}>}
  */
-async function renderComposition({ html, outMovPath, durationSec, onProgress, format, quality, assetsDir }) {
+async function renderComposition({ html, outMovPath, durationSec, onProgress, format, assetsDir }) {
   var report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!html || typeof html !== 'string') {
     throw new Error('renderComposition: falta el HTML de la composición');
@@ -483,7 +483,6 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     throw new Error('renderComposition: falta outMovPath');
   }
   var fmt = format === 'mp4' ? 'mp4' : 'mov';
-  var q = quality === 'draft' ? 'draft' : 'high'; // borrador rápido vs alta calidad
 
   // Directorio temporal propio para esta render (cwd del CLI).
   // hyperframes espera un PROYECTO: index.html + hyperframes.json en la raíz.
@@ -541,7 +540,7 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   function buildArgs(attempt) {
     return argsDeRender({
       baseArgs: baseArgs, workDir: workDir, outPath: outMovPath,
-      format: fmt, quality: q, workers: attempt.workers, lowMemory: attempt.lowMemory,
+      format: fmt, workers: attempt.workers, lowMemory: attempt.lowMemory,
     });
   }
 
@@ -549,7 +548,7 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
   function runOnce(attempt) {
     return correrCli({
       bin: bin, baseArgs: baseArgs, workDir: workDir, outPath: outMovPath,
-      format: fmt, quality: q, workers: attempt.workers, lowMemory: attempt.lowMemory,
+      format: fmt, workers: attempt.workers, lowMemory: attempt.lowMemory,
       gpu: attempt.gpu, onData: scanProgreso,
     });
   }

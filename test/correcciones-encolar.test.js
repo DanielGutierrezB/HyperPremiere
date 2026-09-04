@@ -192,7 +192,6 @@ function montarPestana(opts) {
   ctx.HPCorrections.init({
     context: function () { return contexto; },
     refreshContext: function (cb) { cb(); },
-    draft: function () { return !!opts.draft; },
   });
 
   return { ctx: ctx, nodos: nodos, espia: espia, almacen: almacen };
@@ -394,34 +393,47 @@ test('la fila muestra qué se le había pedido a ese recurso', async function ()
     'al mes nadie se acuerda del encargo, y es lo que el modelo va a recibir');
 });
 
-test('el objetivo de la clase y las indicaciones generales viajan', async function () {
+test('el objetivo de la clase viaja con la corrección', async function () {
   const { p, fila } = await cargarFila(recurso(), { almacen: {
-    'Clase 14': { objective: 'enseñar deep research', __general__: { instruction: 'tipografía Inter, azul de marca' } },
+    'Clase 14': { objective: 'enseñar deep research' },
   } });
   fila.porTag('textarea')[0].value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
-  const pl = p.espia.encolados[0].payload;
-  eq(pl.objective, 'enseñar deep research');
-  eq(pl.generalInstruction, 'tipografía Inter, azul de marca');
+  eq(p.espia.encolados[0].payload.objective, 'enseñar deep research');
 });
 
-test('leyendo de otro corte, el marco de la clase sale del corte ABIERTO si allá no está', async function () {
-  // El corte viejo puede no haberse abierto nunca en esta máquina: su objetivo y
-  // su prompt general no están guardados acá. Es la misma clase, así que se
-  // toman de la secuencia abierta antes que mandar "(sin objetivo declarado)".
+test('el prompt general NO lo arma la pestaña: lo resuelve la cola contra el proyecto', async function () {
+  // Antes lo leía del localStorage de la secuencia de origen y, si no estaba,
+  // del corte abierto. Ahora hay una base del proyecto que vale para todas las
+  // secuencias, así que ese rebusque sobra — y mandarlo desde acá haría que una
+  // corrección pudiera salir con un estilo distinto del que sale una generación
+  // normal del mismo marcador, que es la clase de diferencia muda que no se ve
+  // hasta mirar el video.
+  const { p, fila } = await cargarFila(recurso(), { almacen: {
+    'Clase 14': { objective: 'enseñar deep research', __general__: { instruction: 'un texto viejo del localStorage' } },
+  } });
+  fila.porTag('textarea')[0].value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.encolados[0].payload.generalInstruction, undefined);
+});
+
+test('leyendo de otro corte, el objetivo sale del corte ABIERTO si allá no está', async function () {
+  // El corte viejo puede no haberse abierto nunca en esta máquina: su objetivo
+  // no está guardado acá. Es la misma clase, así que se toma de la secuencia
+  // abierta antes que mandar "(sin objetivo declarado)".
   const { p, fila } = await cargarCruzada(null, { almacen: {
-    'Clase 14': { objective: 'enseñar deep research', __general__: { instruction: 'azul de marca' } },
+    'Clase 14': { objective: 'enseñar deep research' },
     'Clase 14 v1': {},
   } });
   fila.porTag('textarea')[0].value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
-  const pl = p.espia.encolados[0].payload;
-  eq(pl.objective, 'enseñar deep research');
-  eq(pl.generalInstruction, 'azul de marca');
+  eq(p.espia.encolados[0].payload.objective, 'enseñar deep research');
 });
 
 test('lo que SÍ está guardado en el corte viejo gana sobre lo del abierto', async function () {
@@ -794,7 +806,10 @@ test('el tramo escrito a mano se guarda en la carpeta de origen, no en la abiert
 /** Monta la cola de verdad con un motor y un Premiere de mentira. */
 function montarCola(opts) {
   opts = opts || {};
-  const espia = { colocados: [], recoloreados: [], guardado: null, preparados: [], transcriptsPedidos: [] };
+  const espia = {
+    colocados: [], guardado: null, preparados: [],
+    transcriptsPedidos: [], promptsPedidos: [],
+  };
   const almacen = {};
   // El transcript es POR SECUENCIA, igual que en el panel: es lo que decide si
   // una corrección de otro corte encuentra su guion o se queda sin él.
@@ -834,6 +849,12 @@ function montarCola(opts) {
       getMarkerAssets: function () { return []; },
       getTranscriptOffset: function () { return 0; },
       getObjective: function () { return 'objetivo'; },
+      // El prompt general ya no se lee de acá: lo resuelve HPGeneral contra el
+      // disco del proyecto. Estos tres quedan para que la migración pueda mirar
+      // si esta máquina tenía algo guardado (no tiene).
+      setMarkerInstruction: function () {},
+      getGeneralPending: function () { return ''; },
+      setGeneralPending: function () {},
       setMarkerGenerated: function () {},
       setMarkerTimings: function () {},
       addSessionUsage: function () {},
@@ -843,10 +864,6 @@ function montarCola(opts) {
         espia.colocados.push({ mov: mov, seq: seq, start: start, dur: dur, color: color, hasAudio: hasAudio });
         cb('ok');
       },
-      recolorClip: function (seq, start, color, mov, cb) {
-        espia.recoloreados.push({ seq: seq, start: start, color: color });
-        cb('ok');
-      },
     },
     HPEngine: {
       call: function (m, arg) {
@@ -854,6 +871,17 @@ function montarCola(opts) {
         if (m === 'loadTranscript') {
           espia.transcriptsPedidos.push(arg);
           return Promise.resolve(opts.transcriptEnDisco || { ok: true, found: false });
+        }
+        // El estilo del curso vive al lado del .prproj: una base del proyecto y,
+        // si la clase lo necesita, el propio de esa secuencia que la pisa.
+        if (m === 'loadGeneralPrompt') {
+          espia.promptsPedidos.push(arg);
+          var base = opts.baseDelProyecto || '';
+          var propio = (opts.propioDeSecuencia || {})[arg.sequenceName] || '';
+          return Promise.resolve({
+            ok: true, text: propio || base, source: propio ? 'sequence' : (base ? 'project' : 'none'),
+            projectText: base, sequenceText: propio, hasProjectFile: !!base,
+          });
         }
         return Promise.resolve({ ok: true });
       },
@@ -869,7 +897,7 @@ function montarCola(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'queue.js']) {
+  for (const f of ['util.js', 'general-prompt.js', 'queue.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   return { ctx: ctx, espia: espia, porSecuencia: porSecuencia };
@@ -900,30 +928,35 @@ test('la corrección se coloca en AMARILLO, en su segundo original', async funct
   eq(c.espia.colocados[0].dur, 7);
 });
 
-test('una generación normal sigue saliendo magenta', async function () {
+test('una generación normal entra SIN etiqueta de color', async function () {
   // La contraprueba: el amarillo tiene que distinguir, y si todo saliera
-  // amarillo no distinguiría nada.
+  // pintado no distinguiría nada. La secuencia es del editor y sus colores
+  // significan lo que él quiera; -1 le dice al host que no la toque.
   const c = montarCola();
   c.ctx.HPQueue.add(jobBase());
   await dejarCorrer();
-  eq(c.espia.colocados[0].color, 11, 'magenta, como siempre');
+  eq(c.espia.colocados[0].color, -1, 'no le pintamos el clip a nadie');
 });
 
-test('un borrador con fondo sigue saliendo café, salvo que sea corrección', async function () {
+test('un job viejo con “draft” en el payload se coloca igual: el campo se ignora', async function () {
+  // queue.json puede tener jobs de cuando existía el modo borrador. Ese campo ya
+  // no lo lee nadie —ni el panel ni el motor— así que un payload viejo no puede
+  // cambiar ni el color ni la calidad: se coloca como cualquier otro.
   const c = montarCola();
   c.ctx.HPQueue.add(jobBase({ payload: { mode: 'adjust', draft: true, background: true } }));
   await dejarCorrer();
-  eq(c.espia.colocados[0].color, 14, 'café: es un borrador mejorable con Render HQ');
+  eq(c.espia.colocados.length, 1, 'se colocó');
+  eq(c.espia.colocados[0].color, -1);
 
   const c2 = montarCola();
   c2.ctx.HPQueue.add(jobBase({ correction: true, payload: { mode: 'adjust', draft: true, background: true } }));
   await dejarCorrer();
-  eq(c2.espia.colocados[0].color, 15, 'siendo corrección, manda el amarillo');
+  eq(c2.espia.colocados[0].color, 15, 'y siendo corrección, sigue mandando el amarillo');
 });
 
 test('si el panel se reinicia a mitad, la corrección sigue siendo corrección', async function () {
   // La cola se guarda liviana en queue.json. Si la marca no viajara, al
-  // reanudar el clip volvería magenta y se perdería de vista cuál se rehizo.
+  // reanudar el clip entraría sin etiqueta y se perdería de vista cuál se rehizo.
   const c = montarCola();
   c.ctx.HPQueue.add(jobBase({ correction: true }));
   await dejarCorrer();
@@ -934,6 +967,35 @@ test('si el panel se reinicia a mitad, la corrección sigue siendo corrección',
   ok(c.espia.guardado, 'la cola se persistió');
   const j = c.espia.guardado.jobs.filter(function (x) { return x.markerKey === 'Marcador 3'; })[0];
   eq(j.correction, true, 'la marca sobrevive al archivo');
+});
+
+// ── El estilo del curso en una corrección ────────────────────────────
+// La pestaña ya no lo manda; lo resuelve la cola contra la secuencia de la que
+// sale el material. Eso es lo que hace que corregir y generar de nuevo el mismo
+// marcador salgan con el mismo estilo.
+
+test('la corrección sale con la base del proyecto, sin que la pestaña la mande', async function () {
+  const c = montarCola({ baseDelProyecto: 'tipografía Inter, azul de marca' });
+  c.ctx.HPQueue.add(jobBase({ correction: true }));
+  await dejarCorrer();
+
+  eq(c.espia.preparados[0].generalInstruction, 'tipografía Inter, azul de marca');
+  eq(c.espia.preparados[0].generalSource, 'project', 'y el log va a poder decir de dónde salió');
+});
+
+test('corrigiendo de otro corte, el estilo sale del corte donde NACIÓ el recurso', async function () {
+  // Si ese corte tiene el suyo, es el que hizo bueno al original: leer el de la
+  // secuencia abierta rediseñaría con la marca de otra clase.
+  const c = montarCola({
+    baseDelProyecto: 'azul de marca',
+    propioDeSecuencia: { 'Clase 14 v1': 'verde, tipografía de la clase piloto' },
+  });
+  c.ctx.HPQueue.add(jobBase({ correction: true, storeSeqName: 'Clase 14 v1' }));
+  await dejarCorrer();
+
+  eq(c.espia.promptsPedidos[0].sequenceName, 'Clase 14 v1', 'se pregunta por el corte de origen');
+  eq(c.espia.preparados[0].generalInstruction, 'verde, tipografía de la clase piloto');
+  eq(c.espia.preparados[0].generalSource, 'sequence');
 });
 
 // ── El tramo del guion, en la corrección y en su feedback ────────────

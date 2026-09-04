@@ -78,9 +78,43 @@
    *     cuántas generaciones se juntó. Un "$15.37" pelado se lee como el costo de
    *     la sesión entera cuando en realidad cubre doce de ciento sesenta y cuatro.
    */
+  /**
+   * El gasto del DICTADO, que se muestra aparte del de las animaciones.
+   *
+   * Se dice al final de la línea y con su propia palabra ("dictado"), no sumado
+   * al total: un refinado son unos cientos de tokens y una generación son
+   * decenas de miles, así que mezclarlos hace que el promedio por generación
+   * deje de querer decir nada. Y encima pueden venir de proveedores distintos:
+   * el dictado elige el suyo.
+   *
+   * Devuelve { corta, larga } — vacías si todavía no se dictó nada.
+   */
+  function dictadoUsage(d) {
+    if (!d || !d.refinados) return { corta: '', larga: '' };
+    var entrada = (d.inputTokens || 0) + (d.cacheReadTokens || 0) + (d.cacheCreationTokens || 0);
+    var corta = 'dictado: ' + d.refinados + (d.refinados === 1 ? ' refinado' : ' refinados');
+    if (d.costUsd > 0) corta += ' · $' + d.costUsd.toFixed(2);
+    var larga = '\nDictado (aparte, no entra en los números de arriba): ' +
+      d.refinados + (d.refinados === 1 ? ' refinado' : ' refinados') + ' · ' +
+      addThousands(entrada) + ' tokens de entrada · ' + addThousands(d.outputTokens || 0) + ' de salida';
+    if (d.costUsd > 0) {
+      larga += ' · $' + d.costUsd.toFixed(2) + ' informado por ' + d.costRefinados + ' de ' + d.refinados;
+    } else {
+      larga += ' · sin costo informado (refinador local o proveedor que no lo devuelve)';
+    }
+    larga += '.';
+    return { corta: corta, larga: larga };
+  }
+
   function sessionUsage(u) {
+    var dic = dictadoUsage(u && u.dictado);
     if (!u || !u.generations) {
-      return { line: 'sin generaciones todavía', detail: 'Uso acumulado en esta sesión' };
+      // Se puede haber dictado sin haber generado nada todavía, y ese gasto
+      // existe igual: decir "sin generaciones" y esconderlo sería perderlo.
+      return {
+        line: dic.corta || 'sin generaciones todavía',
+        detail: 'Uso acumulado en esta sesión' + dic.larga,
+      };
     }
     var cache = (u.cacheReadTokens || 0) + (u.cacheCreationTokens || 0);
     var entrada = (u.inputTokens || 0) + cache;
@@ -97,6 +131,7 @@
         (reparto ? ' en ' + u.costGenerations + ' de ' + gens : '');
     }
     line += ' · ' + gens + (gens === 1 ? ' generación' : ' generaciones');
+    if (dic.corta) line += ' · ' + dic.corta;
 
     var detail = 'Entrada: ' + addThousands(entrada) + ' tokens = ' +
       addThousands(u.inputTokens || 0) + ' sin cachear + ' +
@@ -121,7 +156,204 @@
         '(sin los tokens de caché), así que el total de entrada queda corto. ' +
         'Tocá "reiniciar" para empezar a medir limpio.';
     }
+    detail += dic.larga;
     return { line: line, detail: detail };
+  }
+
+  // ── Cuánto le entra al modelo, y cuánto le metemos de verdad ──────────
+  //
+  // Son dos preguntas que el editor hace juntas cuando abre ⚙ ("¿cuánto de la
+  // ventana estoy usando?") y que se contestan de fuentes distintas: la segunda
+  // la medimos nosotros —el contador de la sesión—, la primera no la informa
+  // nadie y hay que ponerla a mano.
+
+  /**
+   * Ventana de contexto por familia de Claude, en tokens.
+   *
+   * DE DÓNDE SALIÓ CADA NÚMERO, para poder auditarlo y actualizarlo:
+   * de la documentación de Anthropic, "Context window sizes by model" y la
+   * tabla de comparación de modelos, consultadas el 2026-09-03. Dicen que
+   * tienen 1M de ventana Fable 5.1, Mythos 5.1, Fable 5, Mythos 5, Opus 5,
+   * Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5 y Sonnet 4.6; que el resto —Sonnet
+   * 4.5, los Haiku— tiene 200k; y, textual, que "for every model with a
+   * 1M-token context window, 1M is the default: you don't need a beta header".
+   *
+   * POR QUÉ ES UNA TABLA NUESTRA. Porque por donde el panel pregunta, no viene.
+   * `cursor-agent --list-models` devuelve "<id> - <nombre>" y nada más, y de la
+   * lista de Anthropic el motor lee `id` y `display_name` (ver listClaudeModels
+   * en bridge/engine.js). La API sí ofrece `max_input_tokens`, y cuando llega
+   * se le hace caso antes que a esta tabla — pero llega solo por ese camino.
+   *
+   * UNA FAMILIA QUE NO ESTÁ ACÁ NO MUESTRA NADA. Es a propósito: el editor va a
+   * usar este número para decidir cuánto material le mete a una generación, así
+   * que un default inventado es peor que un renglón vacío.
+   *
+   * VA A QUEDAR DESACTUALIZADA. Cada modelo nuevo entra al panel solo (la lista
+   * se pide a la cuenta) pero acá hay que agregarlo a mano; hasta que alguien lo
+   * haga, se lo ve sin ventana. Ese es el modo de fallar correcto.
+   */
+  var VENTANA_CLAUDE = {
+    "claude-fable-5-1": 1000000,
+    "claude-mythos-5-1": 1000000,
+    "claude-fable-5": 1000000,
+    "claude-mythos-5": 1000000,
+    "claude-opus-5": 1000000,
+    "claude-opus-4-8": 1000000,
+    "claude-opus-4-7": 1000000,
+    "claude-opus-4-6": 1000000,
+    "claude-sonnet-5": 1000000,
+    "claude-sonnet-4-6": 1000000,
+    "claude-sonnet-4-5": 200000,
+    "claude-haiku-4-5": 200000
+  };
+
+  // Lo único que se puede afirmar de cualquier Claude de la lista de arriba sin
+  // saber por qué puerta entra: ninguno baja de 200k.
+  var PISO_CLAUDE = 200000;
+
+  /** Tamaños redondos de ventana: 1000000 → "1M", 200000 → "200k". */
+  function fmtVentana(n) {
+    n = Math.round(Number(n) || 0);
+    var esc = n >= 1000000 ? [1000000, "M"] : (n >= 1000 ? [1000, "k"] : null);
+    if (!esc) return String(n);
+    var v = n / esc[0];
+    return (v === Math.round(v) ? String(v) : v.toFixed(1).replace(".", ",")) + esc[1];
+  }
+
+  /**
+   * Qué ventana de contexto corresponde, según MODELO + PROVEEDOR + CÓMO ESTÁS
+   * AUTENTICADO. Devuelve null cuando no se sabe, que es la mitad del punto.
+   *
+   * La trampa que esto resuelve: el mismo Sonnet no tiene la misma ventana
+   * según por dónde entres.
+   *
+   *   - Por CURSOR el dato lo da el propio proveedor: las variantes de 1M se
+   *     llaman así en la lista que devuelve el CLI ("Claude Sonnet 5 1M
+   *     Thinking"). Si el nombre no lo dice, Cursor no lo dice, y nosotros
+   *     tampoco.
+   *   - Por la API de Claude entrás a la ventana documentada, que para las
+   *     familias de arriba es 1M sin ningún beta.
+   *   - Por el CLI de Claude DEPENDE DE LA CREDENCIAL. Con una API key el CLI
+   *     va por la API y vale lo mismo. Con la sesión de claude.ai o un token de
+   *     suscripción, nadie nos dice qué ventana efectiva te toca: ni el CLI
+   *     (`claude auth status` contesta con qué te autenticás, no cuánto te
+   *     entra) ni la lista de modelos. Ahí se muestra el piso —200k, lo único
+   *     seguro— marcado como piso, y NO se promete el 1M. Prometerlo es el
+   *     error caro: el editor arma una generación de medio millón de tokens
+   *     contra una ventana que no sabemos que tenga.
+   *
+   * @param {{provider:string, model:string, nombre?:string,
+   *          autenticacion?:string, reportado?:number}} q
+   *   `nombre` es el nombre para mostrar que devolvió el proveedor (de ahí sale
+   *   el 1M de Cursor); `autenticacion` es el `authMethod` que contestó el CLI
+   *   de Claude ('api_key' | 'claude.ai' | 'oauth_token' | '' si no se sabe);
+   *   `reportado` es el `max_input_tokens` de la API cuando viene.
+   * @returns {null | {tokens:number, texto:string, piso:boolean, largo:number}}
+   *   `largo` es la ventana que ese modelo tiene por su mejor puerta. Cuando
+   *   `piso` es true, es la que NO se está prometiendo, y el renglón la nombra
+   *   en vez de decir "el 1M" a mano: el día que haya una familia de 500k, el
+   *   texto sigue siendo cierto.
+   */
+  function ventanaDeContexto(q) {
+    q = q || {};
+    var provider = String(q.provider || "");
+
+    if (provider === "cursor-cli") {
+      if (!/\b1M\b/i.test(String(q.nombre || ""))) return null;
+      return { tokens: 1000000, texto: "1M", piso: false, largo: 1000000 };
+    }
+    if (provider !== "claude-cli" && provider !== "claude-api") return null;
+
+    // Los IDs actuales de Claude son sin fecha, pero los viejos traen el
+    // snapshot pegado (claude-haiku-4-5-20251001) y es la misma familia.
+    var familia = String(q.model || "").toLowerCase().replace(/-\d{8}$/, "");
+    var largo = VENTANA_CLAUDE[familia];
+    if (!largo) return null;
+
+    var porLaApi = (provider === "claude-api") ||
+      (provider === "claude-cli" && q.autenticacion === "api_key");
+    if (porLaApi) {
+      // Si la API dijo cuánto entra, le gana a la tabla: es el dato de la
+      // cuenta de verdad y se actualiza solo.
+      var rep = Number(q.reportado);
+      var tokens = (isFinite(rep) && rep > 0) ? Math.round(rep) : largo;
+      return { tokens: tokens, texto: fmtVentana(tokens), piso: false, largo: tokens };
+    }
+    // Suscripción, o todavía no sabemos con qué entra. Una familia que ya está
+    // en el piso no tiene nada de ambiguo; una de 1M sí, y se dice.
+    if (largo <= PISO_CLAUDE) return { tokens: largo, texto: fmtVentana(largo), piso: false, largo: largo };
+    return { tokens: PISO_CLAUDE, texto: fmtVentana(PISO_CLAUDE) + "+", piso: true, largo: largo };
+  }
+
+  /**
+   * Cuánta ENTRADA gasta una generación con este proveedor, según lo ya medido
+   * en esta máquina. null si todavía no hay con qué contestar.
+   *
+   * Va por proveedor y no por modelo por dos razones: lo que domina la entrada
+   * es de quién es la puerta (con Cursor cada llamada arrastra ~31,8k de
+   * contexto del propio agente, con Claude directo no), y en Cursor el ID del
+   * modelo cambia con el nivel de pensamiento, así que por modelo la muestra se
+   * partiría en pedazos de una o dos generaciones.
+   *
+   * Los bolsillos por proveedor solo existen desde que la entrada se cuenta
+   * entera: un acumulado viejo no tiene ninguno, así que no puede ensuciar este
+   * promedio — contesta "todavía no" hasta que haya generaciones nuevas. Quién
+   * decide si un bolsillo cuenta es HPStore al leerlo (mira `regla`, igual que
+   * mira `rule` en el total); acá no se repite ese criterio, para que no haya
+   * dos lugares donde cambiarlo.
+   *
+   * Lo de dividir por cero no es paranoia: esto sale de localStorage y un
+   * archivo tocado a mano puede traer un bolsillo con cero generaciones.
+   */
+  function consumoTipico(uso, provider) {
+    var b = uso && uso.porProveedor && uso.porProveedor[String(provider || "")];
+    if (!b) return null;
+    var gens = Number(b.generaciones) || 0;
+    var entrada = Number(b.entrada) || 0;
+    if (gens < 1 || entrada <= 0) return null;
+    return { entrada: Math.round(entrada / gens), generaciones: gens };
+  }
+
+  /**
+   * El renglón que va debajo del selector de ⚙, contestando la pregunta con la
+   * que el editor lo abre: cuánto le entra a esto y cuánto le meto yo.
+   *
+   * Las dos mitades pueden faltar por separado y cada una lo dice con su
+   * motivo, en vez de esconderse o de rellenarse con el número de otra cosa.
+   */
+  function lineaDeContexto(q) {
+    q = q || {};
+    var v = q.ventana;
+    var c = q.consumo;
+    var quien = String(q.proveedor || "este proveedor");
+    var partes = [];
+
+    if (!v) {
+      partes.push("Ventana de contexto: no la tengo anotada para este modelo.");
+    } else if (v.piso) {
+      partes.push("Ventana de contexto: al menos " + fmtVentana(v.tokens) +
+        " — por suscripción nadie dice cuál te toca de verdad, así que no te prometo los " +
+        fmtVentana(v.largo) + ".");
+    } else {
+      partes.push("Ventana de contexto: " + v.texto + ".");
+    }
+
+    if (!c) {
+      partes.push("Todavía no generaste con " + quien + ", así que no sé cuánto gasta acá.");
+    } else {
+      var t = "Una generación con " + quien + " gastó ≈ " + fmtTokens(c.entrada) +
+        " de entrada (promedio de " + c.generaciones + ")";
+      if (v) t += ", o sea ~" + Math.round((c.entrada / v.tokens) * 100) + "% de " +
+        (v.piso ? "esos " : "") + fmtVentana(v.tokens);
+      partes.push(t + ".");
+    }
+
+    // Acá NO se repite que Cursor arrastra ~30k de contexto propio: eso ya lo
+    // dice el aviso amarillo que está dos renglones más abajo, y decirlo dos
+    // veces seguidas es ruido. Además, con Cursor el promedio de arriba ya lo
+    // muestra solo — es la razón por la que sale bastante más alto que el de
+    // Claude para el mismo trabajo.
+    return partes.join(" ");
   }
 
   /**
@@ -287,7 +519,12 @@
     fmtDuration: fmtDuration,
     addThousands: addThousands,
     fmtTokens: fmtTokens,
+    fmtVentana: fmtVentana,
     sessionUsage: sessionUsage,
+    dictadoUsage: dictadoUsage,
+    ventanaDeContexto: ventanaDeContexto,
+    consumoTipico: consumoTipico,
+    lineaDeContexto: lineaDeContexto,
     shortenMiddle: shortenMiddle,
     distinguish: distinguish,
     updateBadge: updateBadge,

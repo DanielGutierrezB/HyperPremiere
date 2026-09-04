@@ -187,6 +187,35 @@ async function main() {
     return;
   }
 
+  // ── El CLI contestando TEXTO, que es lo que le pide el refinador del
+  // dictado: una instrucción de diseño, no una composición. Va con el mismo
+  // `--output-format json` que usa el resto.
+  //   'texto'            anda.
+  //   'texto-sin-tools'  el mismo CLI pero más viejo que --tools: rechaza el
+  //                      flag y, sin él, refina bien. Sin la escalera de
+  //                      reintento, acá el refinado se perdía entero.
+  if (modo === 'texto' || modo === 'texto-sin-tools') {
+    if (modo === 'texto-sin-tools' && args.indexOf('--tools') !== -1) {
+      process.stderr.write("error: unknown option '--tools'\n");
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false,
+      result: process.env.FAKE_TEXTO ||
+        'El título entra desde la izquierda con un fade de medio segundo y easing suave en los ' +
+        'keyframes. El logo queda abajo a la derecha durante toda la animación.',
+      // El manual del refinador son ~1.500 caracteres que se repiten en cada
+      // llamada: el CLI los lee de caché, y ahí es donde está la entrada.
+      usage: {
+        input_tokens: 180, output_tokens: 44,
+        cache_read_input_tokens: 12000, cache_creation_input_tokens: 0,
+      },
+      total_cost_usd: 0.0004,
+    }) + '\n');
+    return;
+  }
+
   // Un CLI anterior a --tools/--allowedTools. Rechaza el flag al instante, sin
   // gastar un token, y el motor tiene que volver a la forma vieja en vez de
   // dejar al editor sin generar por un cartelito.

@@ -67,6 +67,12 @@ const DEFAULT_TIMEOUT_MS = 600_000; // 600s (el CLI lee stills con herramientas 
  *
  * El mismo nombre va en --allowedTools para que leer no PREGUNTE: --add-dir
  * dice DÓNDE puede leer; esto, que no hace falta consultarlo.
+ *
+ * Es el DEFAULT, no una constante cerrada: quien llama puede pedir otro juego
+ * con `config.tools`, y `config.tools: ''` es "ninguna". Eso último no es
+ * hipotético — el refinador del dictado le manda dos frases de texto y salir a
+ * leer archivos ahí es tiempo regalado, que es justo lo que se está tratando
+ * de no pagar.
  */
 const TOOLS = 'Read';
 
@@ -247,18 +253,33 @@ function errorDeSalida(generico, r, bin, model) {
 }
 
 /**
+ * Una llamada al CLI, devolviendo el TEXTO tal como lo escribió el modelo.
+ *
+ * Es todo lo que este archivo sabe hacer —los reintentos por flag desconocido,
+ * el system prompt por archivo, el `is_error` con código 0, el rescate del
+ * stream, el conteo de tokens— menos una cosa: no interpreta la respuesta como
+ * HTML. Eso lo hace `generate`, que es `complete` + `stripHtmlFence`.
+ *
+ * La separación existe porque el CLI también atiende trabajos de TEXTO (el
+ * refinador del dictado). Antes esos trabajos se escribían aparte, spawneando
+ * el CLI por su cuenta, y lo que se perdía no era código repetido sino esto:
+ * el CLI puede salir con CÓDIGO 0 y `is_error: true`, con el error adentro de
+ * `result`. Quien lee `result` y listo se lleva el mensaje de error como si
+ * fuera la respuesta del modelo.
+ *
  * @param {object} opts
  * @param {string} opts.systemPrompt
  * @param {string} opts.userPrompt
  * @param {string[]} [opts.images] - data URLs de stills
  * @param {string} opts.model
- * @param {object} [opts.config] - { timeoutMs?, binPath? }
+ * @param {object} [opts.config] - { timeoutMs?, binPath?, tools?, effort?,
+ *   readDirs?, promptViaStdin?, oauthToken?/apiKey? (ver claude-session) }
  * @param {function} [opts.onActivity] - se lo llama con lo que el modelo está
  *   haciendo mientras trabaja (ver agent-stream.js). Si no viene, el CLI corre
  *   con el formato de salida de siempre y no cambia nada.
- * @returns {Promise<string>} HTML de la composicion
+ * @returns {Promise<{text:string, usage:object|null, warning:string}>}
  */
-async function generate({ systemPrompt, userPrompt, images, model, config, onActivity }) {
+async function complete({ systemPrompt, userPrompt, images, model, config, onActivity }) {
   const cfg = config || {};
   if (!userPrompt || typeof userPrompt !== 'string') {
     throw new Error('claude-cli: userPrompt es requerido');
@@ -268,6 +289,8 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     ? cfg.timeoutMs
     : DEFAULT_TIMEOUT_MS;
   const bin = cfg.binPath || 'claude';
+  // Ver TOOLS: '' es "ninguna", y hay que distinguirlo de "no me lo pediste".
+  const tools = cfg.tools === undefined ? TOOLS : String(cfg.tools);
 
   const { paths: imagePaths, dir: imagesDir, cleanup } = writeTempImages(images);
 
@@ -336,7 +359,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
     // Solo leer, y leer sin preguntar (ver TOOLS). Los dos flags son
     // variádicos como --add-dir, así que cada uno lleva UN nombre y lo que
     // sigue es siempre otro flag.
-    if (!viejo && !sinTools) args.push('--tools', TOOLS, '--allowedTools', TOOLS);
+    if (!viejo && !sinTools) args.push('--tools', tools, '--allowedTools', tools);
     // OJO con el orden: --add-dir es VARIÁDICO ("--add-dir <directories...>"),
     // así que se come todo lo que le siga hasta el próximo flag. Comprobado
     // contra el CLI: `--add-dir /tmp hola` se traga "hola" y el CLI corta con
@@ -516,13 +539,28 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       warning = (warning ? warning + '\n' : '') + avisos.join('\n');
     }
 
-    const html = stripHtmlFence(text);
-    if (!html) throw new Error('claude-cli: la respuesta del CLI vino vacia');
-    return { text: html, usage, warning };
+    if (!text.trim()) throw new Error('claude-cli: la respuesta del CLI vino vacia');
+    return { text, usage, warning };
   } finally {
     cleanup();
     if (sysFile) sysFile.cleanup();
   }
 }
 
-module.exports = { generate };
+/**
+ * Lo mismo, leyendo la respuesta como la COMPOSICIÓN: se le saca el fence de
+ * markdown con el que los modelos envuelven el HTML.
+ *
+ * @param {object} opts - los mismos de `complete`
+ * @returns {Promise<{text:string, usage:object|null, warning:string}>} `text` es el HTML
+ */
+async function generate(opts) {
+  const r = await complete(opts);
+  const html = stripHtmlFence(r.text);
+  // Puede quedar vacío aunque `complete` haya devuelto texto: una respuesta que
+  // es solo <think>…</think> se va entera en el filtro.
+  if (!html) throw new Error('claude-cli: la respuesta del CLI vino vacia');
+  return { text: html, usage: r.usage, warning: r.warning };
+}
+
+module.exports = { generate, complete };

@@ -211,6 +211,10 @@ function montarCola(opts) {
       getMarkerAssets: function () { return []; },
       getTranscriptOffset: function () { return 0; },
       getObjective: function () { return 'objetivo'; },
+      // El prompt general de esta cola sale del disco (HPGeneral), no de acá.
+      setMarkerInstruction: function () {},
+      getGeneralPending: function () { return ''; },
+      setGeneralPending: function () {},
       setMarkerGenerated: function () {},
       setMarkerTimings: function () {},
       addSessionUsage: function () {},
@@ -226,12 +230,14 @@ function montarCola(opts) {
         }
         cb('ok');
       },
-      recolorClip: function (seq, start, color, mov, cb) { cb('ok'); },
     },
     HPEngine: {
       call: function (m, arg) {
         espia.llamadasMotor.push(m);
         if (m === 'mediaHasAudio') return Promise.resolve({ ok: true, hasAudio: false });
+        if (m === 'loadGeneralPrompt') {
+          return Promise.resolve({ ok: true, text: '', source: 'none', projectText: '', sequenceText: '', hasProjectFile: false });
+        }
         if (m === 'findRenderedVideo') {
           espia.buscadoEnDisco = arg;
           return Promise.resolve(opts.enDisco || { ok: false, error: 'no hay video' });
@@ -251,7 +257,7 @@ function montarCola(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  ['util.js', 'queue.js'].forEach(function (f) {
+  ['util.js', 'general-prompt.js', 'queue.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, 'js', f), 'utf8'), ctx, { filename: f });
   });
   return { ctx: ctx, espia: espia };
@@ -396,5 +402,5 @@ test('la posibilidad de colocarlo sobrevive a cerrar el panel', async function (
   const guardado = c.espia.guardado.jobs[0];
   ok(guardado.notPlaced, 'con la marca');
   eq(guardado._movPath, '/p/HyperPremiere/clase-23/Marcador 3 v3.mov', 'y con el archivo');
-  eq(guardado._placeColor, 11, 'y con el color que le tocaba');
+  eq(guardado._placeColor, -1, 'y con el color que le tocaba (ninguno: no es una corrección)');
 });
