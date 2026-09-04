@@ -35,22 +35,11 @@
    * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
    * `null`.
    *
-   * El dictado es un AGREGADO a los campos de prompt, nunca un requisito, y las
-   * situaciones en las que el módulo NO está son reales: Windows (donde el
-   * botón va deshabilitado por decisión tomada), una máquina sin Whisper
-   * instalado, y que `js/dictado.js` no llegue a evaluarse por lo que sea. En
-   * los tres casos la tarjeta del marcador, las Indicaciones generales y el
-   * prompt general tienen que dibujarse igual y escribirse a mano. Sin esta
-   * guarda, un panel sin dictado se queda sin tarjetas de marcador, que es todo
-   * el panel.
-   *
-   * La guarda vive acá y no en un módulo común a propósito: un módulo común
-   * sería otra cosa que puede faltar, o sea el mismo bug una capa más arriba.
+   * El dictado es un AGREGADO a los campos de prompt, nunca un requisito: sin
+   * él, la tarjeta del marcador y las Indicaciones generales se dibujan igual y
+   * se escriben a mano. La guarda está en HPUtil.
    */
-  function micOpcional(ta, opts) {
-    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
-    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
-  }
+  var micOpcional = HPUtil.micOpcional;
 
   // Clave del "Prompt general" (instrucción + stills + recursos que aplican a
   // TODOS los marcadores). Ver HPStore.GENERAL_KEY.

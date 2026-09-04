@@ -1616,12 +1616,11 @@ del cartel —culpa del `button { flex: 1; min-width: 0 }` global, que está par
 acciones, donde tres botones se reparten la fila— y su etiqueta se iba **18 px afuera del
 panel**, con scroll horizontal en todo el panel y a **cualquier** ancho (medido a 360, 400,
 440, 470, 520 y 600). El DOM de mentira no calcula cajas, así que estos tests **no miden**:
-fijan la regla de CSS donde vivía el bug —que el botón no se encoja, que la fila envuelva y
-que el texto reclame su ancho mínimo, que es lo que decide cuándo el botón baja de línea— y
-que el HTML siga teniendo el botón **donde la regla lo busca** (un `<div>` en el medio lo
-dejaría afuera sin que nadie toque el CSS). Medir se mide con la **maqueta**
-(`test/manual/panel-demo`, que usa el HTML y el CSS de verdad): `scrollWidth` contra
-`clientWidth` a esos seis anchos, antes y después.
+fijan la regla de CSS donde vivía el bug —que la fila envuelva y que el texto reclame su
+ancho mínimo, que es lo que decide cuándo el botón baja de línea— y que el HTML siga siendo
+texto + botón sin envoltorios en el medio. Medir se mide con la **maqueta**
+(`test/manual/panel-demo`, que usa el HTML y el CSS de verdad), a esos seis anchos, antes y
+después. El blindaje propio de este cartel ya no está: se fue con la causa (ver más abajo).
 
 Y el **encabezado**, que es el otro, y donde la misma regla global picó de nuevo. En un panel
 angosto "HyperPremiere" se dibujaba **encima** de la insignia verde de estado y el `?` encima
@@ -1629,9 +1628,7 @@ del `⟳ v1.4.4…`, que además quedaba cortado. Son dos causas: `.brand` tení
 quedar más chica que su contenido y su nombre no recortaba, así que lo que no entraba se
 pintaba **afuera** de la caja; y la etiqueta de versión quedaba en **19 px a 470** por el
 mismo `button { flex: 1 }` global —en el encabezado ya había tres blindajes uno por uno
-contra esa regla y el de `.btn-update` era el que faltaba—. El arreglo blinda el
-**contenedor** y no cada botón (`.header-tools > * { flex: none }`), así que el control que se
-sumó ahora, el micrófono, y el que se sume mañana nacen sanos; el grupo de herramientas dejó
+contra esa regla y el de `.btn-update` era el que faltaba—. El grupo de herramientas dejó
 de envolver **por dentro**, que era lo que ponía el `?` sobre el `⟳`, y se va entero a la fila
 de abajo cuando no cabe. La invariante que sostiene todo: cada hoja del encabezado o tiene su
 ancho natural o puede ceder **y recorta**, y con el encabezado envolviendo así no hay
@@ -1641,6 +1638,21 @@ el CSS real; medido en la maqueta a 320, 360, 400, 470, 600 y 900: desborde 0 px
 etiqueta de versión entera en sus 70 px siempre. `node test/manual/panel-demo/medir-encabezado.js`
 lo vuelve a medir: compara los `getBoundingClientRect` de todo el encabezado y avisa qué par
 se toca, que es la forma directa de ver lo que muestran las capturas.
+
+**v1.4.50 — la causa, no los síntomas.** Los dos párrafos de arriba son el mismo bug contado
+dos veces, y hubo cuatro. El `button { flex: 1; min-width: 0 }` global le daba a **todos** los
+botones del panel base 0 y permiso para encogerse, cuando eso solo lo quería la barra de
+acciones; como los botones son `nowrap`, el que caía en cualquier otra fila flex quedaba
+angosto y pintaba la etiqueta **afuera** de su caja. Ahora el default es al revés —`flex: 0 1
+auto` y sin `min-width: 0`, así el piso de cada botón es su propia etiqueta— y el reparto se
+pide donde se lo quiere, en `.actions button`. Con eso se sacaron **veinticuatro** blindajes
+sueltos (el del cartel, el de Corrections, el del encabezado, el `min-width: 120px` a mano de
+la barra de acciones y veinte más); el único que quedó es `.icon-btn`, que no era de esta
+familia: tiene ancho fijo y una sola letra, así que sí se puede aplastar. Medido con
+`node test/manual/panel-demo/medir-botones.js` —15 vistas por seis anchos, 7578 mediciones de
+botón—: **572 botones con contenido fuera de su caja pasaron a 30**, cero empeoraron, y sacar
+los veinticuatro parches no cambió **ni una** medición de ancho. Los 30 que quedan son el
+desplegable de micrófono en modo ícono, idéntico antes y después.
 
 Aparte, dos scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué

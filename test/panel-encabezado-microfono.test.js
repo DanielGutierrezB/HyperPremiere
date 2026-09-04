@@ -26,14 +26,20 @@
 //    flex nada se superpone por sí solo: se superpone cuando un texto sin
 //    recorte sale de una caja aplastada.
 //
-// 2. La etiqueta de versión es otra aparición del `button { flex: 1;
-//    min-width: 0 }` global (el que reparte la barra de acciones en partes
-//    iguales). En el encabezado ya había TRES blindajes uno por uno contra esa
-//    misma regla —`.hdr-chip`, `.icon-btn` y `.btn-log` con `flex: none`—; el
-//    que faltaba era `.btn-update`, y a 470 px quedó en 19 px de ancho con su
-//    "⟳ v1.4.49" (70 px) chorreando sobre el `?`. Por eso el blindaje pasó a
-//    ser del CONTENEDOR (`.header-tools > *`) y no de cada botón: el control
-//    que se sumó ahora —el micrófono— y el que se sume mañana nacen blindados.
+// 2. La etiqueta de versión era otra aparición del `button { flex: 1;
+//    min-width: 0 }` global (el que repartía la barra de acciones en partes
+//    iguales y de paso aplastaba a todos los demás botones del panel). A 470 px
+//    `.btn-update` quedó en 19 px de ancho con su "⟳ v1.4.49" (70 px)
+//    chorreando sobre el `?`, y se lo tapó blindando el CONTENEDOR
+//    (`.header-tools > * { flex: none }`), además de los tres blindajes uno por
+//    uno que ya había.
+//
+//    Eso duró un día: la regla global era la causa de otros tres bugs iguales,
+//    así que se la invirtió —los botones valen su etiqueta por default— y los
+//    veinticuatro parches se sacaron. El del encabezado también, y medido: las cajas
+//    dan idénticas con y sin él. Lo que fija esa parte de estos tests, entonces,
+//    ya no es el blindaje sino el default; la regla nueva la fija
+//    panel-botones-flex.test.js.
 //
 // Lo que estos tests NO hacen: medir cajas. El DOM de mentira del repo no tiene
 // motor de layout —no reparte flex, no envuelve, no mide nada—, así que un test
@@ -103,10 +109,12 @@ function declaraciones(selector) {
   return d;
 }
 
-/** El índice de la última regla de nivel raíz con ese selector. */
-function ultima(selector) {
-  const hits = REGLAS.map((r, i) => ({ r, i })).filter((x) => x.r.selector === selector && !x.r.dentroDeMedia);
-  return hits.length ? hits[hits.length - 1].i : -1;
+function flexGrow(d) {
+  if (d['flex-grow'] !== undefined) return Number(d['flex-grow']);
+  if (d.flex === undefined) return undefined;
+  if (d.flex === 'none') return 0;
+  const p = String(d.flex).split(/\s+/);
+  return /^[\d.]+$/.test(p[0]) ? Number(p[0]) : 0;
 }
 
 function flexShrink(d) {
@@ -156,17 +164,32 @@ test('el grupo de herramientas NO envuelve por dentro: ahí el ? caía sobre el 
   eq(declaraciones('.header-tools')['flex-wrap'], 'nowrap');
 });
 
-test('el blindaje va al CONTENEDOR y le gana al reparto global de los botones', function () {
-  // El global es `button { flex: 1; min-width: 0 }`: base 0 y permiso para
-  // encogerse. Es el que dejó la etiqueta de versión en 19 px a 470. Blindar el
-  // contenedor y no cada botón es lo que hace que el control que se sumó ahora
-  // (el micrófono) y el que se sume mañana nazcan sanos.
-  const d = declaraciones('.header-tools > *');
-  eq(flexShrink(d), 0, 'nada de lo que caiga en el encabezado se aplasta');
-  eq(flexBasis(d), 'auto', 'y cada uno vale su propio ancho');
-  const global = REGLAS.map((r, i) => ({ r, i })).filter((x) => x.r.selector === 'button' && /flex/.test(x.r.cuerpo))[0];
-  ok(global, 'el reparto global de los botones sigue estando (es el que aplastaba)');
-  ok(ultima('.header-tools > *') > global.i, 'el blindaje se declara después del global');
+test('el encabezado ya no necesita blindar a sus botones: lo hace el default', function () {
+  // Acá hubo un `.header-tools > * { flex: none }`, puesto el mismo día que el
+  // micrófono, cuando la etiqueta de versión apareció en 19 px a 470 px. Era
+  // uno de los veinticuatro parches contra el mismo `button { flex: 1;
+  // min-width: 0 }` global, y se fue con él: ahora los botones valen su
+  // etiqueta en todo el panel, no
+  // solo acá. Vuelto a medir con `medir-encabezado.js` a 320, 360, 400, 470,
+  // 600 y 900, con el menú del micrófono abierto y en `?e=sin-dictado`: las
+  // cajas del encabezado dan idénticas a las de antes de sacarlo —desborde 0,
+  // cero solapes, la etiqueta de versión entera, el mismo alto (75 px en dos
+  // filas, 46 en una)—.
+  eq(declaraciones('.header-tools > *').flex, undefined,
+    'el blindaje del contenedor ya no hace falta, y dejarlo escondería de dónde viene el ancho');
+  const g = declaraciones('button');
+  eq(flexBasis(g), 'auto', 'el default de los botones es valer su etiqueta…');
+  eq(g['min-width'], undefined, '…y conservar el piso automático de flex, que es lo que impide aplastarlos');
+  const reparto = REGLAS.filter((r) => !r.dentroDeMedia && r.selector === 'button' && /flex:\s*1/.test(r.cuerpo));
+  eq(reparto.length, 0, 'el reparto global —el que dejó la versión en 19 px— no está más');
+});
+
+test('el que crece en el encabezado es el grupo, no cada botón', function () {
+  // Sin el `flex: none` del contenedor hay que decir explícitamente quién se
+  // lleva el espacio libre, o el encabezado se lee distinto. Lo hace el grupo
+  // entero, y adentro el micrófono.
+  eq(flexGrow(declaraciones('.header-tools')), 1, 'el grupo toma el sobrante y lo empuja a la derecha');
+  eq(flexGrow(declaraciones('.hdr-mic')), 1, 'y adentro del grupo, el micrófono es el que lo usa');
 });
 
 test('la insignia de estado es la que cede, y recorta al ceder', function () {

@@ -19,23 +19,9 @@
   var fmtDuration = HPUtil.fmtDuration;
   var addThousands = HPUtil.addThousands;
 
-  /**
-   * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
-   * `null`.
-   *
-   * El dictado es un AGREGADO a la caja de feedback, nunca un requisito. Si
-   * `js/dictado.js` no está —en Windows, en una máquina sin Whisper, o porque
-   * el archivo no llegó a evaluarse—, la cola entera tiene que dibujarse igual:
-   * sin esta guarda, un panel sin dictado se queda sin poder mandar feedback,
-   * que es la función principal de esta vista.
-   *
-   * La guarda vive acá y no en un módulo común a propósito: un módulo común
-   * sería otra cosa que puede faltar, o sea el mismo bug una capa más arriba.
-   */
-  function micOpcional(ta, opts) {
-    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
-    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
-  }
+  // El micrófono es un AGREGADO a la caja de feedback: sin dictado, la cola se
+  // dibuja igual y el feedback se escribe a mano. La guarda está en HPUtil.
+  var micOpcional = HPUtil.micOpcional;
 
   var deps = null; // lo llena init()
 

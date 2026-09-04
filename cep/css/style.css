@@ -101,10 +101,39 @@ body {
   border-bottom: 1px solid var(--hairline);
 }
 
+/* El reparto en partes iguales de la barra de acciones. Es el caso legítimo que
+   originó todo, y es el único: base 0 más `flex-grow: 1` parte la fila en
+   tercios exactos, sin que el largo de cada etiqueta decida el ancho.
+   Que NO lleve `min-width: 0` es lo que le da piso al reparto: el mínimo
+   automático de flex es el contenido de cada botón (son `nowrap`), así que
+   cuando los tres no entran, la fila los BAJA de renglón —`.actions` envuelve—
+   en vez de dejarlos angostos con la etiqueta pintada afuera. Medido a 400 px:
+   con piso quedan 185+185 arriba y 376 abajo; sin piso, tres de 121 con 27 y 45
+   px de etiqueta afuera de la caja.
+   Debajo de 380 px se apilan de a uno; eso está en la media query del final. */
+.actions button { flex: 1 1 0; }
+
+/* Los botones NO se encogen por defecto: `flex: 0 1 auto` sin `min-width: 0`.
+   Es el default de flex, dicho a propósito y con nombre, porque acá hubo lo
+   contrario durante mucho tiempo.
+   Lo que había era `flex: 1; min-width: 0`, o sea el reparto de la barra de
+   acciones aplicado a TODOS los botones del panel. Base 0 y permiso para
+   encogerse significa que cualquier botón que cayera en otra fila flex nacía
+   sin ancho propio y se dejaba aplastar por el vecino, y como los botones son
+   `white-space: nowrap` la etiqueta se pintaba afuera de la caja, encima de lo
+   que hubiera al lado. Mordió cuatro veces (el cartel "Preparar motor", la
+   cabecera de Corrections, la etiqueta de versión del encabezado y las
+   tarjetas de marcador) y cada vez se blindó el caso puntual con un `flex:
+   none` suelto. Al invertirla se sacaron VEINTICUATRO de esos blindajes, y
+   volver a medir el panel entero no movió ni un píxel: no hacían nada, solo
+   escondían de dónde salía el ancho de cada botón.
+   Con el default invertido, el reparto se pide donde se lo quiere (arriba) y el
+   resto de los botones vale lo que mide su etiqueta. Si alguno tiene que poder
+   ceder, se le pone `min-width: 0` explícito y algo que recorte (ellipsis): un
+   botón que puede quedar más chico que su texto y no lo recorta se desborda. */
 button {
   appearance: none;
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 auto;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-sm);
   background-color: transparent;
@@ -344,10 +373,9 @@ textarea:focus {
   gap: 6px;
 }
 
-/* Los botones pueden encoger y envolver; el badge no estira. */
-.transcript-row button { flex: 0 1 auto; min-width: 0; }
-.transcript-row .whisper-badge { flex: 0 1 auto; }
-.transcript-row .muted { flex: 1 1 100%; }  /* el estado ocupa su propia línea */
+/* Los botones bajan de línea cuando no caben (lo hace el `flex-wrap` de acá
+   arriba); el estado ocupa su propia línea. */
+.transcript-row .muted { flex: 1 1 100%; }
 .transcript-row .transcript-ok { color: #4ade80; }
 
 /* Error de transcripción: explica la causa y qué hacer, en varias líneas. Sin
@@ -392,7 +420,6 @@ textarea:focus {
    con el nowrap+elipsis de .muted el span no encoge, aplasta al botón hasta
    dejarlo sin ancho y la etiqueta se desborda encima. */
 #row-login > .config-actions { flex-wrap: wrap; }
-#btn-login-claude { flex: 0 0 auto; }
 #login-status {
   flex: 1 1 100%;
   /* pre-wrap, no normal: el diagnóstico del CLI viene en renglones (ruta,
@@ -411,7 +438,6 @@ textarea:focus {
 /* Es un <button> (cuando falta Whisper, lleva al botón de instalarlo), pero
    salvo en ese caso se lee como una etiqueta de estado, no como un control. */
 .whisper-badge {
-  flex: none;
   font-size: 10px; font-weight: 500; letter-spacing: 0.02em;
   padding: 3px 7px; border-radius: var(--radius-sm);
   border: 1px solid rgba(74, 222, 128, 0.35); color: #4ade80;
@@ -820,7 +846,7 @@ textarea:focus {
 }
 .session-usage .su-value { color: var(--text-secondary); flex: 1; }
 .session-usage .su-reset {
-  flex: none; font-size: 10px; color: var(--text-muted); background: transparent;
+  font-size: 10px; color: var(--text-muted); background: transparent;
   border: 0; padding: 2px 4px; cursor: pointer; text-decoration: underline; width: auto;
 }
 .session-usage .su-reset:hover { color: var(--accent); background: transparent; border: 0; }
@@ -846,7 +872,7 @@ textarea:focus {
 .queue-head > span:first-child { margin-right: auto; }
 /* Botones de acción de la cabecera como pills claros (no links de texto). */
 .queue-clear {
-  flex: none; width: auto; font-size: 11px; line-height: 1;
+  width: auto; font-size: 11px; line-height: 1;
   color: var(--text-secondary); background: rgba(255,255,255,0.05);
   border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px;
   padding: 5px 10px; cursor: pointer; text-decoration: none;
@@ -878,7 +904,7 @@ textarea:focus {
 .qs-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qs-ctrls, .qj-ctrls { flex: none; display: inline-flex; gap: 2px; }
 .qbtn {
-  width: auto; flex: none; font-size: 11px; line-height: 1;
+  width: auto; font-size: 11px; line-height: 1;
   color: var(--text-muted); background: transparent; border: 1px solid var(--hairline);
   border-radius: var(--radius-sm); padding: 2px 5px; cursor: pointer;
 }
@@ -1060,7 +1086,7 @@ textarea:focus {
 }
 .resource-chip .resource-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 .resource-remove {
-  flex: none; width: 14px; height: 14px; line-height: 12px; text-align: center;
+  width: 14px; height: 14px; line-height: 12px; text-align: center;
   font-size: 12px; color: var(--text-muted); background: transparent; border: 0; padding: 0; cursor: pointer;
 }
 .resource-remove:hover { color: var(--error); background: transparent; border: 0; }
@@ -1135,7 +1161,6 @@ textarea:focus {
 .html-editor-body { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .editor-row { display: flex; align-items: center; gap: 8px; }
 .editor-row .hp-select { flex: 1; }
-.editor-row .btn-secondary { flex: none; }
 /* Editor de código con resaltado: <pre> coloreado + textarea transparente encima */
 .code-edit {
   position: relative;
@@ -1223,9 +1248,13 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .queue-panel,
 .code-edit { box-shadow: var(--shadow-card); }
 
-/* La barra de acciones se acomoda en anchos chicos */
+/* La barra de acciones se acomoda en anchos chicos.
+   Acá vivía un `.actions button { min-width: 120px }`: un piso a mano para que
+   el reparto no dejara los botones en nada. Se fue con el arreglo del `flex`
+   global —el piso ahora es el contenido de cada botón (`min-width: auto`), que
+   es el número correcto y no uno inventado—. Ver el comentario de
+   `.actions button`, arriba. */
 .actions { flex-wrap: wrap; }
-.actions button { min-width: 120px; }
 
 /* Contraste de jerarquía: acento a la izquierda en encabezados de sección */
 .section-label { display: flex; align-items: center; gap: 7px; }
@@ -1294,7 +1323,14 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .hdr-chip.is-idle { color: var(--text-muted); }
 .hdr-chip.is-warn { color: var(--warn); border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.10); }
 
-/* Botón de ícono cuadrado (? y ✕) — no estira como los demás */
+/* Botón de ícono cuadrado (? ✕ ⚙ ↻).
+   El `flex: none` NO es un resto del reparto global de los botones: es el único
+   de esta familia que sigue haciendo falta después de invertirlo. Los demás
+   botones tienen su ancho atado a su etiqueta, así que el mínimo automático de
+   flex ya no los deja aplastar; este tiene un `width` fijo de 26 px y una sola
+   letra adentro, o sea un mínimo de ~13 px MUY por debajo de su caja. Medido:
+   sacándolo, en ⚙ a 320 px el ✕ de cerrar y el ↻ del micrófono pasan de 26 a
+   13 px, la mitad del cuadrado. */
 .icon-btn {
   flex: none; width: 26px; height: 24px; padding: 0;
   font-size: 13px; line-height: 1; color: var(--text-secondary);
@@ -1304,7 +1340,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 
 /* Botón "Descargar log": ícono + etiqueta "Log" para que se entienda qué hace. */
 .btn-log {
-  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px;
+  display: inline-flex; align-items: center; gap: 4px; height: 24px;
   padding: 0 8px; font-size: 11px; line-height: 1; color: var(--text-secondary);
   border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
   background: transparent; cursor: pointer;
@@ -1353,7 +1389,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 
 /* v1.0.1 — botón Iniciar cola (verde) en el head de la cola */
 .queue-start {
-  flex: none; width: auto; text-transform: none; letter-spacing: 0;
+  width: auto; text-transform: none; letter-spacing: 0;
   font-size: 11px; color: var(--ok);
   background: rgba(10, 233, 141, 0.1); border: 1px solid rgba(10, 233, 141, 0.4);
   border-radius: var(--radius-sm); padding: 3px 9px; cursor: pointer;
@@ -1371,7 +1407,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   border-bottom: 1px solid var(--hairline);
 }
 .tab {
-  flex: 0 0 auto; width: auto;
+  width: auto;
   font-size: 12px; color: var(--text-secondary);
   background: transparent; border: 0; border-bottom: 2px solid transparent;
   border-radius: 0; padding: 6px 10px 7px; cursor: pointer;
@@ -1426,17 +1462,20 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.35);
 }
 /* El botón conserva su ancho y, si no cabe al lado del texto, baja de línea.
-   El `button { flex: 1; min-width: 0 }` global es para la barra de acciones,
-   donde los botones se reparten la fila; acá, al lado de un texto largo, dejaba
-   a "Preparar motor" en 22 px con la etiqueta chorreando 18 px afuera del panel
-   (medido a 360, 400, 440, 470, 520 y 600 px: el desborde era el mismo en
-   todos). Envuelve además de blindarse porque estos textos los escribe el JS y
-   cambian de largo —qué Whisper falta, cuánto pesa, por qué acá no se puede— y
-   el botón también ("Instalar Whisper" → "Reintentar instalación"): apretar el
-   texto a cuatro palabras por línea para no bajar el botón se lee peor. */
+   Lo que lo blindaba era un `.ep-row > button { flex: 0 0 auto }`, uno de los
+   cinco parches sueltos contra el viejo `button { flex: 1; min-width: 0 }`
+   global —que dejaba a "Preparar motor" en 22 px con la etiqueta chorreando 18
+   px fuera del panel, igual a 360 que a 600—. Ese blindaje se fue con la causa:
+   ahora el default de los botones es no encogerse y el botón vale su etiqueta
+   sin que nadie lo diga acá.
+   Lo que SÍ sigue siendo de este cartel es que la fila envuelve y que el texto
+   pide una base en px: estos textos los escribe el JS y cambian de largo —qué
+   Whisper falta, cuánto pesa, por qué acá no se puede— y la etiqueta del botón
+   también ("Instalar Whisper" → "Reintentar instalación"). Con base `auto` el
+   botón bajaría SIEMPRE de renglón y con base 0 no bajaría NUNCA; los 240 px
+   son el umbral: recién cuando al texto no le quedan ni esos, el botón baja. */
 .engine-prep .ep-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
 .engine-prep .ep-text { flex: 1 1 240px; font-size: 12px; color: var(--text-primary); }
-.engine-prep .ep-row > button { flex: 0 0 auto; }
 .engine-prep .ep-msg { margin-top: 6px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .engine-prep .hp-bar { margin-top: 8px; }
 .engine-prep .hp-bar[data-hidden="true"] { display: none; }
@@ -1463,13 +1502,13 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   color: var(--text-primary); border: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 .qj-fb-input:focus { outline: none; border-color: var(--accent); }
-.qj-feedback .qbtn-react { flex: none; align-self: stretch; }
+.qj-feedback .qbtn-react { align-self: stretch; }
 /* "Regenerar desde cero", al lado de Refinar: misma caja y mismo alto, para que
    no parezca un control menor de la barra. Apagado a propósito —descarta trabajo
    y es la salida menos frecuente—, y con confirmación, que es lo que de verdad
    protege del clic errado entre dos botones tan parecidos. */
 .qj-feedback .qbtn-fresh {
-  flex: none; align-self: stretch; font-size: 11px; padding: 2px 10px;
+  align-self: stretch; font-size: 11px; padding: 2px 10px;
   color: var(--text-secondary); border-color: var(--border, rgba(255,255,255,0.18));
 }
 .qj-feedback .qbtn-fresh:hover {
@@ -1526,7 +1565,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* v1.4.33 — pestaña Corrections: lo ya generado, leído del disco */
 .corrections-view { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; }
 .corr-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.corr-head .btn-primary { flex: 0 0 auto; width: auto; }
+.corr-head .btn-primary { width: auto; }
 .corr-head .muted { flex: 1 1 100%; white-space: normal; }
 .corr-empty { color: var(--text-muted); font-size: 12px; text-align: center; padding: 28px 16px; line-height: 1.5; }
 .corr-row {
@@ -1553,10 +1592,8 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .corr-warn { font-size: 11px; color: var(--warn); margin-top: 4px; line-height: 1.4; }
 .corr-fix { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .corr-fix input[type="number"] { width: 80px; flex: 0 0 auto; }
-.corr-fix .qbtn { flex: 0 0 auto; }
 .corr-row textarea { width: 100%; margin-top: 6px; resize: vertical; }
 .corr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.corr-actions .qbtn { flex: 0 0 auto; }
 /* Regenerar es LA acción de la fila, no un control más de la barra. Se agranda
    acá porque `qbtn-react` nació para caber al lado de la caja de dos líneas de
    la Cola, donde el alto se lo daba el estirón del flex. */
@@ -1618,14 +1655,14 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
    `resize: vertical`) y en el panel acoplado, que es angosto, le come el ancho
    al placeholder. Abajo envuelve sola y le deja lugar a la línea de estado,
    que es donde se lee con qué se refinó y por qué falló cuando falla.
-   El botón NO se encoge: la regla global `button { flex: 1; min-width: 0 }` es
-   para la barra de acciones, y acá lo aplastaba a nada al lado del texto de
-   estado (el mismo bug que tuvo el cartel de "Preparar motor"). */
+   El `min-width` del botón es su piso propio: es un emoji solo, y ese ancho es
+   el que lo mantiene apretable. El blindaje contra el aplastamiento ya no está
+   acá —lo hace el default de `button`—. */
 .mic-bar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px;
 }
 .mic-btn {
-  flex: 0 0 auto; min-width: 30px; padding: 2px 8px; font-size: 12px; line-height: 1.5;
+  min-width: 30px; padding: 2px 8px; font-size: 12px; line-height: 1.5;
 }
 .mic-btn:disabled { opacity: 0.45; cursor: default; }
 /* Apagado por la plataforma (Windows) o por falta de Whisper: se VE, con el
@@ -1646,20 +1683,19 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 .mic-state.is-warn { color: #fbbf24; }
 .mic-state.is-error { color: var(--error, #e08a8a); }
 .mic-undo {
-  flex: 0 0 auto; font-size: 10px; padding: 1px 7px;
+  font-size: 10px; padding: 1px 7px;
   color: var(--text-secondary); border-color: var(--border, rgba(255,255,255,0.18));
 }
 .mic-undo[data-hidden="true"] { display: none; }
 
 /* v1.4.49 — la fila "Micrófono" de ⚙ y el medidor de la prueba.
-   El desplegable se lleva el ancho; los dos botones no se encogen (otra vez la
-   regla global `button { flex: 1 }`, que acá los aplastaría contra un nombre
-   de dispositivo largo). La barra va de −60 dBFS a 0: la marca vertical es la
-   compuerta del dictado (−34) y el tic fino, el pico sostenido. Se colorea por
-   lo que importa —¿pasa la compuerta o no?— y no por bonito. */
+   El desplegable es el que se lleva el ancho y el que cede (tiene `min-width:
+   0` y recorta con ellipsis); los dos botones valen su etiqueta, que es lo que
+   hace el default de `button`. La barra va de −60 dBFS a 0: la marca vertical
+   es la compuerta del dictado (−34) y el tic fino, el pico sostenido. Se
+   colorea por lo que importa —¿pasa la compuerta o no?— y no por bonito. */
 .mic-row { display: flex; align-items: center; gap: 6px; }
 .mic-row .hp-select { flex: 1 1 auto; min-width: 0; }
-.btn-mic-test { flex: 0 0 auto; }
 #mic-status { white-space: normal; line-height: 1.4; }
 #mic-status.is-warn { color: #fbbf24; }
 #mic-status.is-error { color: var(--error, #e08a8a); }
@@ -1704,20 +1740,22 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
       contenido. El nombre es `white-space: nowrap` y sin recorte, así que lo que
       no entraba en la caja se pintaba afuera, sobre las herramientas.
 
-   2. La etiqueta de versión es la enésima aparición del `button { flex: 1;
-      min-width: 0 }` global —el que reparte la barra de acciones—. `.hdr-chip`,
-      `.icon-btn` y `.btn-log` ya se blindaban uno por uno con `flex: none`;
-      `.btn-update` era el que faltaba, y a 470 px quedó en 19 px con su
-      "⟳ v1.4.49" (70 px) chorreando sobre el ?. Acá el blindaje va al
-      CONTENEDOR y no al botón: cualquier control que entre al encabezado de
-      ahora en más nace sin permiso para aplastarse, y el que necesite ceder lo
-      pide explícito (los dos que lo piden son la insignia y el micrófono).
+   2. La etiqueta de versión era la enésima aparición del `button { flex: 1;
+      min-width: 0 }` global —el que repartía la barra de acciones y de paso
+      aplastaba a todos los demás botones del panel—. A 470 px `.btn-update`
+      quedaba en 19 px con su "⟳ v1.4.49" (70 px) chorreando sobre el ?. Acá se
+      lo tapó con un blindaje al CONTENEDOR (`.header-tools > * { flex: none }`)
+      además de los tres que ya había uno por uno.
+      Eso se fue con la causa: el default de `button` ya no deja aplastar a
+      nadie, y el encabezado no necesita ninguna regla propia para eso. Lo único
+      que quedó de esa familia es `.icon-btn`, y no por el global (ver su
+      comentario: tiene `width` fijo y una sola letra).
 
-   La invariante que sostiene todo esto: en el encabezado, cada hoja o tiene su
-   ancho natural (`flex: none`) o puede ceder Y recorta con ellipsis
-   (`min-width: 0` + `overflow: hidden`). Con el encabezado envolviendo, así
-   ninguna hoja puede pintar fuera de su caja, y sin eso no hay solapamiento
-   posible a ningún ancho ni con ningún texto.
+   La invariante que sostiene todo esto —y que sigue valiendo— es: en el
+   encabezado, cada hoja o vale su ancho natural, o puede ceder Y recorta con
+   ellipsis (`min-width: 0` + `overflow: hidden`). Con el encabezado
+   envolviendo, así ninguna hoja puede pintar fuera de su caja, y sin eso no hay
+   solapamiento posible a ningún ancho ni con ningún texto.
    ══════════════════════════════════════════════════════════════════ */
 
 /* El encabezado envuelve, y es el contenedor del menú del micrófono. */
@@ -1743,7 +1781,6 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
    grupo era lo que ponía el ? encima del ⟳) y crece para que el micrófono use
    lo que sobra. Se va entero a la fila de abajo cuando no cabe. */
 .header-tools { flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }
-.header-tools > * { flex: none; }
 
 /* Debajo de 560 las herramientas se llevan una fila propia SIEMPRE, en vez de
    depender de cuán largo sea el nombre de la secuencia: así el ancho del

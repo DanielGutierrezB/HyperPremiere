@@ -37,20 +37,10 @@
    * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
    * `null`.
    *
-   * El dictado es un AGREGADO al campo, nunca un requisito, y las situaciones en
-   * las que el módulo NO está son reales: Windows (donde el botón va
-   * deshabilitado por decisión tomada), una máquina sin Whisper instalado, y que
-   * `js/dictado.js` no llegue a evaluarse. En los tres casos el prompt general
-   * tiene que dibujarse igual y escribirse a mano.
-   *
-   * La guarda vive en cada archivo que la usa y no en un módulo común a
-   * propósito: un módulo común sería otra cosa que puede faltar, o sea el mismo
-   * bug una capa más arriba.
+   * El dictado es un AGREGADO al campo, nunca un requisito: sin él, el prompt
+   * general se dibuja igual y se escribe a mano. La guarda está en HPUtil.
    */
-  function micOpcional(ta, opts) {
-    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
-    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
-  }
+  var micOpcional = HPUtil.micOpcional;
 
   var deps = null;
 

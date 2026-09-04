@@ -20,12 +20,26 @@
 // una franja de 5 px, pero es la etiqueta de versión del header, que es otro
 // asunto), el botón en sus 105 px enteros y la fila bajándolo de línea a 360 px.
 //
+// ── Actualización: el blindaje del botón se fue, y está bien ──────────
+//
+// El arreglo de entonces fue `.ep-row > button { flex: 0 0 auto }`: un parche
+// para ESTE cartel contra una regla global rota. Después resultó que el mismo
+// global mordía en otros tres lugares, así que se lo invirtió de raíz —los
+// botones ya no se dejan aplastar por default— y los veinticuatro parches
+// sueltos se sacaron (ver panel-botones-flex.test.js, que fija la regla nueva y
+// tiene los números del panel entero). Vuelto a
+// medir con `medir-botones.js` sobre 15 vistas y seis anchos: sacar el blindaje
+// de este cartel no cambió ni una de las 7578 mediciones de ancho de botón.
+//
+// Lo que sigue siendo propio del cartel, y lo que estos tests fijan, es la
+// FILA: que envuelva y que el texto pida una base en px. Eso no lo resuelve
+// ningún default, y es lo que decide si el botón baja de renglón o si el texto
+// queda a cuatro palabras por línea.
+//
 // Lo que estos tests NO hacen: medir cajas. El DOM de mentira del repo no tiene
 // motor de layout —no calcula anchos, no reparte flex, no envuelve nada—, así
 // que un test que dijera "no desborda" acá estaría fingiendo. Lo que se fija es
-// la regla de CSS que evita el aplastamiento, que es donde vivía el bug: si
-// alguien saca el blindaje del botón o el envolver de la fila, esto falla. La
-// medición de verdad se rehace con la maqueta.
+// la regla de CSS. La medición de verdad se rehace con la maqueta.
 
 const fs = require('fs');
 const path = require('path');
@@ -95,23 +109,27 @@ function flexBasis(d) {
 }
 
 test('el botón del cartel no se encoge (ahí se aplastaba a 22 px)', function () {
-  const d = declaraciones('.engine-prep .ep-row > button');
-  eq(flexShrink(d), 0, 'sin esto el texto largo se lleva la fila y el botón queda en el padding');
-  eq(flexBasis(d), 'auto', 'y su base es su propio ancho, no 0');
+  // Ya no hace falta decirlo para este botón: lo dice el default de todos.
+  // `flex: 0 1 auto` sin `min-width: 0` deja que el mínimo automático de flex
+  // sea el min-content del botón, y como es `nowrap`, ese min-content es su
+  // etiqueta entera. Ese es el piso que antes faltaba.
+  const g = declaraciones('button');
+  eq(flexBasis(g), 'auto', 'la base de cualquier botón es su propio ancho, no 0');
+  eq(g['min-width'], undefined, 'y nadie le saca el piso automático: ahí estaba el bug');
+  eq(declaraciones('.engine-prep .ep-row > button').flex, undefined,
+    'y el parche propio del cartel se sacó: con el default arreglado no cambiaba nada');
 });
 
-test('el blindaje del botón le gana al reparto global de los botones', function () {
-  // El global es `button { flex: 1; min-width: 0 }`: base 0 y permiso para
-  // encogerse. Un selector con clases le gana por especificidad a uno de tipo,
-  // sin importar el orden; igual el blindaje va después, que es donde se lee.
-  const guardia = REGLAS.map(function (r, i) { return { r: r, i: i }; })
-    .filter(function (x) { return x.r.selector === '.engine-prep .ep-row > button'; })[0];
-  const global = REGLAS.map(function (r, i) { return { r: r, i: i }; })
-    .filter(function (x) { return x.r.selector === 'button' && /flex/.test(x.r.cuerpo); })[0];
-  ok(guardia, 'la regla que blinda el botón del cartel tiene que existir');
-  ok(global, 'y el reparto global de los botones sigue estando (es el que aplastaba)');
-  ok(/\./.test(guardia.r.selector), 'el blindaje va por clase: le gana a `button` pelado');
-  ok(guardia.i > global.i, 'y se declara después del global');
+test('el reparto de la barra de acciones NO alcanza a este botón', function () {
+  // Lo que aplastaba al cartel era que el reparto de `.actions` estuviera
+  // escrito sobre `button` pelado. Ahora está donde corresponde, y un selector
+  // con clase no llega hasta acá.
+  const reparto = REGLAS.filter(function (r) {
+    return !r.dentroDeMedia && /flex/.test(r.cuerpo) && /^button$/.test(r.selector) && /flex:\s*1/.test(r.cuerpo);
+  });
+  eq(reparto.length, 0, 'ningún `button { flex: 1 }` global: es la regla que mordió cuatro veces');
+  ok(REGLAS.some(function (r) { return r.selector === '.actions button' && /flex/.test(r.cuerpo); }),
+    'el reparto vive en `.actions button`, que es la fila para la que se escribió');
 });
 
 test('la fila baja el botón de línea cuando no caben los dos', function () {
@@ -135,9 +153,11 @@ test('el texto del cartel reclama un ancho mínimo, que es lo que hace envolver'
   eq(flexShrink(d), 1, 'el texto sí puede encogerse: es el que cede, no el botón');
 });
 
-test('las dos filas del cartel siguen teniendo el botón donde la regla lo busca', function () {
-  // El selector es `> button`: si alguien envuelve el botón en un div, deja de
-  // aplicar y el desborde vuelve sin que nadie toque el CSS.
+test('las dos filas del cartel siguen siendo texto + botón, sin envoltorios', function () {
+  // La fila es un contenedor flex de exactamente dos hijos, y de ahí sale todo
+  // lo de arriba: el texto es el que cede (base 240 px) y el botón el que baja
+  // de renglón. Meter un div en el medio deja al texto sin su base y el umbral
+  // de envolver se lo lleva el envoltorio, que no tiene ninguna.
   const filas = HTML.match(/<div[^>]*class="ep-row"[^>]*>[\s\S]*?<\/div>/g) || [];
   eq(filas.length, 2, 'el cartel tiene dos filas: dependencias del motor y Whisper');
   filas.forEach(function (f) {

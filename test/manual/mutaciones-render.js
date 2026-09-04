@@ -521,21 +521,53 @@ const MUTACIONES = [
     de: '    Promise.all([ensureTranscript(job), ensureGeneralPrompt(job)]).then(function () { runModel(job); });',
     a:  '    ensureTranscript(job).then(function () { runModel(job); });',
   },
-  // El cartel de "Preparar motor": las tres formas de que su botón vuelva a
-  // aplastarse contra el borde del panel. Es un desborde de layout, así que lo
-  // que se rompe acá es la regla de CSS; medirlo se hace con la maqueta
-  // (test/manual/panel-demo), que el DOM de mentira no calcula cajas.
+  // ── El `flex` de los botones ─────────────────────────────────────────
+  //
+  // LA regresión de este cambio es la primera: devolver el `button { flex: 1;
+  // min-width: 0 }` global, que es el que aplastaba cualquier botón que cayera
+  // en una fila flex y le pintaba la etiqueta afuera de la caja. Mordió cuatro
+  // veces antes de que se lo invirtiera. Las otras son las formas de deshacer
+  // el arreglo a medias, incluida la de volver a tapar un caso con un parche
+  // suelto en vez de mirar la causa.
+  //
+  // Es un desborde de layout, así que lo que se rompe acá es la regla de CSS;
+  // medirlo se hace con la maqueta (test/manual/panel-demo/medir-botones.js),
+  // que el DOM de mentira no calcula cajas.
   {
-    nombre: 'el botón de "Preparar motor" vuelve a encogerse hasta el padding',
+    nombre: 'vuelve el `button { flex: 1; min-width: 0 }` global (los cuatro bugs de una)',
     archivo: 'cep/css/style.css',
-    de: '.engine-prep .ep-row > button { flex: 0 0 auto; }',
-    a:  '.engine-prep .ep-row > button { flex: 1 1 auto; }',
+    de: 'button {\n  appearance: none;\n  flex: 0 1 auto;\n',
+    a:  'button {\n  appearance: none;\n  flex: 1;\n  min-width: 0;\n',
   },
   {
-    nombre: 'el blindaje del botón se pone donde el global se lo lleva por delante',
+    nombre: 'el global recupera solo el `min-width: 0` y los botones se dejan aplastar igual',
     archivo: 'cep/css/style.css',
-    de: '.engine-prep .ep-row > button { flex: 0 0 auto; }',
-    a:  '.engine-prep .ep-row > div > button { flex: 0 0 auto; }',
+    de: 'button {\n  appearance: none;\n  flex: 0 1 auto;\n',
+    a:  'button {\n  appearance: none;\n  flex: 0 1 auto;\n  min-width: 0;\n',
+  },
+  {
+    nombre: 'la barra de acciones deja de repartir en partes iguales',
+    archivo: 'cep/css/style.css',
+    de: '.actions button { flex: 1 1 0; }',
+    a:  '.actions button { flex: 1 1 auto; }',
+  },
+  {
+    nombre: 'vuelve el piso a mano de 120 px y la barra de acciones no envuelve cuando debe',
+    archivo: 'cep/css/style.css',
+    de: '.actions { flex-wrap: wrap; }',
+    a:  '.actions { flex-wrap: wrap; }\n.actions button { min-width: 120px; }',
+  },
+  {
+    nombre: 'se tapa el cartel "Preparar motor" con un parche suelto en vez de mirar la causa',
+    archivo: 'cep/css/style.css',
+    de: '.engine-prep .ep-text { flex: 1 1 240px;',
+    a:  '.engine-prep .ep-row > button { flex: 0 0 auto; }\n.engine-prep .ep-text { flex: 1 1 240px;',
+  },
+  {
+    nombre: 'se saca el `flex: none` del botón cuadrado, que es el único que hace falta',
+    archivo: 'cep/css/style.css',
+    de: '.icon-btn {\n  flex: none; width: 26px;',
+    a:  '.icon-btn {\n  width: 26px;',
   },
   {
     nombre: 'la fila del cartel deja de envolver y aprieta el texto contra el botón',
@@ -577,13 +609,13 @@ const MUTACIONES = [
     // La global no está DECLARADA, así que nombrarla tira ReferenceError antes
     // de poder evaluar el `!`. Es el mismo agujero con cara de guarda.
     nombre: 'la guarda pregunta por !HPDictado en vez de por typeof',
-    archivo: 'cep/js/queue-view.js',
+    archivo: 'cep/js/util.js',
     de: 'if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;',
     a:  'if (!HPDictado || typeof HPDictado.attachMic !== "function") return null;',
   },
   {
     nombre: 'un attachMic que revienta por dentro vuelve a tumbar el campo',
-    archivo: 'cep/js/corrections.js',
+    archivo: 'cep/js/util.js',
     de: '    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }',
     a:  '    return HPDictado.attachMic(ta, opts).el;',
   },
@@ -911,10 +943,16 @@ const MUTACIONES = [
     a:  '.header-tools { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }',
   },
   {
-    nombre: 'encabezado: se saca el blindaje del contenedor y vuelve a mandar el `button { flex: 1 }`',
+    nombre: 'encabezado: vuelve el blindaje del contenedor, que ya no hace falta',
     archivo: 'cep/css/style.css',
-    de: '.header-tools > * { flex: none; }',
-    a:  '.header-tools > * { min-width: 0; }',
+    de: '.header-tools { flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }',
+    a:  '.header-tools { flex: 1 1 auto; flex-wrap: nowrap; justify-content: flex-end; min-width: 0; }\n.header-tools > * { flex: none; }',
+  },
+  {
+    nombre: 'encabezado: el grupo de herramientas deja de llevarse el espacio libre',
+    archivo: 'cep/css/style.css',
+    de: '.header-tools { flex: 1 1 auto; flex-wrap: nowrap;',
+    a:  '.header-tools { flex: 0 1 auto; flex-wrap: nowrap;',
   },
   {
     nombre: 'encabezado: el menú del micrófono se ancla al botón de 34 px',
@@ -1102,7 +1140,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'marcadores-frameio', 'cola-mirar-y-rehacer', 'correcciones-encolar',
   'claude-session', 'panel-cartel-sesion', 'imagen-de-referencia',
   'selector-pensamiento', 'ventana-de-contexto', 'prompt-general-proyecto',
-  'panel-cartel-preparar-motor', 'panel-encabezado-microfono',
+  'panel-cartel-preparar-motor', 'panel-encabezado-microfono', 'panel-botones-flex',
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga'];
 

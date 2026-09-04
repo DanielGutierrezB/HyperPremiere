@@ -348,34 +348,35 @@ test('un HPDictado a medio cargar se trata como ausente', function () {
 // ── 4. La regla, también donde no se puede montar el DOM ─────────────
 
 test('ningún campo de prompt llama al micrófono sin la guarda', function () {
-  // `main.js` es el que tiene los otros tres enganches (la tarjeta de cada
-  // marcador, las Indicaciones generales y el prompt general), y montarlo pide
-  // el panel entero: header, pestañas, config, host de Premiere. Levantar todo
-  // eso para probar una guarda de una línea sería un test más frágil que lo que
-  // protege. Así que acá se fija la regla sobre el texto: el ÚNICO lugar donde
-  // se puede nombrar `HPDictado.attachMic` es adentro de `micOpcional`, que es
-  // la función que pregunta antes.
+  // Los cuatro enganches viven en vistas que, para montarse, piden el panel
+  // entero: header, pestañas, config, host de Premiere. Levantar todo eso para
+  // probar una guarda de una línea sería un test más frágil que lo que protege.
+  // Así que acá se fija la regla sobre el texto: en TODO `cep/js/` el único
+  // lugar donde se puede nombrar `HPDictado.attachMic` es la guarda de
+  // `util.js`, que pregunta antes. (En `dictado.js` no aplica: ahí se define.)
   //
-  // Es de segunda: comprueba la forma, no el comportamiento. Se deja igual
-  // porque es lo que atrapa el error de verdad —volver a escribir
-  // `caja.appendChild(HPDictado.attachMic(ta).el)` de un tirón— en el archivo
-  // donde más caro sale.
-  ['main.js', 'queue-view.js', 'corrections.js'].forEach(function (f) {
-    const src = fs.readFileSync(path.join(CEP, f), 'utf8');
-    const guarda = src.match(/\n  function micOpcional\(ta, opts\) \{\n[\s\S]*?\n  \}\n/);
-    ok(guarda, f + ': tiene que tener la guarda micOpcional');
-    has(guarda[0], 'typeof HPDictado === "undefined"',
-      f + ': la guarda tiene que contemplar que la global NO EXISTA. Preguntar por ' +
-      '`!HPDictado` a secas tira ReferenceError, que es el mismo agujero por otra puerta.');
-    has(guarda[0], 'catch', f + ': y que attachMic reviente por dentro tampoco puede tumbar el campo');
+  // Es de segunda: comprueba la forma, no el comportamiento. Se deja porque es
+  // lo que atrapa el error de verdad —volver a escribir
+  // `caja.appendChild(HPDictado.attachMic(ta).el)` de un tirón— y ese error, en
+  // una máquina sin Whisper, deja al editor sin campo donde escribir.
+  const util = fs.readFileSync(path.join(CEP, 'util.js'), 'utf8');
+  const guarda = util.match(/\n  function micOpcional\(ta, opts\) \{\n[\s\S]*?\n  \}\n/);
+  ok(guarda, 'util.js: tiene que tener la guarda micOpcional');
+  has(guarda[0], 'typeof HPDictado === "undefined"',
+    'la guarda tiene que contemplar que la global NO EXISTA. Preguntar por ' +
+    '`!HPDictado` a secas tira ReferenceError, que es el mismo agujero por otra puerta.');
+  has(guarda[0], 'catch', 'y que attachMic reviente por dentro tampoco puede tumbar el campo');
+  eq((util.replace(guarda[0], '\n').match(/HPDictado\.attachMic/g) || []).length, 0,
+    'util.js: fuera de la guarda tampoco se nombra');
 
-    // Fuera de la guarda no se puede nombrar. Se le saca el cuerpo al texto y se
-    // cuenta lo que queda: si quedó algo, alguien volvió a colgar el micrófono
-    // de un tirón.
-    const afuera = src.replace(guarda[0], '\n');
-    eq((afuera.match(/HPDictado\.attachMic/g) || []).length, 0,
+  // Y ninguna vista lo nombra por su cuenta: todas pasan por HPUtil.micOpcional.
+  fs.readdirSync(CEP).filter(function (f) {
+    return /\.js$/.test(f) && f !== 'dictado.js' && f !== 'util.js';
+  }).forEach(function (f) {
+    const src = fs.readFileSync(path.join(CEP, f), 'utf8');
+    eq((src.match(/HPDictado\.attachMic/g) || []).length, 0,
       f + ': colgar el micrófono sin preguntar es lo que dejó 44 tests en rojo y, en una ' +
-      'máquina sin Whisper, al editor sin campo donde escribir.');
+      'máquina sin Whisper, al editor sin campo donde escribir. Usá HPUtil.micOpcional.');
   });
 });
 

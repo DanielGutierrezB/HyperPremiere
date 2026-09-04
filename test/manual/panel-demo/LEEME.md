@@ -83,6 +83,38 @@ cajas (el DOM de mentira no tiene motor de layout).
 cambia, `--url` apunta a un escenario (`?e=sin-dictado`) y `--abrir-mic` despliega
 el menú del micrófono antes de medir.
 
+## Medir los botones de todo el panel
+
+```
+node test/manual/panel-demo/medir-botones.js
+```
+
+Lo mismo pero para el panel entero: recorre **15 vistas** —las tres pestañas, ⚙,
+la ayuda, el feedback y el editor de HTML de la cola, el medidor del micrófono y
+los ocho escenarios— por los seis anchos, y para cada botón visible compara su
+ancho real contra el que **necesita su contenido**. Son ~7600 mediciones y tarda
+unos diez minutos.
+
+El ancho necesario no se estima: se clona el botón como hermano suyo (así los
+selectores por descendencia siguen aplicando) con `width: max-content` y se lo
+mide. Dos detalles que hacen la diferencia entre un número y un número que
+sirve, y que están explicados arriba del archivo:
+
+- **`scrollWidth` no alcanza como criterio.** Los botones son `inline-flex`
+  centrados, así que el texto que no entra se sale por los dos lados y
+  `scrollWidth` solo cuenta el de la derecha: de 585 botones con contenido
+  afuera, delataba 310.
+- **Lo que recorta con ellipsis no chorrea.** Un desplegable con el nombre de un
+  micrófono pide 322 px y vive en 99, y eso es un nombre recortado, no texto
+  encima del vecino. Al clonar se le congela el ancho a todo descendiente que
+  recorte, y se compara solo el contenido que no se puede recortar.
+
+`--json <archivo>` guarda todas las medidas (sirve para diffear antes/después),
+`--capturas <dir>` deja un PNG por vista y ancho, y `--vistas cola,config` y
+`--anchos 320,400` acotan la corrida. Si una vista no llega a abrirse, la corrida
+**falla** en vez de medir otra cosa: la maqueta aprieta "Cargar marcadores" sola
+unos segundos después de cargar y ese redibujo se comía el clic en la pestaña.
+
 ## Cómo está hecho
 
 `cep/js/` habla con afuera por dos puertas y nada más:

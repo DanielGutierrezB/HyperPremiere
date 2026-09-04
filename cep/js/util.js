@@ -512,8 +512,30 @@
     };
   }
 
+  /**
+   * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
+   * `null`.
+   *
+   * El dictado es un AGREGADO a cada campo de prompt, nunca un requisito. En
+   * Windows, en una máquina sin Whisper, o si `js/dictado.js` no llegó a
+   * evaluarse, los cuatro campos tienen que dibujarse igual: sin esta guarda,
+   * un panel sin dictado se queda sin campo donde escribir la instrucción, que
+   * es la función principal del panel. Ese descuido dejó 44 tests en rojo una
+   * vez, y se pregunta por `typeof` porque `!HPDictado` a secas tira
+   * ReferenceError, o sea el mismo agujero por otra puerta.
+   *
+   * Vive acá y no repetida en cada vista porque los cuatro archivos que la
+   * usan ya dependen de HPUtil sin preguntar (debounce, formatTime,
+   * fmtDuration): tenerla acá no agrega ningún modo de falla que no exista ya.
+   */
+  function micOpcional(ta, opts) {
+    if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
+    try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
+  }
+
   global.HPUtil = {
     debounce: debounce,
+    micOpcional: micOpcional,
     escapeHtml: escapeHtml,
     formatTime: formatTime,
     fmtDuration: fmtDuration,
