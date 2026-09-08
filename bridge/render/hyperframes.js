@@ -626,7 +626,7 @@ async function renderComposition({ html, outMovPath, durationSec, onProgress, fo
     correr: runOnce,
     trace: trace,
     report: report,
-    etiqueta: fmt + '/' + q,
+    etiqueta: fmt,
     limpiarSalida: function () {
       try { if (fs.existsSync(outMovPath)) fs.unlinkSync(outMovPath); } catch (_) {}
     },
