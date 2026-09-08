@@ -1,4 +1,8 @@
-node_modules/
+# Sin barra final: con `node_modules/` git solo ignora DIRECTORIOS, así que un
+# symlink llamado node_modules se colaba al índice. Pasó de verdad: un árbol de
+# trabajo auxiliar lo tenía enlazado y el enlace terminó publicado, apuntando a
+# una ruta que solo existía en una máquina.
+node_modules
 .cursor/
 .DS_Store
 ._*
