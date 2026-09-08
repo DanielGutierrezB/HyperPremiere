@@ -23,7 +23,7 @@ const DEFAULT_TIMEOUT_MS = 240_000;
  * @param {object} opts.config - { baseUrl (requerido), apiKey?, timeoutMs?, maxTokens? }
  * @returns {Promise<string>} HTML de la composicion
  */
-async function generate({ systemPrompt, userPrompt, images, model, config }) {
+async function complete({ systemPrompt, userPrompt, images, model, config }) {
   const cfg = config || {};
   if (!cfg.baseUrl) {
     throw new Error('openai-compat: falta config.baseUrl (ej: https://api.openai.com/v1)');
@@ -106,7 +106,23 @@ async function generate({ systemPrompt, userPrompt, images, model, config }) {
     outputTokens: u.completion_tokens,
     costUsd: null,
   });
-  return { text: stripHtmlFence(contentText), usage };
+  return { text: contentText, usage };
 }
 
-module.exports = { generate };
+/**
+ * La composicion, ya sin el fence de markdown. Es `complete` mas eso y nada
+ * mas, igual que en los otros proveedores.
+ *
+ * Se partio cuando el refinado del dictado paso a usar el proveedor que el
+ * editor eligio (ver bridge/dictado-refinar.js): antes a este nadie le pedia
+ * texto crudo, y quien elegia "API compatible" refinaba por Claude.
+ *
+ * @param {object} opts - los mismos de `complete`
+ * @returns {Promise<{text:string, usage:object}>}
+ */
+async function generate(opts) {
+  const r = await complete(opts);
+  return Object.assign({}, r, { text: stripHtmlFence(r.text) });
+}
+
+module.exports = { generate, complete };

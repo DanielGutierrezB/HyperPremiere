@@ -989,31 +989,31 @@ textarea:focus {
 /* Sugerencia (Prompt general vacío): tenue pero en acento, invita a desplegar. */
 .section-state.is-hint { color: var(--accent); opacity: 0.85; }
 
-/* Prompt general: encabezado que aplica a los marcadores de abajo. Va pegado
+/* Prompts generales: encabezado que aplica a los marcadores de abajo. Va pegado
    a la lista (poco margen) para leerse como "esto afecta lo de acá abajo". */
 .general-section { margin-bottom: 2px; }
-/* La state del "Prompt general" tiene ambas clases; el id gana a .cfg-summary. */
+/* La state de "Prompts generales" tiene ambas clases; el id gana a .cfg-summary. */
 #general-summary { margin-left: auto; }
 
-/* De dónde sale el estilo del curso. Es la línea que faltaba: el editor que
-   abría el proyecto de otro no tenía forma de saber con qué contexto generaba. */
-.general-source-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* Los dos niveles, uno abajo del otro. El de la secuencia lleva una guarda de
+   color a la izquierda: es la diferencia que hay que ver de un vistazo —lo que
+   se escriba ahí vale SOLO para esta clase— y no cuesta ni una palabra ni una
+   línea de alto, que a 320 px es lo que hay. */
+.general-level { display: flex; flex-direction: column; gap: 4px; }
+/* El rótulo del de secuencia lleva el nombre de la clase, y los nombres reales
+   son largos y sin espacios: sin esto, a 320 px se sale de la caja. */
+.general-level .field-label { overflow-wrap: anywhere; }
+.general-level.is-sequence {
+  padding-left: 8px;
+  border-left: 2px solid var(--accent);
+}
+.general-level[data-hidden="true"] { display: none; }
+
+/* Qué niveles le llegan al modelo. Es la línea que faltaba: el editor que abría
+   el proyecto de otro no tenía forma de saber con qué contexto generaba. */
 .general-source { font-size: 11px; line-height: 1.4; color: var(--text-muted); }
 .general-source.is-override { color: var(--accent); }
 .general-source.is-warn { color: var(--warn); }
-.general-scope-btn { font-size: 11px; padding: 4px 8px; margin-left: auto; }
-.general-scope-btn[data-hidden="true"] { display: none; }
-/* La base que la secuencia está pisando, a mano para poder compararla. */
-.general-base[data-hidden="true"] { display: none; }
-.general-base > summary { font-size: 11px; color: var(--text-muted); cursor: pointer; }
-.general-base-text {
-  margin-top: 6px; padding: 6px 8px;
-  font-size: 11px; line-height: 1.5; white-space: pre-wrap;
-  color: var(--text-secondary);
-  background-color: var(--bg-inset);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-}
 /* Dos versiones distintas del mismo prompt: no se pisa ninguna hasta que el
    editor diga cuál vale, así que esto tiene que verse y no cerrarse solo. */
 .general-conflict {
@@ -1357,6 +1357,14 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 
 /* Config summary: rojo cuando falta/hay conflicto (antes ámbar) */
 .cfg-summary.is-warn { color: var(--error); }
+
+/* "Hay credencial pero la cuenta no tiene cupo": ni verde ni rojo.
+   Rojo es "falta algo y no vas a poder"; esto es "está todo puesto y aun así
+   rebotó", que se arregla afuera del panel (cargando crédito, esperando que se
+   renueve) y puede estar resuelto ya. Se distingue a propósito del rojo: el
+   editor tiene que poder ver de un vistazo que no le falta configurar nada. */
+.cfg-summary.is-cupo { color: var(--warn); }
+.login-warn { color: var(--warn) !important; }
 
 /* Overlay "¿Cómo funciona?" */
 .help-overlay {

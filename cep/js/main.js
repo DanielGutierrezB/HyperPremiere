@@ -12,7 +12,7 @@
  *   HPHost (js/host-client.js)       llamadas a ExtendScript (host.jsx)
  *   HPSeqWatch (js/seq-watch.js)     vigila si cambiaste de secuencia en Premiere
  *   HPStore (js/store.js)            persistencia por proyecto+secuencia
- *   HPGeneral (js/general-prompt.js) el estilo del curso, al lado del .prproj
+ *   HPGeneral (js/general-prompt.js) los prompts del curso y de la secuencia
  *   HPGeneralView (js/general-view.js) su bloque en el encabezado del panel
  *   HPTranscript (js/transcript.js)  parser del transcript
  *   HPWidgets (js/widgets.js)        select propio, editor de código, tooltips
@@ -36,8 +36,8 @@
    * `null`.
    *
    * El dictado es un AGREGADO a los campos de prompt, nunca un requisito: sin
-   * él, la tarjeta del marcador y las Indicaciones generales se dibujan igual y
-   * se escriben a mano. La guarda está en HPUtil.
+   * él, la tarjeta del marcador y los prompts generales se dibujan igual y se
+   * escriben a mano. La guarda está en HPUtil.
    */
   var micOpcional = HPUtil.micOpcional;
 
@@ -132,11 +132,11 @@
     updateContextSummary();
   }
 
-  // ── Prompt general (aplica a todos los marcadores) ──────────────────
-  // El TEXTO vive al lado del .prproj y lo administra HPGeneral; el bloque de
-  // interfaz (campo, renglón de origen, botón de destino y cartel de conflicto)
-  // es HPGeneralView. Acá queda solo el cableado, y en enqueueMarkerGeneration
-  // la lectura de lo que le viaja al modelo.
+  // ── Prompts generales (curso + secuencia) ───────────────────────────
+  // Los DOS TEXTOS viven al lado del .prproj y los administra HPGeneral; el
+  // bloque de interfaz (los dos campos, el renglón de qué viaja y el cartel de
+  // conflicto) es HPGeneralView. Acá queda solo el cableado, y en
+  // enqueueMarkerGeneration la lectura de lo que le viaja al modelo.
   HPGeneralView.init({
     context: function () { return { projectPath: currentProjectPath, sequenceName: currentSequenceName }; },
     setOutput: setOutput
@@ -1159,8 +1159,8 @@
   function enqueueMarkerGeneration(marker, mode, staged) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
-    // Las imágenes del prompt general siguen siendo de esta secuencia; el texto
-    // sale del proyecto (HPGeneral), que es lo que ahora viaja con el .prproj.
+    // Las imágenes del prompt general siguen siendo de esta secuencia; los dos
+    // textos salen del proyecto (HPGeneral), que es lo que viaja con el .prproj.
     var gen = HPStore.getMarkerData(GEN_KEY);
     var genTxt = HPGeneral.state(currentProjectPath, currentSequenceName);
     var segments = HPStore.getTranscript() || [];
@@ -1173,9 +1173,11 @@
       // a corregir.
       marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration, guid: marker.guid || "" },
       markerTranscript: markerTranscript, instruction: data.instruction || "",
-      // El origen viaja pegado al texto: es lo que hace que el ⬇ Log de cada
-      // generación diga con qué estilo se diseñó y no solo que había uno.
-      generalInstruction: genTxt.text, generalSource: genTxt.source,
+      // Los dos niveles viajan SEPARADOS y sin combinar: quién le gana a quién
+      // se le dice al modelo en el prompt (ver bridge/prompt/build-context.js), y
+      // es también lo que hace que el ⬇ Log de cada generación diga qué niveles
+      // entraron y no solo que había estilo.
+      generalInstruction: genTxt.projectText, sequenceInstruction: genTxt.sequenceText,
       // stills = TODAS las imágenes (marcador + generales) para que el modelo las VEA (contexto).
       stills: (data.stills || []).concat(gen.stills || []),
       // assets = solo las marcadas "usar" → se INCRUSTAN en el gráfico (logo/icono/foto).
@@ -1614,7 +1616,7 @@
       for (var i = 0; i < all.length; i++) {
         if (all[i] !== card) all[i].open = false;
       }
-      // Plegar el setup y el prompt general → máximo espacio para el marcador.
+      // Plegar el setup y los prompts generales → máximo espacio al marcador.
       var ctx = document.getElementById("context-section");
       if (ctx) ctx.open = false;
       var gen = document.getElementById("general-section");

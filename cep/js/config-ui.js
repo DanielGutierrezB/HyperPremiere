@@ -18,14 +18,28 @@
   // Estado del proveedor activo (lo consultan la cola y el estimador de costo).
   var providerIsLocal = false;
   var modelNameValue = ""; // para el log de diagnóstico
-  // Sesión de Claude: TRES valores, no dos. "?" es "todavía no se sabe", y con
-  // eso NO se avisa nada. El cartel de "falta iniciar sesión" salía de mirar si
-  // el panel tenía un token guardado, y ése es apenas uno de los caminos: el
-  // CLI puede tener su propia sesión (`claude auth login`) y generar sin token
-  // nuestro. Había editores generando perfecto con el cartel puesto — pasó de
-  // verdad. Quien contesta ahora es el CLI (ver bridge/claude-session.js).
-  var currentSession = "?"; // "si" | "no" | "?"
-  var currentSessionWarn = "iniciá sesión en Claude";
+  // Sesión del CLI del proveedor activo (Claude o Cursor): TRES valores, no
+  // dos. "?" es "todavía no se sabe", y con eso NO se avisa nada. El cartel de
+  // "falta iniciar sesión" salía de mirar si el panel tenía un token guardado, y
+  // ése es apenas uno de los caminos: el CLI puede tener su propia sesión
+  // (`claude auth login`, `cursor-agent login`) y generar sin token nuestro.
+  // Había editores generando perfecto con el cartel puesto — pasó de verdad.
+  // Quien contesta ahora es el CLI (ver bridge/claude-session.js y
+  // bridge/cursor-session.js, que dan la misma respuesta de tres valores).
+  // "si" | "no" | "cupo" | "?"
+  //
+  // "cupo" es el cuarto y llegó después: hay credencial —el CLI contesta que
+  // sí— pero la última generación rebotó porque la cuenta no tiene saldo. No es
+  // "no" (no falta configurar nada) y no puede ser "si" (no va a poder
+  // generar). Es el caso que mandó un editor: semáforo en verde arriba y
+  // `Credit balance is too low` en la cola. Lo recuerda bridge/provider-salud.js
+  // y se olvida al guardar credenciales o al reiniciar el panel.
+  var currentSession = "?";
+  // Lo escribe `aplicarSesion` con la marca del proveedor que se chequeó. Vacío
+  // y no "iniciá sesión en Claude": un texto de Claude puesto por omisión en una
+  // variable que comparten los dos proveedores es cómo termina apareciéndole
+  // Claude a alguien que eligió Cursor.
+  var currentSessionWarn = "";
   // CON QUÉ credencial entra el CLI de Claude ('api_key' | 'claude.ai' |
   // 'oauth_token' | "" mientras no se sepa). No es un detalle de diagnóstico:
   // es lo que decide qué ventana de contexto se puede prometer, porque por API
@@ -37,6 +51,9 @@
   var cfgEffortSel = null;
   var cfgModelCustom, cfgApiKey, cfgBaseUrl, btnSaveConfig, configStatus, cfgSummary;
   var btnLoginClaude, loginStatus, modelsHint, cfgContext;
+  // Los de Cursor son otros nodos, no los mismos: los dos proveedores pueden
+  // estar configurados a la vez y el renglón de uno no puede pisar al del otro.
+  var cursorStatus, apikeyHint;
 
   // Nivel de pensamiento (esfuerzo) de Claude: es la palanca de CALIDAD, no de
   // velocidad nada más. Diseñar una animación es razonamiento, así que subirlo
@@ -375,7 +392,12 @@
     var isClaude = (p === "claude-cli" || p === "claude-api");
     var isCursor = (p === "cursor-cli");
     showRow("row-login", p === "claude-cli");
-    showRow("row-apikey", p === "claude-api" || p === "openai-compat");
+    showRow("row-login-cursor", isCursor);
+    // Cursor entra en la fila de API key. El motor SIEMPRE supo usarla (le pone
+    // CURSOR_API_KEY al proceso hijo), pero desde el panel no había manera de
+    // pegarla: la fila se escondía justo con Cursor elegido. Un editor sin
+    // sesión de CLI no tenía ningún camino desde acá.
+    showRow("row-apikey", p === "claude-api" || p === "openai-compat" || isCursor);
     showRow("row-baseurl", p === "openai-compat" || p === "ollama");
     showRow("row-model-custom", cfgModelSel.value === "__custom__");
     // El nivel de pensamiento se elige igual en los dos: en Claude es un flag
@@ -383,6 +405,18 @@
     // nuestro (ver cursorGroups). El editor ve el mismo control.
     showRow("row-effort", isClaude || isCursor);
     if (modelsHint) modelsHint.setAttribute("data-hidden", (isClaude || isCursor) ? "false" : "true");
+    // CUÁL de las dos cosas se espera en ese campo. Con Cursor hay que decirlo:
+    // el CLI nombra dos variables (CURSOR_API_KEY y CURSOR_AUTH_TOKEN) y no son
+    // dos formas de pasar lo mismo — el token de `login` el CLI lo GUARDA en el
+    // llavero del sistema, o sea que pisaría la sesión de la máquina. Acá va la
+    // key, que es la que no tiene efectos, y se aclara para que nadie pegue la
+    // otra y se quede esperando (ver bridge/cursor-session.js).
+    if (apikeyHint) {
+      apikeyHint.textContent = isCursor
+        ? "API key de Cursor (empieza con key_…), de cursor.com → Dashboard → Integrations → API Keys. " +
+          "No es el token de `cursor-agent login`: si ya iniciaste sesión en la terminal, dejá esto vacío."
+        : "";
+    }
     var hintEl = document.getElementById("baseurl-hint");
     if (hintEl) hintEl.textContent = BASEURL_HINT[p] || "";
     // Aviso de lentitud para modelos locales.
@@ -415,11 +449,23 @@
     var p = cfgProviderSel.value;
     var model = effectiveModel();
     var ok = true, warn = "";
-    if (p === "claude-cli" && currentSession === "no") { ok = false; warn = currentSessionWarn; }
+    // Los dos proveedores de CLI se miran igual, y con los mismos valores: solo
+    // se avisa cuando se SABE que falta. "?" no dibuja nada.
+    var esCli = (p === "claude-cli" || p === "cursor-cli");
+    if (esCli && currentSession === "no") { ok = false; warn = currentSessionWarn; }
+    // Sin cupo puede pasarle a cualquiera de los proveedores de cuenta, no solo
+    // a los de CLI: una API key con saldo agotado es el mismo problema.
+    var sinCupo = (currentSession === "cupo") &&
+      (esCli || p === "claude-api" || p === "openai-compat");
     if (p === "claude-api" && !(cfgApiKey.value.trim() || cfgApiKey.getAttribute("data-has") === "1")) { ok = false; warn = "falta API key"; }
     if (p === "openai-compat" && !cfgBaseUrl.value.trim()) { ok = false; warn = "falta Base URL"; }
     if (!model) { ok = false; warn = "falta el modelo"; }
-    if (ok) {
+    if (ok && sinCupo) {
+      // Todo configurado y aun así no va a poder. Se dice en ámbar y no en rojo
+      // porque no hay nada que arreglar acá adentro: se arregla en la cuenta.
+      cfgSummary.textContent = "⚠ " + (PROVIDER_LABEL[p] || p) + " · " + currentSessionWarn;
+      cfgSummary.className = "cfg-summary is-cupo";
+    } else if (ok) {
       // El nivel de pensamiento pesa tanto como el modelo en el resultado, así
       // que va en el resumen. Vale para los dos proveedores que lo tienen.
       var tieneEsfuerzo = (p === "claude-cli" || p === "claude-api" || p === "cursor-cli");
@@ -583,10 +629,15 @@
     if (cfg.provider) cfgProviderSel.value = cfg.provider;
     providerIsLocal = (cfg.provider === "ollama");
     modelNameValue = cfg.model || "";
-    // Provisorio: con token guardado ya sabemos que sí; sin token NO sabemos
-    // nada todavía, así que "?" y no "no". La respuesta buena la trae
-    // refreshClaudeSession() un cuarto de segundo después.
-    currentSession = cfg.hasSession ? "si" : "?";
+    // Provisorio: con credencial nuestra guardada ya sabemos que sí; sin ella NO
+    // sabemos nada todavía, así que "?" y no "no". La respuesta buena la trae
+    // refreshClaudeSession()/refreshCursorSession() un cuarto de segundo después.
+    //
+    // `hasSession` es el token OAuth de Claude, así que solo vale para Claude:
+    // leerlo con Cursor elegido pintaría verde por la credencial de otro
+    // proveedor. Lo que cuenta en Cursor es la API key de su propio slot.
+    if (cfg.provider === "cursor-cli") currentSession = cfg.apiKey ? "si" : "?";
+    else currentSession = cfg.hasSession ? "si" : "?";
     cfgBaseUrl.value = cfg.baseUrl || "";
     cfgApiKey.value = "";
     if (cfg.apiKey) { cfgApiKey.setAttribute("data-has", "1"); cfgApiKey.setAttribute("placeholder", "•••• (guardada)"); }
@@ -601,6 +652,7 @@
     if (cfgProviderSel.value === "claude-cli" || cfgProviderSel.value === "claude-api") refreshClaudeModels(cfg.model);
     if (cfgProviderSel.value === "cursor-cli") refreshCursorModels(cfg.model);
     if (cfgProviderSel.value === "claude-cli") refreshClaudeSession();
+    if (cfgProviderSel.value === "cursor-cli") refreshCursorSession();
   }
 
   // Le pregunta al motor si el CLI de Claude puede autenticarse acá (él se lo
@@ -608,6 +660,35 @@
   // que puede afirmar que falta la sesión. Si no se pudo averiguar, queda en
   // "?" y el resumen no dice nada: asustar sin motivo manda al editor a
   // "arreglar" algo que le venía funcionando.
+  /**
+   * Qué hace el panel con la respuesta del chequeo de sesión.
+   *
+   * Es UNA sola función para los dos proveedores de CLI a propósito: la regla
+   * —solo se avisa cuando se SABE que falta— es la misma, y tenerla escrita dos
+   * veces es cómo se arregla en una y se olvida en la otra. Cursor nació sin
+   * nada de esto justamente porque el arreglo de Claude no era compartible.
+   */
+  function aplicarSesion(s, opts) {
+    if (s.estado === "con-sesion") {
+      currentSession = "si";
+    } else if (s.estado === "sin-cupo") {
+      currentSession = "cupo"; currentSessionWarn = "sin cupo en tu cuenta de " + opts.marca;
+    } else if (s.estado === "sin-sesion") {
+      currentSession = "no"; currentSessionWarn = "iniciá sesión en " + opts.marca;
+    } else if (s.estado === "sin-cli") {
+      currentSession = "no"; currentSessionWarn = "falta el CLI de " + opts.marca;
+    } else {
+      currentSession = "?";
+    }
+    if (opts.linea && s.resumen) {
+      opts.linea.textContent = s.resumen + (s.detalle ? "\n" + s.detalle : "");
+      opts.linea.className = "muted " +
+        (currentSession === "si" ? "login-ok"
+          : currentSession === "cupo" ? "login-warn"
+            : currentSession === "no" ? "login-err" : "");
+    }
+  }
+
   function refreshClaudeSession() {
     hpCall("claudeSessionStatus")
       .then(function (s) {
@@ -617,21 +698,22 @@
         // llega esta respuesta, el panel no sabe y muestra el piso.
         var antes = currentAuthMethod;
         currentAuthMethod = (s.estado === "con-sesion") ? String(s.metodo || "") : "";
-        if (s.estado === "con-sesion") {
-          currentSession = "si";
-        } else if (s.estado === "sin-sesion") {
-          currentSession = "no"; currentSessionWarn = "iniciá sesión en Claude";
-        } else if (s.estado === "sin-cli") {
-          currentSession = "no"; currentSessionWarn = "falta el CLI de Claude";
-        } else {
-          currentSession = "?";
-        }
-        if (loginStatus && s.resumen) {
-          loginStatus.textContent = s.resumen + (s.detalle ? "\n" + s.detalle : "");
-          loginStatus.className = "muted " +
-            (currentSession === "si" ? "login-ok" : (currentSession === "no" ? "login-err" : ""));
-        }
+        aplicarSesion(s, { marca: "Claude", linea: loginStatus });
         if (antes !== currentAuthMethod) populateModels("claude-cli", effectiveModel());
+        updateSummary();
+        updateContextNote();
+      })
+      .catch(function () { /* sin motor no se sabe, y no saber no es un problema */ });
+  }
+
+  // Lo mismo para Cursor. Hasta la 1.5.0 esto no existía: con Cursor elegido, el
+  // panel no preguntaba nada y el editor solo se enteraba de que le faltaba la
+  // sesión cuando una generación se caía con el error crudo del proceso.
+  function refreshCursorSession() {
+    hpCall("cursorSessionStatus")
+      .then(function (s) {
+        if (!s || cfgProviderSel.value !== "cursor-cli") return;
+        aplicarSesion(s, { marca: "Cursor", linea: cursorStatus });
         updateSummary();
         updateContextNote();
       })
@@ -720,6 +802,8 @@
     cfgSummary = document.getElementById("cfg-summary");
     btnLoginClaude = document.getElementById("btn-login-claude");
     loginStatus = document.getElementById("login-status");
+    cursorStatus = document.getElementById("cursor-status");
+    apikeyHint = document.getElementById("apikey-hint");
 
     // Overlay de configuración: se abre con el botón ⚙ del header (antes era
     // un desplegable incómodo al fondo del panel).
@@ -861,6 +945,27 @@
         })
         .catch(function (e) { loginErr("No pude correr el diagnóstico: " + ((e && e.message) || "")); })
         .then(function () { btnLoginDoctor.disabled = false; });
+    });
+
+    // El mismo Diagnóstico, para Cursor. Es el botón que le pedimos al editor
+    // que apriete cuando algo no anda en su máquina y no la tenemos adelante:
+    // contesta si el CLI está, en qué ruta, qué versión y con qué credencial
+    // entra, todo en un texto que entra en una captura.
+    var btnCursorDoctor = document.getElementById("btn-cursor-doctor");
+    if (btnCursorDoctor) btnCursorDoctor.addEventListener("click", function () {
+      btnCursorDoctor.disabled = true;
+      cursorStatus.textContent = "Revisando el CLI de Cursor…";
+      cursorStatus.className = "muted";
+      hpCall("cursorCliStatus")
+        .then(function (r) {
+          cursorStatus.textContent = (r && r.report) || "No pude armar el diagnóstico.";
+          cursorStatus.className = "muted " + (r && r.ok ? "login-ok" : "login-err");
+        })
+        .catch(function (e) {
+          cursorStatus.textContent = "No pude correr el diagnóstico: " + ((e && e.message) || "");
+          cursorStatus.className = "muted login-err";
+        })
+        .then(function () { btnCursorDoctor.disabled = false; });
     });
 
     if (loginUrlLink) loginUrlLink.addEventListener("click", function (e) {

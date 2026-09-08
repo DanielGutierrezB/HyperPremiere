@@ -1323,11 +1323,16 @@ test('donde NO se puede dictar pero SÍ refinar, el ✨ está y anda', async fun
 });
 
 test('sin ningún refinador el ✨ se ve, apagado y diciendo qué falta', async function () {
+  // El motivo lo arma el motor y ya viene ordenado: primero el proveedor que el
+  // editor eligió en ⚙ —el único que le conviene arreglar— y después el
+  // respaldo (ver porQueNoHayRefinador en bridge/dictado-refinar.js).
   const m = montarDictado(600, {
     estado: {
       puedeRefinar: false, refinador: '',
-      sinRefinador: 'Claude Haiku (API de Anthropic): no hay API key de Anthropic configurada en ⚙ · ' +
-        'Ollama local: no está corriendo en esta máquina',
+      sinRefinador: 'El proveedor que elegiste (Cursor (Claude Sonnet)) no puede: el CLI de Cursor ' +
+        'está pero sin sesión (corré `cursor-agent login`). Tampoco pudo el respaldo (Claude Haiku ' +
+        '(API de Anthropic): no hay API key de Anthropic configurada en ⚙ · Ollama local: no está ' +
+        'corriendo en esta máquina)',
     },
   });
   await m.listo();
@@ -1337,9 +1342,12 @@ test('sin ningún refinador el ✨ se ve, apagado y diciendo qué falta', async 
   eq(palabra(m.refinar), 'Refinar', 'y apagado sigue diciendo qué es: un botón gris sin nombre ni ' +
     'motivo es el que se reporta como roto');
   has(m.refinar.className, 'is-off');
-  has(m.refinar.title, 'no está corriendo', 'el motivo entero, uno por uno');
+  has(m.refinar.title, 'cursor-agent login', 'el próximo paso del proveedor que SÍ eligió');
+  has(m.refinar.title, 'no está corriendo', 'y el resto del motivo, uno por uno');
   has(m.refinar.title, 'API key');
-  has(m.refinar.title, 'se prende', 'y qué habría que hacer para tenerlo');
+  ok(m.refinar.title.indexOf('se prende') === -1,
+    'la lista de "instalá Claude o Ollama" se sacó: con la regla nueva refina el proveedor ' +
+    'elegido, y mandar a instalar otra cosa a quien ya eligió uno es mandarlo a trabajar para nosotros');
 
   ok(!m.boton.disabled, 'dictar sigue andando: un dictado sin refinar deja el texto crudo, y sirve');
 });

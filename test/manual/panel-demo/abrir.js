@@ -118,9 +118,13 @@ server.listen(puerto, "127.0.0.1", function () {
   console.log("  " + url + "?e=preparar         el motor está pero sin dependencias");
   console.log("  " + url + "?e=whisper          falta el Whisper local");
   console.log("  " + url + "?e=otra-secuencia   Premiere está parado en otra secuencia");
-  console.log("  " + url + "?e=conflicto        el prompt general local no coincide con el del proyecto");
+  console.log("  " + url + "?e=conflicto        el prompt general de esta máquina no coincide con el del proyecto");
   console.log("  " + url + "?e=sin-medir        todavía no se generó con ningún proveedor (⚙ lo dice)");
   console.log("  " + url + "?e=api-key          el CLI de Claude entra con API key, así que ⚙ sí promete el 1M");
+  console.log("  " + url + "?e=cursor           Cursor elegido y con sesión");
+  console.log("  " + url + "?e=cursor-sin-sesion  Cursor elegido, CLI instalado y sin login (el caso del editor)");
+  console.log("  " + url + "?e=cursor-sin-cli   Cursor elegido y sin el binario (spawn cursor-agent ENOENT)");
+  console.log("  " + url + "?e=cursor-sin-cupo  Cursor con credencial pero la cuenta sin cupo (⚙ en ámbar)");
   console.log("  (se combinan con coma: ?e=whisper,otra-secuencia)\n");
   console.log("Los datos falsos se editan en test/manual/panel-demo/datos.js — recargás y listo.");
   console.log("Ctrl+C para cortar.\n");

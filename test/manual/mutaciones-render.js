@@ -13,6 +13,92 @@ const { execFileSync } = require('child_process');
 const raiz = path.join(__dirname, '..', '..');
 
 const MUTACIONES = [
+  // --- 1.5.0: refina el proveedor elegido, y el semáforo se acuerda del cupo ---
+
+  {
+    // El bug tal como lo reportó el editor: "si tengo configurado el CLI de
+    // Cursor, aún siento que el botón de refinar manda el prompt por Claude".
+    // Sin mirar `cfg.provider`, el elegido no va primero y gana la cadena vieja.
+    nombre: 'el refinado vuelve a ignorar el proveedor que el editor eligió',
+    archivo: 'bridge/dictado-refinar.js',
+    de: '  if (refinadorPorId(elegidoId)) orden.push({ id: elegidoId, esElegido: true });',
+    a:  '  if (false && refinadorPorId(elegidoId)) orden.push({ id: elegidoId, esElegido: true });',
+  },
+  {
+    // El respaldo dejaría de ser respaldo: Cursor y la API compatible se
+    // meterían en la cadena de cualquiera, gastándole plata al editor por una
+    // vía que no pidió.
+    nombre: 'Cursor y la API compatible se cuelan en el respaldo de todos',
+    archivo: 'bridge/dictado-refinar.js',
+    de: '    if (r.id === elegidoId || r.soloSiLoEligen) return;',
+    a:  '    if (r.id === elegidoId) return;',
+  },
+  {
+    // El elegido se probaría dos veces: dos arranques de CLI para el mismo "no".
+    nombre: 'el proveedor elegido se repite abajo como respaldo de sí mismo',
+    archivo: 'bridge/dictado-refinar.js',
+    de: '    if (r.id === elegidoId || r.soloSiLoEligen) return;',
+    a:  '    if (r.soloSiLoEligen) return;',
+  },
+  {
+    // Refinó el respaldo y el panel lo presenta como si fuera el elegido: el
+    // editor no se entera de que su texto lo escribió otro modelo.
+    nombre: 'no se dice que refinó el respaldo y no el proveedor elegido',
+    archivo: 'bridge/dictado-refinar.js',
+    de: "  return cual.esElegido ? base : base + ' (respaldo)';",
+    a:  '  return base;',
+  },
+  {
+    // El bug de Claude, reintroducido en la versión Cursor: "no se pudo
+    // averiguar" dibujado como "no tenés sesión". Es exactamente el que hizo
+    // que un editor generara tres recursos seguidos con el cartel puesto.
+    nombre: '"no sé si hay sesión de Cursor" se dibuja como "no hay"',
+    archivo: 'cep/js/config-ui.js',
+    de: '    } else {\n      currentSession = "?";\n    }',
+    a:  '    } else {\n      currentSession = "no"; currentSessionWarn = "iniciá sesión en " + opts.marca;\n    }',
+  },
+  {
+    // El caso de la captura: semáforo en verde y `Credit balance is too low`
+    // abajo. El motor se entera y no se lo cuenta a nadie.
+    nombre: 'el semáforo se queda en verde con la cuenta sin cupo',
+    archivo: 'bridge/provider-salud.js',
+    de: '  if (!nota || !s || s.estado !== \'con-sesion\') return s;',
+    a:  '  if (true) return s;',
+  },
+  {
+    // El cartel de "sin cupo" queda pegado: el editor carga crédito, guarda la
+    // config y el panel sigue en ámbar hasta que reinicie Premiere.
+    nombre: 'cargar crédito y guardar la config no borra el cartel de "sin cupo"',
+    archivo: 'bridge/provider-salud.js',
+    de: 'function olvidar(provider) {\n  delete notas[String(provider || \'\').trim()];',
+    a:  'function olvidar(provider) {\n  if (provider === undefined) delete notas[String(provider || \'\').trim()];',
+  },
+  {
+    // Un timeout o un modelo inexistente dejarían el indicador en ámbar para
+    // siempre, que es cómo un indicador útil se vuelve ruido que nadie mira.
+    nombre: 'cualquier falla, no solo la de cupo, mancha el indicador',
+    archivo: 'bridge/provider-salud.js',
+    de: '  if (!p || !RECORDABLES[c]) return;',
+    a:  '  if (!p) return;',
+  },
+  {
+    // Cursor refinaría con el modelo de DISEÑO que el editor tenga elegido
+    // (puede ser un Opus con razonamiento) para reordenar dos frases.
+    nombre: 'refinar por Cursor usa el modelo de diseño en vez del corto',
+    archivo: 'bridge/dictado-refinar.js',
+    de: '    model: () => cursorCli.MODELO_CORTO,',
+    a:  '    model: () => cursorCli.DEFAULT_MODEL,',
+  },
+  {
+    // El refinado por Cursor pasaría por `stripHtmlFence`, que sobre una
+    // instrucción de diseño no hace nada hasta el día que mencione un bloque
+    // de código y se la coma.
+    nombre: 'el refinado por Cursor vuelve a pasar por el desenvolver-HTML',
+    archivo: 'bridge/providers/cursor-cli.js',
+    de: 'module.exports = { generate, complete, listModels, DEFAULT_MODEL, MODELO_CORTO };',
+    a:  'module.exports = { generate, complete: generate, listModels, DEFAULT_MODEL, MODELO_CORTO };',
+  },
+
   {
     nombre: 'el render se manda igual con la composición rota',
     archivo: 'bridge/compose.js',
@@ -410,40 +496,125 @@ const MUTACIONES = [
     de: '    if (body.model) modelNameValue = body.model;',
     a:  '    if (false) modelNameValue = body.model;',
   },
-  // ── El prompt general que no viajaba con el proyecto ───────────────
-  // Las dos formas de romper esto no fallan: una deja al compañero generando
-  // sin el estilo del curso (el bug original) y la otra le tira encima lo que
-  // el editor había escrito. Ninguna de las dos rompe nada mientras pasa.
+  // ── Los tres niveles del prompt, y que los tres viajen ─────────────
+  // Las formas de romper esto no fallan: una deja al compañero generando sin el
+  // estilo del curso (el bug original), otra le tira encima lo que el editor
+  // había escrito, y las nuevas dejan al modelo eligiendo entre dos
+  // indicaciones que se contradicen. Ninguna rompe nada mientras pasa: el
+  // recurso sale, distinto, y se descubre viendo el video.
   {
-    nombre: 'la base del prompt vuelve a guardarse por secuencia',
+    nombre: 'el prompt del curso vuelve a guardarse por secuencia',
     archivo: 'bridge/store/project-fs.js',
-    de: '    project: path.join(projectRootPath(projectPath), GENERAL_PROMPT_FILE),',
-    a:  '    project: path.join(outputDirPath(projectPath, sequenceName), GENERAL_PROMPT_FILE),',
+    de: '    project: path.join(projectRootPath(projectPath), COURSE_PROMPT_FILE),',
+    a:  '    project: path.join(outputDirPath(projectPath, sequenceName), COURSE_PROMPT_FILE),',
   },
   {
-    nombre: 'el prompt de la secuencia se le SUMA a la base en vez de pisarla',
+    nombre: 'preguntar por los prompts generales deja creada la carpeta de la secuencia',
     archivo: 'bridge/store/project-fs.js',
-    de: '      text: sequenceText || projectText,',
-    a:  "      text: [projectText, sequenceText].filter(Boolean).join('\\n'),",
+    de: "  const seqDir = sequenceName ? outputDirPath(projectPath, sequenceName) : '';",
+    a:  "  const seqDir = sequenceName ? ensureOutputDir(projectPath, sequenceName) : '';",
   },
   {
-    nombre: 'preguntar por el prompt general deja creada la carpeta de la secuencia',
+    nombre: 'vaciar el de una secuencia deja el archivo vacío diciendo que la clase agrega algo',
     archivo: 'bridge/store/project-fs.js',
-    de: '      ? path.join(outputDirPath(projectPath, sequenceName), GENERAL_PROMPT_FILE)',
-    a:  '      ? path.join(ensureOutputDir(projectPath, sequenceName), GENERAL_PROMPT_FILE)',
-  },
-  {
-    nombre: 'volver a la base deja el archivo vacío diciendo que la clase tiene el suyo',
-    archivo: 'bridge/store/project-fs.js',
-    de: "        try { fs.unlinkSync(file); } catch { /* no estaba: ya está en la base */ }\n        return { ok: true, path: file, scope, removed: true };",
+    de: '        removeIfPresent(file);\n        removeIfPresent(files.sequenceLegacy);\n        return { ok: true, path: file, scope, removed: true };',
     a:  '        fs.mkdirSync(path.dirname(file), { recursive: true });\n        fs.writeFileSync(file, "", "utf8");\n        return { ok: true, path: file, scope, removed: true };',
   },
+  // ── La combinación de los dos niveles generales ─────────────────
+  // Hasta la 1.4.51 el de la secuencia REEMPLAZABA al del curso, y la razón que
+  // se daba era buena: dos textos pegados que se contradicen dejan al modelo
+  // eligiendo. Lo que faltaba no era reemplazar, era DECIR quién gana. Volver a
+  // reemplazar tira el estilo del curso entero sin que nada falle.
   {
-    nombre: 'el log vuelve a decir solo "sí" y se calla de dónde salió',
-    archivo: 'bridge/engine.js',
-    de: "  if (source === 'project') return 'de la base del proyecto';",
-    a:  "  if (source === 'project') return 'sí';",
+    nombre: 'el prompt de la secuencia vuelve a REEMPLAZAR al del curso',
+    archivo: 'bridge/prompt/build-context.js',
+    de: '  return { course: solo, sequence, unknown: viejo && !!solo && !ctx.generalSource };',
+    a:  '  return { course: sequence ? \'\' : solo, sequence, unknown: false };',
   },
+  {
+    nombre: 'el del curso viaja pero el de la secuencia se queda afuera',
+    archivo: 'bridge/prompt/build-context.js',
+    de: '  if (levels.sequence) {\n    parts.push',
+    a:  '  if (false) {\n    parts.push',
+  },
+  {
+    nombre: 'los dos niveles viajan, pero sin decir quién gana (el modelo elige)',
+    archivo: 'bridge/prompt/build-context.js',
+    de: "    parts.push(levels.course\n      ? 'Lo propio de ESTA clase, sobre la base del curso. PRECEDENCIA:",
+    a:  "    parts.push(levels.course\n      ? 'Lo propio de ESTA clase, sobre la base del curso. (",
+  },
+  {
+    nombre: 'la instrucción del marcador deja de ser la más específica de las tres',
+    archivo: 'bridge/prompt/build-context.js',
+    de: '  if (levels.course || levels.sequence) {\n    parts.push(\'Es el nivel MÁS específico',
+    a:  '  if (false) {\n    parts.push(\'Es el nivel MÁS específico',
+  },
+  {
+    nombre: 'los niveles llegan al revés: primero la clase y después el curso',
+    archivo: 'bridge/prompt/build-context.js',
+    de: '  styleBlocks(levels).forEach((p) => parts.push(p));',
+    a:  '  styleBlocks(levels).reverse().forEach((p) => parts.push(p));',
+  },
+  {
+    nombre: 'el system prompt deja de fijar la regla de precedencia',
+    archivo: 'bridge/prompt/system.md',
+    de: 'Cuando dos se contradicen, **manda el más específico**',
+    a:  'Cuando dos se contradicen, elegí vos cuál conviene',
+  },
+  {
+    nombre: 'el log vuelve a decir solo "sí" y se calla qué niveles entraron',
+    archivo: 'bridge/prompt/build-context.js',
+    de: "  if (levels.course) return 'del curso';",
+    a:  "  if (levels.course) return 'sí';",
+  },
+  {
+    nombre: 'el log dice cuál ganó en vez de que viajaron los dos',
+    archivo: 'bridge/prompt/build-context.js',
+    de: "    return 'del curso + de esta secuencia (si se contradicen, manda la secuencia)';",
+    a:  "    return 'solo de esta secuencia';",
+  },
+  // ── Los proyectos que ya existen ────────────────────────────────
+  // El de la secuencia cambió de nombre. Los archivos que ya están en los
+  // proyectos de los editores tienen que seguir andando, sin que nadie renombre
+  // nada: romper esto es que una clase pierda su prompt en silencio al
+  // actualizar el panel.
+  {
+    nombre: 'el prompt-general.md que ya estaba adentro de una secuencia deja de leerse',
+    archivo: 'bridge/store/project-fs.js',
+    de: '    if (sequenceRaw == null && files.sequenceLegacy) {',
+    a:  '    if (false) {',
+  },
+  {
+    nombre: 'guardar el de una secuencia deja el del nombre viejo al lado',
+    archivo: 'bridge/store/project-fs.js',
+    de: "    if (scope === 'sequence') removeIfPresent(files.sequenceLegacy);",
+    a:  "    if (false) removeIfPresent(files.sequenceLegacy);",
+  },
+  {
+    nombre: 'vaciar el de una secuencia del formato viejo no lo borra, y el texto vuelve',
+    archivo: 'bridge/store/project-fs.js',
+    de: '        removeIfPresent(file);\n        removeIfPresent(files.sequenceLegacy);',
+    a:  '        removeIfPresent(file);',
+  },
+  {
+    nombre: 'el archivo que cambió de nombre lo hace en silencio, sin dejar rastro en el log',
+    archivo: 'cep/js/general-prompt.js',
+    de: '      avisarFormatoViejo(projectPath, sequenceName, st);',
+    a:  '',
+  },
+  {
+    nombre: 'el aviso del formato viejo se repite en cada lectura',
+    archivo: 'cep/js/general-prompt.js',
+    de: '    if (!st.sequenceLegacy || avisadoViejo[clave]) return;',
+    a:  '    if (!st.sequenceLegacy) return;',
+  },
+  {
+    nombre: 'el nombre viejo le gana al nuevo, y resucita un texto ya reemplazado',
+    archivo: 'bridge/store/project-fs.js',
+    de: '    let sequenceRaw = files.sequence ? readTextFileOrNull(files.sequence) : null;',
+    a:  '    let sequenceRaw = null;',
+  },
+  // ── La migración de lo que quedó en el localStorage ─────────────
   {
     nombre: 'la migración pisa lo que el compañero ya tenía escrito en el proyecto',
     archivo: 'cep/js/general-prompt.js',
@@ -462,64 +633,84 @@ const MUTACIONES = [
     de: '      setPending(projectPath, sequenceName, local);\n      borrarLocal(projectPath, sequenceName);',
     a:  '      borrarLocal(projectPath, sequenceName);',
   },
-  // ── En qué archivo escribe el campo ──────────────────────────────
-  // El destino de escritura salía de qué archivo existiera en el disco, y
-  // vaciar el prompt de una secuencia borra el suyo: el tecleo siguiente
-  // reescribía la base de todo el proyecto, que le llega a los demás editores.
-  // Nada fallaba, el texto se guardaba — en el archivo equivocado.
+  // ── Cada campo escribe en SU archivo ────────────────────────────
+  // Con un solo campo, el destino de escritura salía de qué archivo existiera en
+  // el disco, y vaciar el prompt de una secuencia borra el suyo: el tecleo
+  // siguiente reescribía el estilo de todo el curso, que les llega a los demás
+  // editores. Nada fallaba, el texto se guardaba — en el archivo equivocado. El
+  // estado que lo sostenía (`writeScope`) se fue con el botón; la regla no.
   {
-    nombre: 'el destino de escritura vuelve a deducirse de qué archivo hay en el disco',
+    nombre: 'guardar un campo se lleva puesto el otro nivel',
     archivo: 'cep/js/general-prompt.js',
-    de: '      scope: st.writeScope,',
-    a:  '      scope: st.sequenceText ? "sequence" : "project",',
+    de: "        projectText: scope === \"project\" ? t : previo.projectText,\n        sequenceText: scope === \"sequence\" ? (w.removed ? \"\" : t) : previo.sequenceText,",
+    a:  "        projectText: scope === \"project\" ? t : \"\",\n        sequenceText: scope === \"sequence\" ? (w.removed ? \"\" : t) : \"\",",
   },
   {
-    nombre: 'vaciar el campo mueve el destino a la base del proyecto',
+    nombre: 'los campos se cruzan: el del curso muestra el de la clase',
     archivo: 'cep/js/general-prompt.js',
-    de: '        writeScope: previo.writeScope,',
-    a:  '        writeScope: (scope === "sequence" && !w.removed) ? "sequence" : "project",',
+    de: '      courseText: st.projectText,\n      sequenceText: st.sequenceText,',
+    a:  '      courseText: st.sequenceText || st.projectText,\n      sequenceText: st.sequenceText,',
   },
   {
-    nombre: 'el campo muestra lo que viaja al modelo y no el archivo que edita',
+    nombre: 'el campo de la clase se ofrece sin secuencia abierta, y escribe en ningún lado',
     archivo: 'cep/js/general-prompt.js',
-    de: '      fieldText: st.failed ? st.text : (propio ? st.sequenceText : st.projectText),',
-    a:  '      fieldText: st.text,',
+    de: '      sequenceEnabled: !!seq,',
+    a:  '      sequenceEnabled: true,',
   },
   {
-    nombre: 'leer el prompt general vuelve a migrar por su cuenta',
+    nombre: 'el rótulo del campo de la clase deja de nombrar la secuencia',
+    archivo: 'cep/js/general-prompt.js',
+    de: '        ? "Prompt de secuencia · solo “" + HPUtil.shortenMiddle(seq, 22) + "”"',
+    a:  '        ? "Prompt de secuencia"',
+  },
+  {
+    nombre: 'el panel deja de avisar que los dos niveles viajan y quién manda',
+    archivo: 'cep/js/general-prompt.js',
+    de: '      d.line = "Al modelo van los DOS: el del curso como base y el de esta secuencia encima, " +\n        "que MANDA donde se contradigan";',
+    a:  '      d.line = "Prompts generales";',
+  },
+  {
+    nombre: 'sin motor se da por hecho que no hay estilo (el bug original, otra vez)',
+    archivo: 'cep/js/general-prompt.js',
+    de: '      st.projectText = local;',
+    a:  "      st.projectText = '';",
+  },
+  // ── La cola, que relee al momento de generar ────────────────────
+  {
+    nombre: 'leer los prompts generales vuelve a migrar por su cuenta',
     archivo: 'cep/js/queue.js',
     de: '    return HPGeneral.load(job.projectPath, seq).then(function () {}).catch(function () {});',
     a:  '    return HPGeneral.migrate(job.projectPath, seq).then(function () {}).catch(function () {});',
   },
   {
-    nombre: 'sin motor se da por hecho que no hay estilo (el bug original, otra vez)',
-    archivo: 'cep/js/general-prompt.js',
-    de: '      st.text = local;',
-    a:  "      st.text = '';",
-  },
-  {
-    nombre: 'el panel deja de avisar que la secuencia está pisando la base',
-    archivo: 'cep/js/general-prompt.js',
-    de: '      d.line = "Propio de esta secuencia · PISA la base del proyecto";',
-    a:  '      d.line = "Prompt general";',
-  },
-  {
     nombre: 'la cola se queda con el prompt viejo pegado al job',
     archivo: 'cep/js/queue.js',
-    de: '        if (g.loaded || g.text) {',
+    de: '        if (g.loaded || g.projectText || g.sequenceText) {',
     a:  '        if (!job.payload.generalInstruction) {',
   },
   {
     nombre: 'un proyecto ilegible vacía el estilo con el que se iba a generar',
     archivo: 'cep/js/queue.js',
-    de: '        if (g.loaded || g.text) {',
+    de: '        if (g.loaded || g.projectText || g.sequenceText) {',
     a:  '        if (true) {',
   },
   {
-    nombre: 'la cola no va a buscar el prompt general del proyecto antes de generar',
+    nombre: 'la cola relee el del curso pero se queda con el de la clase que traía el job',
+    archivo: 'cep/js/queue.js',
+    de: '          job.payload.sequenceInstruction = g.sequenceText;',
+    a:  '          job.payload.sequenceInstruction = job.payload.sequenceInstruction || g.sequenceText;',
+  },
+  {
+    nombre: 'la cola no va a buscar los prompts generales del proyecto antes de generar',
     archivo: 'cep/js/queue.js',
     de: '    Promise.all([ensureTranscript(job), ensureGeneralPrompt(job)]).then(function () { runModel(job); });',
     a:  '    ensureTranscript(job).then(function () { runModel(job); });',
+  },
+  {
+    nombre: 'la tarjeta del marcador manda un solo texto ya combinado',
+    archivo: 'cep/js/main.js',
+    de: '      generalInstruction: genTxt.projectText, sequenceInstruction: genTxt.sequenceText,',
+    a:  '      generalInstruction: genTxt.sequenceText || genTxt.projectText,',
   },
   // ── El `flex` de los botones ─────────────────────────────────────────
   //
@@ -1260,7 +1451,8 @@ const MUTACIONES = [
 const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
   'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada',
   'marcadores-frameio', 'cola-mirar-y-rehacer', 'correcciones-encolar',
-  'claude-session', 'panel-cartel-sesion', 'imagen-de-referencia',
+  'claude-session', 'panel-cartel-sesion', 'panel-cartel-cursor',
+  'provider-salud', 'imagen-de-referencia',
   'selector-pensamiento', 'ventana-de-contexto', 'prompt-general-proyecto',
   'panel-cartel-preparar-motor', 'panel-encabezado-microfono', 'panel-botones-flex',
   'dictado-motor', 'dictado-refinar', 'dictado-panel',

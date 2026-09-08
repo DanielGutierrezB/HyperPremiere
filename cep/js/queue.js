@@ -484,18 +484,20 @@
           job.payload.stills = (md.stills || []).concat(gen.stills || []);
         }
         job.payload.resources = (md.resources || []).concat(gen.resources || []);
-        // El estilo del curso se relee del proyecto y no se confía en lo que el
-        // job traiga: si el editor lo arregló porque las animaciones salían mal,
-        // reintentar tiene que salir con el arreglado. Lo único que no se hace
-        // es VACIARLO por no haber podido leer —el proyecto puede estar en un
-        // disco desmontado— porque un recurso generado sin la marca no falla,
-        // sale distinto y se descubre viendo el video. De ahí las dos mitades:
-        // si se leyó el disco manda el disco (aunque diga que no hay), y si no
-        // se pudo, solo se completa con lo que haya quedado en esta máquina.
+        // Los dos niveles del estilo se releen del proyecto y no se confía en lo
+        // que el job traiga: si el editor lo arregló porque las animaciones
+        // salían mal, reintentar tiene que salir con el arreglado. Lo único que
+        // no se hace es VACIARLOS por no haber podido leer —el proyecto puede
+        // estar en un disco desmontado— porque un recurso generado sin la marca
+        // no falla, sale distinto y se descubre viendo el video. De ahí las dos
+        // mitades: si se leyó el disco manda el disco (aunque diga que no hay),
+        // y si no se pudo, solo se completa con lo que haya quedado en esta
+        // máquina. Van los dos juntos o ninguno: mezclar el curso releído con el
+        // de la secuencia que traía el job es un contexto que nunca existió.
         var g = HPGeneral.state(job.projectPath, job.storeSeqName || job.seqName);
-        if (g.loaded || g.text) {
-          job.payload.generalInstruction = g.text;
-          job.payload.generalSource = g.source;
+        if (g.loaded || g.projectText || g.sequenceText) {
+          job.payload.generalInstruction = g.projectText;
+          job.payload.sequenceInstruction = g.sequenceText;
         }
         if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
         if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
@@ -539,18 +541,18 @@
   }
 
   /**
-   * Deja en la caché el prompt general de la secuencia de la que sale el
-   * material de este job. Es el estilo del curso —marca, paleta, tipografía— y
-   * vive al lado del .prproj, no en este panel: un job restaurado de otra
+   * Deja en la caché los dos prompts generales de la secuencia de la que sale el
+   * material de este job: el del curso —marca, paleta, tipografía— y el de esa
+   * clase. Viven al lado del .prproj, no en este panel: un job restaurado de otra
    * sesión, o una corrección de un corte que nunca se abrió acá, igual tiene que
-   * salir con él. Nunca frena ni lanza: si no se puede leer, se genera con lo
+   * salir con ellos. Nunca frena ni lanza: si no se pueden leer, se genera con lo
    * que haya y HPGeneral lo dice en el log.
    *
    * `load` y NUNCA `migrate`: acá se leen secuencias que el editor no tiene
    * adelante, y migrar desde este camino significaba que encolar una corrección
-   * de otro corte podía promover a base del proyecto —para todos los editores—
-   * un texto que estaba en una sola máquina. Qué texto ganaba dependía de qué
-   * job se hubiera cargado primero.
+   * de otro corte podía promover al prompt general del curso —para todos los
+   * editores— un texto que estaba en una sola máquina. Qué texto ganaba dependía
+   * de qué job se hubiera cargado primero.
    */
   function ensureGeneralPrompt(job) {
     var seq = job.storeSeqName || job.seqName;

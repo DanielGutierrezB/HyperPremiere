@@ -35,7 +35,7 @@ apretás F5 y ya está. No hay que reiniciar nada.
 ## Cómo se editan los datos falsos
 
 Todo en **`datos.js`**, y nada más que ahí: nombres de proyecto y secuencia,
-objetivo, prompt general, transcript, marcadores con sus instrucciones e
+objetivo, los dos prompts generales, transcript, marcadores con sus instrucciones e
 imágenes, la cola entera con el estado de cada job, el contador de la sesión,
 las correcciones y la configuración del modelo. No tiene lógica: son datos.
 Querés ver un nombre más largo, cero marcadores o un error más feo, lo cambiás
@@ -57,7 +57,7 @@ se combinan con coma (`?e=whisper,otra-secuencia`):
 | `?e=preparar` | el motor está pero le faltan las dependencias (cartel "Preparar motor") |
 | `?e=whisper` | falta el Whisper local (badge en ámbar + oferta de instalarlo) |
 | `?e=otra-secuencia` | a los 4 s Premiere se mueve a otra secuencia y salta el cartel amarillo |
-| `?e=conflicto` | el prompt general de esta máquina no coincide con el del proyecto |
+| `?e=conflicto` | el prompt general de esta máquina no coincide con el del proyecto (la migración del `localStorage`, que sigue existiendo aunque el botón de destino se haya ido en la 1.5.0) |
 | `?e=mic-perdido` | el micrófono elegido ya no está enchufado: el desplegable del encabezado se pone en ámbar, la fila de ⚙ avisa y el 🎙 dice cuál usa en su lugar |
 | `?e=mic-mudo` | "Probar micrófono" termina en silencio digital (el dispositivo abre pero entrega ceros) |
 | `?e=sin-dictado` | no se puede dictar (Windows, sin ffmpeg, sin Whisper) **pero sí refinar**: el encabezado no dibuja el desplegable de micrófono, el 🎙 se ve apagado con su motivo y el ✨ de refinar lo escrito a mano queda **prendido** |
@@ -66,6 +66,10 @@ se combinan con coma (`?e=whisper,otra-secuencia`):
 | `?e=dictando` | hay un dictado andando: cambiar de micrófono se guarda, pero la fila aclara que vale desde el próximo |
 | `?e=sin-medir` | todavía no se generó con ningún proveedor: ⚙ lo dice en vez de mostrar el promedio de otro |
 | `?e=api-key` | el CLI de Claude entra con una API key, así que ⚙ **sí** promete el 1M (por suscripción muestra el piso) |
+| `?e=cursor` | Cursor elegido y con sesión: ⚙ en verde, con qué cuenta entra, y la fila de API key disponible |
+| `?e=cursor-sin-sesion` | el caso del editor: el CLI está instalado y falta el login — ⚙ nombra a **Cursor** (no a Claude) y da el comando con la ruta completa |
+| `?e=cursor-sin-cli` | el binario no está (`spawn cursor-agent ENOENT`): otro cartel, con el comando de instalación, y el Diagnóstico arma la ficha igual diciendo dónde buscó |
+| `?e=cursor-sin-cupo` | hay credencial y la cuenta no tiene cupo: ⚙ en **ámbar**, ni verde (mentiría) ni rojo (no falta configurar nada) |
 
 ## Medir el encabezado (no mirarlo a ojo)
 

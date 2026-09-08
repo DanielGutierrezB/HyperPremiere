@@ -3,32 +3,56 @@
 // El refinador del dictado: convierte lo que salió del micrófono en una
 // instrucción de diseño que se pueda leer.
 //
-// Por qué es una CADENA y no un proveedor fijo
-// --------------------------------------------
-// El resto del panel usa el proveedor que el editor eligió en ⚙, y ahí eso
-// está bien: generar una animación es la tarea principal y vale esperar tres
-// minutos. Refinar dos frases no. Es una llamada de segundos que pasa cada vez
-// que alguien suelta el botón del micrófono, y si depende de una credencial
-// que en esa máquina no está, el dictado entero deja de servir.
+// Quién refina: PRIMERO el proveedor que el editor eligió
+// -------------------------------------------------------
+// Durante un tiempo esto fue una cadena fija —API de Anthropic, CLI de Claude,
+// Ollama— que nunca miraba `cfg.provider`. El razonamiento era de costo:
+// refinar dos frases es una llamada de segundos que pasa cada vez que alguien
+// suelta el botón del micrófono, así que conviene la vía más barata que haya en
+// la máquina, sea cual sea.
 //
-// Así que acá se pregunta qué hay en LA MÁQUINA y se usa el mejor disponible,
-// diciéndolo en la interfaz. El orden, y por qué:
+// El razonamiento estaba bien y la conclusión estaba mal, y lo dijo el mismo
+// editor dos veces: *"si tengo configurado el CLI de Cursor, aún siento que el
+// botón de refinar manda el prompt por Claude, no por el que tengo
+// seleccionado"*. Tenía razón. Y en su máquina no era solo raro: la cuenta de
+// Claude no tenía cupo, así que el botón NO FUNCIONABA teniendo la máquina con
+// qué refinar. Elegir un proveedor en ⚙ y que el panel hable con otro es un
+// bug de coherencia, y encima le costaba la función entera.
+//
+// La regla ahora es una sola:
+//
+//   Si el proveedor elegido en ⚙ puede refinar, refina él.
+//
+// La cadena vieja queda como RESPALDO, y solo se usa cuando el elegido no puede
+// (sin sesión, sin cupo, sin credencial). Ahí su orden sigue siendo el de
+// antes, que sigue siendo por costo y latencia:
 //
 //   1. API de Anthropic (`claude-api`) — si hay una API key configurada. Es
 //      HTTP directo: no arranca ningún CLI, así que no paga el piso de
 //      arranque que hace absurdo todo lo demás.
 //   2. CLI de Claude con Haiku — si esta máquina tiene con qué autenticarse.
-//      Es el proveedor que los editores ya usan. Paga el arranque del CLI, que
-//      medido acá domina el número (ver el comentario de PISO_DEL_CLI).
+//      Paga el arranque del CLI, que medido acá domina el número.
 //   3. Ollama local — gratis y sin red, pero con la advertencia de abajo.
 //   4. Ninguno — el dictado NO se rompe: queda el texto crudo en el campo y se
 //      dice por qué no se pudo refinar. Un dictado sin refinar es útil; un
 //      botón que no hace nada, no.
 //
-// `cursor-cli` NO está en la lista y no es un olvido. Medido en este proyecto:
-// piso de 5 a 10 s por llamada y ~31.823 tokens de contexto propio escritos a
-// la caché en la llamada más chica que se puede hacer. Para refinar dos frases
-// es la herramienta equivocada por dos órdenes de magnitud.
+// Cuando refina el respaldo se DICE cuál fue: el editor tiene que saber con qué
+// se escribió lo que le apareció en el campo. Lo que no se hace es mandarlo a
+// instalar ni a arreglar el proveedor que no eligió.
+//
+// Por qué `cursor-cli` entra ahora, y por qué NO está en el respaldo
+// ------------------------------------------------------------------
+// Entra porque puede ser el elegido, y la coherencia con lo elegido es la regla.
+// No está en el respaldo por lo que se midió (test/manual/cursor-refinado.js,
+// mismo dictado de 40 palabras, dos vueltas): refinar por Cursor cuesta 5,7-7,1
+// s y ~9.500 tokens escritos a caché, porque el CLI arrastra su propio contexto
+// de agente en CADA llamada por corto que sea el pedido. Por la API de
+// Anthropic, lo mismo son ~2 s y el prompt pelado. Como respaldo sería elegir
+// lo más caro habiendo alternativa; como elegido es lo que el editor pidió,
+// sabiendo lo que cuesta —y se lo decimos, con `aviso`—. Las dos cosas a la vez
+// y sin contradicción: se usa cuando lo eligieron, no se prefiere cuando hay
+// con qué comparar.
 //
 // La red de abajo: `verificar`
 // ----------------------------
@@ -44,8 +68,12 @@
 
 const { hpFetch } = require('./providers/http');
 const claudeApi = require('./providers/claude-api');
+const cursorCli = require('./providers/cursor-cli');
 const claudeSession = require('./claude-session');
 const claudeDoctor = require('./claude-doctor');
+const cursorSession = require('./cursor-session');
+const providerSalud = require('./provider-salud');
+const cliErrors = require('./providers/cli-errors');
 const { getProvider } = require('./providers');
 
 // Alias del CLI: "haiku" resuelve al Haiku más nuevo que tenga la cuenta, así
@@ -59,6 +87,9 @@ const MODELO_API = process.env.HYPERPREMIERE_DICTADO_MODELO_API || 'claude-haiku
 // preferible devolver el crudo que dejar al editor mirando un botón.
 const TIMEOUT_MS = Number(process.env.HYPERPREMIERE_DICTADO_TIMEOUT_MS) || 45_000;
 const TIMEOUT_OLLAMA_MS = Number(process.env.HYPERPREMIERE_DICTADO_TIMEOUT_OLLAMA_MS) || 60_000;
+// Cursor necesita más aire que los otros: al pedido hay que sumarle el arranque
+// del agente, que es el que pone el piso (medido en test/manual/cursor-refinado.js).
+const TIMEOUT_CURSOR_MS = Number(process.env.HYPERPREMIERE_DICTADO_TIMEOUT_CURSOR_MS) || 120_000;
 
 const OLLAMA_URL = process.env.HYPERPREMIERE_OLLAMA_URL || 'http://localhost:11434';
 
@@ -267,6 +298,66 @@ const REFINADORES = [
   },
 
   {
+    id: 'cursor-cli',
+    nombre: 'Cursor (Claude Sonnet)',
+    // Se usa cuando el editor lo eligió, y NO como respaldo: medido, cuesta
+    // ~6 s y ~9.500 tokens a caché contra los ~2 s de Haiku por la API (ver la
+    // cabecera). Coherencia con lo elegido sí; preferirlo habiendo alternativa
+    // más barata, no.
+    soloSiLoEligen: true,
+    async detectar(cfg) {
+      const s = await cursorSession.estadoDeSesion(cfg, { timeoutMs: 15_000 });
+      if (s.estado === 'con-sesion') return { disponible: true };
+      if (s.estado === 'sin-cli') return { disponible: false, motivo: 'no está el CLI de Cursor en esta máquina' };
+      if (s.estado === 'sin-sesion') return { disponible: false, motivo: 'el CLI de Cursor está pero sin sesión (corré `cursor-agent login`)' };
+      return { disponible: false, motivo: 'no pude comprobar la sesión de Cursor' };
+    },
+    // Composer y no el modelo de diseño que el editor tenga elegido: refinar no
+    // es diseñar, y los `-thinking-` se ponen a razonar antes de contestar dos
+    // frases (ver MODELO_CORTO en providers/cursor-cli.js).
+    model: () => cursorCli.MODELO_CORTO,
+    config: (cfg) => ({
+      timeoutMs: TIMEOUT_CURSOR_MS,
+      // La misma key que usa la generación, por la misma función (envParaCursor).
+      apiKey: (cfg && cfg.apiKey) || '',
+    }),
+    // Lo que el editor paga por la coherencia, dicho antes de que se note. El
+    // panel lo muestra al lado del refinador para que la demora no parezca que
+    // algo se colgó, y para que se sepa que ese gasto va al cupo de Cursor y no
+    // al contador de la sesión.
+    aviso: 'Cursor tarda unos segundos más y gasta tu cupo de Cursor.',
+  },
+
+  {
+    id: 'openai-compat',
+    nombre: 'API compatible (la que configuraste)',
+    // Igual que Cursor: solo si lo eligieron. Atrás puede haber cualquier cosa
+    // —OpenAI, Gemini, OpenRouter, un servidor propio— con cualquier precio, y
+    // meter en el respaldo una llamada cuyo costo no podemos ni estimar sería
+    // gastarle plata al editor por una vía que no pidió.
+    soloSiLoEligen: true,
+    async detectar(cfg) {
+      const key = String((cfg && cfg.apiKey) || '').trim();
+      const base = String((cfg && cfg.baseUrl) || '').trim();
+      if (!base) return { disponible: false, motivo: 'falta la Base URL en ⚙' };
+      if (!key) return { disponible: false, motivo: 'falta la API key en ⚙' };
+      return { disponible: true, detalle: String((cfg && cfg.model) || '') };
+    },
+    // El mismo modelo que el editor configuró, y no uno "chico" elegido por
+    // nosotros: acá atrás puede haber OpenAI, Gemini, OpenRouter o un servidor
+    // propio, y el ID de un hermano más barato (gpt-4o-mini) no existe en la
+    // mitad de ellos. Pedir un modelo que no está es fallar seguro; usar el que
+    // ya funciona es, además, lo que el editor eligió.
+    model: (detalle) => detalle,
+    config: (cfg) => ({
+      apiKey: (cfg && cfg.apiKey) || '',
+      baseUrl: (cfg && cfg.baseUrl) || '',
+      maxTokens: 1500,
+      timeoutMs: TIMEOUT_MS,
+    }),
+  },
+
+  {
     id: 'ollama',
     nombre: 'Ollama local',
     async detectar() {
@@ -364,31 +455,123 @@ let elegido = null;
 
 function olvidarRefinador() { elegido = null; }
 
+function refinadorPorId(id) {
+  return REFINADORES.filter((r) => r.id === id)[0] || null;
+}
+
 /**
- * El mejor refinador disponible en esta máquina, o null.
- * @returns {Promise<{id:string, nombre:string, detalle:string, descartados:Array}|null>}
+ * En qué orden se prueban los refinadores para ESTA configuración.
+ *
+ * Primero el proveedor que el editor eligió en ⚙ —si tiene refinador—, y
+ * después el respaldo, salteando al que ya se probó.
+ *
+ * El respaldo NO es una lista aparte: es el propio orden de `REFINADORES` sin
+ * los que están marcados `soloSiLoEligen`. Tenerlo como una segunda lista de
+ * ids era una copia que había que acordarse de mantener, y que además se
+ * desincronizaba de cualquiera que reemplazara la cadena (los tests lo hacen).
+ * El orden del array ES la política de costo y latencia, escrita una vez.
+ *
+ * Función pura y aparte porque es LA decisión de este archivo y se puede probar
+ * sin CLI, sin red y sin Ollama.
+ *
+ * @param {string} provider - `cfg.provider`
+ * @returns {Array<{id:string, esElegido:boolean}>}
+ */
+function ordenPara(provider) {
+  const elegidoId = String(provider || '').trim();
+  const orden = [];
+  if (refinadorPorId(elegidoId)) orden.push({ id: elegidoId, esElegido: true });
+  REFINADORES.forEach((r) => {
+    if (r.id === elegidoId || r.soloSiLoEligen) return;
+    orden.push({ id: r.id, esElegido: false });
+  });
+  return orden;
+}
+
+/**
+ * El refinador que corresponde en esta máquina, o null.
+ *
+ * `esElegido` dice si el que salió es el proveedor de ⚙ o un respaldo. No es
+ * decorativo: es lo que decide si el panel dice "refinó otro" y, sobre todo, lo
+ * que evita mandar a arreglar un proveedor que el editor no eligió.
+ *
+ * @returns {Promise<{id:string, nombre:string, detalle:string, aviso:string,
+ *                    esElegido:boolean, elegidoEra:string, descartados:Array}|null>}
  */
 async function elegirRefinador(cfg, opts) {
   if (elegido && !(opts && opts.forzar)) return elegido.ok ? elegido : null;
+  const elegidoEra = String((cfg && cfg.provider) || '').trim();
   const descartados = [];
-  for (const r of REFINADORES) {
+  for (const paso of ordenPara(elegidoEra)) {
+    const r = refinadorPorId(paso.id);
     let d;
     try { d = await r.detectar(cfg); }
     catch (e) { d = { disponible: false, motivo: (e && e.message) || String(e) }; }
+    // Una cuenta sin cupo tiene credencial y contesta que sí a la detección: el
+    // "no puedo" recién aparece al llamar. Si ya nos pasó en esta sesión, el
+    // respaldo lo saltea en vez de volver a chocar contra la misma pared —son
+    // segundos de latencia por un fallo garantizado— y sigue con el siguiente.
+    //
+    // SOLO por cupo, y no por credencial rechazada: un 401 puede ser de otra
+    // cosa (un modelo que esa cuenta no tiene, una key recién rotada) y dejar a
+    // un refinador afuera del respaldo por una sospecha es peor que gastar los
+    // segundos. Y solo el RESPALDO: al elegido se lo vuelve a intentar siempre,
+    // porque es el que el editor pidió y porque es así como el panel se entera
+    // de que ya cargó crédito.
+    const enfermo = paso.esElegido ? null : providerSalud.estado(paso.id);
+    if (d && d.disponible && enfermo && enfermo.causa === 'cuota') {
+      d = { disponible: false, motivo: enfermo.motivo };
+    }
     if (d && d.disponible) {
-      elegido = { ok: true, id: r.id, nombre: r.nombre, detalle: d.detalle || '', descartados: descartados };
+      elegido = {
+        ok: true, id: r.id, nombre: r.nombre, detalle: d.detalle || '',
+        aviso: r.aviso || '',
+        esElegido: paso.esElegido, elegidoEra: elegidoEra,
+        descartados: descartados,
+      };
       return elegido;
     }
-    descartados.push({ id: r.id, nombre: r.nombre, motivo: (d && d.motivo) || 'no disponible' });
+    descartados.push({
+      id: r.id, nombre: r.nombre, esElegido: paso.esElegido,
+      motivo: (d && d.motivo) || 'no disponible',
+    });
   }
-  elegido = { ok: false, descartados: descartados };
+  elegido = { ok: false, elegidoEra: elegidoEra, descartados: descartados };
   return null;
 }
 
-/** Por qué no hay refinador, en una frase que se pueda mostrar. */
+/**
+ * Por qué no hay refinador, en una frase que se pueda mostrar.
+ *
+ * El del editor va PRIMERO y con su nombre, porque es el único sobre el que
+ * tiene sentido pedirle que haga algo. Los demás se cuentan como lo que son
+ * —los que se probaron después— y no como una lista de deberes: mandar a
+ * instalar Ollama o a loguearse en Claude a alguien que eligió Cursor es
+ * exactamente lo que no hay que hacer.
+ */
 function porQueNoHayRefinador() {
   if (!elegido || elegido.ok) return '';
-  return elegido.descartados.map((d) => d.nombre + ': ' + d.motivo).join(' · ');
+  const suyo = elegido.descartados.filter((d) => d.esElegido)[0];
+  const otros = elegido.descartados.filter((d) => !d.esElegido);
+  const partes = [];
+  if (suyo) partes.push('El proveedor que elegiste (' + suyo.nombre + ') no puede: ' + suyo.motivo + '.');
+  if (otros.length) {
+    partes.push('Tampoco pudo el respaldo (' + otros.map((d) => d.nombre + ': ' + d.motivo).join(' · ') + ').');
+  }
+  return partes.join(' ');
+}
+
+/**
+ * Cómo se nombra al que refinó.
+ *
+ * Cuando NO es el proveedor elegido hay que decirlo: al editor le apareció un
+ * texto en el campo y tiene derecho a saber quién lo escribió, sobre todo si es
+ * otro modelo del que eligió. Lo que no se hace acá es sugerirle que arregle
+ * nada: que el respaldo haya entrado es información, no una tarea.
+ */
+function comoSeLlamaElQueRefino(cual) {
+  const base = cual.nombre + (cual.detalle ? ' · ' + cual.detalle : '');
+  return cual.esElegido ? base : base + ' (respaldo)';
 }
 
 /**
@@ -451,14 +634,20 @@ async function refinarDictado(body, cfg) {
       config: await quien.config(cfg, cual.detalle),
     });
   } catch (e) {
+    // Que se sepa para la próxima. Un "sin cupo" no se arregla reintentando, y
+    // el indicador de ⚙ tiene que dejar de decir que ese proveedor está listo
+    // (ver provider-salud.js): es el caso del editor con el semáforo en verde y
+    // `Credit balance is too low` abajo.
+    providerSalud.anotar(cual.id, cliErrors.causa(String((e && e.message) || e)),
+      String((e && e.message) || e));
     return {
       ok: false, texto: juntos, crudo: crudo,
-      refinador: cual.nombre, ms: Date.now() - t0,
+      refinador: comoSeLlamaElQueRefino(cual), ms: Date.now() - t0,
       // El motivo llega entero del proveedor y puede ser largo (el del CLI trae
       // el "Qué hacer" y después lo que escribió el proceso). Se corta porque
       // esto se lee en una línea abajo del micrófono, y lo que importa —el
       // diagnóstico y el próximo paso— va adelante.
-      aviso: noSePudo(origen) + cual.nombre + ' falló (' +
+      aviso: noSePudo(origen) + comoSeLlamaElQueRefino(cual) + ' falló (' +
         String((e && e.message) || e).slice(0, 400) + ').',
     };
   }
@@ -468,15 +657,27 @@ async function refinarDictado(body, cfg) {
   if (!control.ok) {
     return {
       ok: false, texto: juntos, crudo: crudo,
-      refinador: cual.nombre, ms: ms, usage: salida.usage,
-      aviso: noSePudo(origen) + control.motivo + ' (' + cual.nombre + ').',
+      refinador: comoSeLlamaElQueRefino(cual), ms: ms, usage: salida.usage,
+      aviso: noSePudo(origen) + control.motivo + ' (' + comoSeLlamaElQueRefino(cual) + ').',
     };
   }
   return {
     ok: true, texto: texto, crudo: crudo,
-    refinador: cual.nombre + (cual.detalle ? ' · ' + cual.detalle : ''),
+    refinador: comoSeLlamaElQueRefino(cual),
     ms: ms, usage: salida.usage,
+    // Solo cuando hay algo que aclarar: que refinó otro (y cuál era el elegido),
+    // o lo que este refinador cuesta. Es un dato, no una advertencia.
+    aviso: cual.esElegido
+      ? (cual.aviso || '')
+      : ('Refinó el respaldo: el proveedor que elegiste no pudo. ' + porQueNoPudoElElegido()).trim(),
   };
+}
+
+/** El motivo del elegido, y solo el suyo, para contarlo en una línea. */
+function porQueNoPudoElElegido() {
+  if (!elegido || !elegido.descartados) return '';
+  const suyo = elegido.descartados.filter((d) => d.esElegido)[0];
+  return suyo ? '(' + suyo.nombre + ': ' + suyo.motivo + ')' : '';
 }
 
 module.exports = {
@@ -485,7 +686,8 @@ module.exports = {
   olvidarRefinador,
   porQueNoHayRefinador,
   SISTEMA,
-  // Expuestos para los tests: son las tres decisiones puras de este archivo.
+  // Expuestos para los tests: son las decisiones puras de este archivo.
+  _ordenPara: ordenPara,
   _verificar: verificar,
   _limpiar: limpiar,
   _armarPedido: armarPedido,

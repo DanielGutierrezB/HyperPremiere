@@ -123,6 +123,20 @@ async function main() {
     }) + '\n');
     return;
   }
+  if (modo === 'texto-con-fence') {
+    // Texto a secas, envuelto en un fence de markdown. Es lo que distingue
+    // `complete` de `generate`: el primero devuelve lo que escribió el modelo
+    // tal cual y el segundo le saca el fence. Refinar un dictado usa `complete`,
+    // porque una instrucción de diseño no es una composición y pasarla por el
+    // desenvolver-HTML es una poda esperando a que alguien mencione un bloque
+    // de código.
+    process.stdout.write(JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false,
+      result: '```html\nEl título entra con un fade.\n```',
+      usage: { inputTokens: 2, outputTokens: 9 },
+    }) + '\n');
+    return;
+  }
   if (modo === 'plano') {
     // Un cierre limpio, como el de `--output-format json`: sirve para los tests
     // que no miran el estado en vivo sino QUÉ PROMPT recibió el CLI.

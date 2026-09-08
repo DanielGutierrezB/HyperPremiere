@@ -72,6 +72,7 @@ const CAPS = arg('--capturas', '');
 // así, la corrida falla en vez de mentir.
 const VISTAS = [
   { nombre: 'marcadores', escenario: '', abrir: 'todoAbierto', esperar: '.marker-card[open]' },
+  { nombre: 'prompts-generales', escenario: '', abrir: 'promptsGenerales', esperar: '#general-section[open] #general-sequence-instruction' },
   { nombre: 'cola', escenario: '', abrir: 'cola', esperar: '.qbtn-fresh' },
   { nombre: 'cola-editor', escenario: '', abrir: 'colaEditor', esperar: '.code-edit' },
   { nombre: 'corrections', escenario: '', abrir: 'corrections', esperar: '.corr-row' },
@@ -81,11 +82,20 @@ const VISTAS = [
   { nombre: 'vacio', escenario: '?e=vacio', abrir: 'todoAbierto', esperar: '' },
   { nombre: 'preparar', escenario: '?e=preparar', abrir: 'todoAbierto', esperar: '#btn-prepare-engine' },
   { nombre: 'whisper', escenario: '?e=whisper', abrir: 'todoAbierto', esperar: '#btn-install-whisper' },
-  { nombre: 'conflicto', escenario: '?e=conflicto', abrir: 'todoAbierto', esperar: '#btn-general-scope' },
+  { nombre: 'conflicto', escenario: '?e=conflicto', abrir: 'todoAbierto', esperar: '.general-conflict-actions button' },
   { nombre: 'mic-perdido', escenario: '?e=mic-perdido', abrir: 'config', esperar: '#btn-save-config' },
   { nombre: 'mic-mudo', escenario: '?e=mic-mudo', abrir: 'micMedidor', esperar: '#mic-status' },
   { nombre: 'sin-medir', escenario: '?e=sin-medir', abrir: 'config', esperar: '#btn-save-config' },
   { nombre: 'api-key', escenario: '?e=api-key', abrir: 'config', esperar: '#btn-save-config' },
+  // Los cuatro estados de Cursor en ⚙. Van a la medición y no solo a las
+  // capturas porque la fila de Cursor suma un botón de Diagnóstico al lado de
+  // una línea de estado, y esa fila es exactamente la forma que en la 1.4.50
+  // hacía falta apuntalar con parches de botón aplastado. Si vuelve a
+  // desbordar a 320 px, que se entere esta corrida y no un editor.
+  { nombre: 'cursor', escenario: '?e=cursor', abrir: 'config', esperar: '#btn-save-config' },
+  { nombre: 'cursor-sin-sesion', escenario: '?e=cursor-sin-sesion', abrir: 'config', esperar: '#btn-save-config' },
+  { nombre: 'cursor-sin-cli', escenario: '?e=cursor-sin-cli', abrir: 'config', esperar: '#btn-save-config' },
+  { nombre: 'cursor-sin-cupo', escenario: '?e=cursor-sin-cupo', abrir: 'config', esperar: '#btn-save-config' },
 ];
 
 const SOLO = arg('--vistas', '');
@@ -109,6 +119,16 @@ const ABRIR = async function (modo) {
 
   if (modo === 'todoAbierto') {
     abrirDetalles();
+  } else if (modo === 'promptsGenerales') {
+    // El bloque de los dos prompts generales no se puede medir con `todoAbierto`:
+    // main.js tiene un acordeón, y abrir la tarjeta de un marcador PLIEGA este
+    // bloque para darle la pantalla al marcador. Así que se cierran las tarjetas
+    // y se abre éste, que es la única forma de verlo con sus dos campos, sus dos
+    // micrófonos y su renglón de qué viaja.
+    [].slice.call(document.querySelectorAll('details.marker-card')).forEach(function (d) { d.open = false; });
+    const gen = document.getElementById('general-section');
+    if (gen) gen.open = true;
+    await respirar(400);
   } else if (modo === 'cola' || modo === 'colaEditor') {
     apretar('tab-queue');
     await respirar(1200);

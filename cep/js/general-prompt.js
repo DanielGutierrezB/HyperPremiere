@@ -1,19 +1,25 @@
 /**
- * HPGeneral — de dónde sale el "Prompt general" (el estilo del curso).
+ * HPGeneral — de dónde salen los DOS prompts generales que arman el contexto:
+ * el "Prompt general" (el del curso entero) y el "Prompt de secuencia" (el de
+ * esta clase). Con la instrucción de cada marcador son los tres niveles.
  *
- * Vivía en el localStorage del panel, con una clave por proyecto Y secuencia, o
- * sea que NO viajaba con el .prproj. El editor que lo escribía generaba con la
+ * Vivían en el localStorage del panel, con una clave por proyecto Y secuencia, o
+ * sea que NO viajaban con el .prproj. El editor que lo escribía generaba con la
  * marca, la paleta y la tipografía puestas; el compañero abría el mismo proyecto
  * y generaba con el campo vacío. Misma clase, mismo marcador, animaciones
  * peores, y nada en el panel que se lo dijera.
  *
  * Ahora la fuente de verdad es el disco, al lado del proyecto (ver
- * loadGeneralPrompt en bridge/store/project-fs.js): una BASE del proyecto y,
- * opcionalmente, un prompt PROPIO de una secuencia que la pisa. Este módulo es
- * el único que sabe eso: mantiene una caché sincrónica por proyecto+secuencia
- * —porque la cola, la pestaña de correcciones y las tarjetas leen sin poder
- * esperar—, hace la migración de lo que ya estaba en localStorage y sostiene el
- * conflicto cuando las dos cosas existen y no dicen lo mismo.
+ * loadGeneralPrompt en bridge/store/project-fs.js): un archivo con el del CURSO,
+ * arriba de las carpetas de secuencia, y uno con el de la CLASE adentro de la
+ * suya. Los dos viajan al modelo; el de la clase no reemplaza al del curso, se
+ * le suma, y donde se contradigan manda el de la clase (eso se le dice al modelo
+ * con todas las letras en bridge/prompt/build-context.js).
+ *
+ * Este módulo es el único que sabe eso: mantiene una caché sincrónica por
+ * proyecto+secuencia —porque la cola, la pestaña de correcciones y las tarjetas
+ * leen sin poder esperar—, hace la migración de lo que ya estaba en localStorage
+ * y sostiene el conflicto cuando las dos cosas existen y no dicen lo mismo.
  *
  * Tres cosas que conviene tener claras antes de tocar nada acá:
  *
@@ -21,12 +27,14 @@
  *     limpiarlo, apartar el pendiente) es `migrate()`, y la llama una sola
  *     cosa: la vista, una vez por contexto. La cola llama `load`. Cuando la
  *     migración vivía adentro de la lectura, encolar una corrección de otro
- *     corte podía promover a BASE DEL PROYECTO un texto que estaba en una sola
- *     máquina, desde un camino que nadie mira.
- *  2. `writeScope` —en qué archivo escribe el campo— es estado, no una
- *     deducción. Ver switchScope().
+ *     corte podía promover al prompt general del curso un texto que estaba en
+ *     una sola máquina, desde un camino que nadie mira.
+ *  2. Cada campo escribe en SU archivo y en ninguno más. No hay un destino que
+ *     elegir —eso era `writeScope`, y con un solo campo hacía falta—, pero la
+ *     regla que sostenía sigue viva: vaciar un campo no puede tocar el otro
+ *     archivo. Ver save().
  *  3. `save()` no relee: actualiza la caché con lo que contestó el motor. Cada
- *     tecleo del campo pasa por acá, y releer costaba una llamada de más.
+ *     tecleo de los campos pasa por acá, y releer costaba una llamada de más.
  *
  * Vanilla JS, sin ES modules: se expone como window.HPGeneral.
  */
@@ -43,21 +51,20 @@
   }
 
   function rutasVacias() {
-    return { project: "", sequence: "" };
+    return { project: "", sequence: "", sequenceLegacy: "" };
   }
 
   function estadoVacio() {
     return {
-      // Lo que le llega al modelo y de dónde salió ('sequence' | 'project' | 'none').
-      text: "", source: "none",
+      // Los dos niveles, por separado: los dos viajan al modelo.
       projectText: "", sequenceText: "",
-      // Que el archivo de la base EXISTA aunque esté vacío es un dato: el
-      // proyecto decidió que no hay base, y entonces no hay nada que migrar.
+      // Que el archivo del curso EXISTA aunque esté vacío es un dato: el
+      // proyecto decidió que no hay estilo, y entonces no hay nada que migrar.
       hasProjectFile: false,
+      // El de esta clase se leyó del nombre que tenía antes de la 1.5.0.
+      sequenceLegacy: false,
       // El texto local que quedó en el limbo esperando que el editor decida.
       pending: "",
-      // En qué archivo escribe lo que se tipea en el campo. Ver switchScope().
-      writeScope: "project",
       paths: rutasVacias(),
       // false = todavía no se leyó el disco de este contexto. Los lectores
       // sincrónicos lo miran para no confundir "no hay" con "no sé".
@@ -107,26 +114,14 @@
     return st ? st : estadoVacio();
   }
 
-  /**
-   * Arma el estado que se cachea a partir de lo que contestó el motor.
-   *
-   * `writeScope` se SIEMBRA con lo que hay en el disco la primera vez que se lee
-   * un contexto, y después lo mueven únicamente las dos acciones del botón. La
-   * única excepción va en un solo sentido: si en el disco hay un prompt propio
-   * de la secuencia, el campo edita ése, siempre. Al revés —que el archivo deje
-   * de existir y el destino se caiga a la base— es exactamente el bug que esto
-   * arregla, y por eso no hay ninguna regla que lo haga.
-   */
+  /** Arma el estado que se cachea a partir de lo que contestó el motor. */
   function estadoDe(r, previo, pending) {
-    var sequenceText = String((r && r.sequenceText) || "");
     return {
-      text: String((r && r.text) || ""),
-      source: String((r && r.source) || "none"),
       projectText: String((r && r.projectText) || ""),
-      sequenceText: sequenceText,
+      sequenceText: String((r && r.sequenceText) || ""),
       hasProjectFile: !!(r && r.hasProjectFile),
+      sequenceLegacy: !!(r && r.sequenceLegacy),
       pending: String(pending || ""),
-      writeScope: sequenceText ? "sequence" : ((previo && previo.loaded) ? previo.writeScope : "project"),
       paths: (r && r.paths) ? r.paths : ((previo && previo.paths) || rutasVacias()),
       loaded: true,
       failed: false
@@ -134,12 +129,12 @@
   }
 
   /**
-   * Trae del disco el prompt general de este contexto. LECTURA PURA: no escribe
-   * archivos, no toca el localStorage y no mueve el destino de escritura.
+   * Trae del disco los dos prompts de este contexto. LECTURA PURA: no escribe
+   * archivos y no toca el localStorage.
    *
    * Eso importa porque la cola llama acá por la secuencia de CUALQUIER job —uno
    * restaurado de otra sesión, una corrección de otro corte—, y un camino que no
-   * es la interfaz no puede cambiarle el proyecto a nadie.
+   * es la interfaz no puede escribirle nada a nadie.
    */
   function load(projectPath, sequenceName) {
     var clave = claveDe(projectPath, sequenceName);
@@ -154,11 +149,11 @@
       // Sin motor (o con el proyecto en un disco que no está), lo peor que se
       // puede hacer es dar por sentado que no hay estilo: quedaría generando en
       // blanco, que es el bug original. Se sigue con lo que haya en esta máquina
-      // y se dice, en vez de callar y que se descubra viendo el video.
+      // —que era el estilo del curso— y se dice, en vez de callar y que se
+      // descubra viendo el video.
       var local = localDe(projectPath, sequenceName);
       var st = estadoVacio();
-      st.text = local;
-      st.source = local ? "local" : "none";
+      st.projectText = local;
       st.pending = pendingDe(projectPath, sequenceName);
       st.failed = true;
       cache[clave] = st;
@@ -168,28 +163,51 @@
     });
   }
 
+  // Contextos a los que ya se les avisó del archivo con el nombre viejo. Una vez
+  // por sesión y por secuencia: es una nota al pie, no una alarma.
+  var avisadoViejo = {};
+
+  /**
+   * El prompt de esta clase se leyó del nombre que tenía antes de la 1.5.0.
+   *
+   * No hay nada que hacer —se leyó igual y se consolida solo al guardarlo—, pero
+   * el log es donde en este panel se descubre de dónde salió el contexto de una
+   * generación, y un archivo que cambia de nombre solo merece un renglón ahí. Va
+   * únicamente por el camino de la vista: la cola lee por cualquier job y
+   * repetirlo por cada uno sería ruido.
+   */
+  function avisarFormatoViejo(projectPath, sequenceName, st) {
+    var clave = claveDe(projectPath, sequenceName);
+    if (!st.sequenceLegacy || avisadoViejo[clave]) return;
+    avisadoViejo[clave] = true;
+    hpLog("Prompt de secuencia: “" + sequenceName + "” lo tiene en el archivo del formato viejo (" +
+      st.paths.sequenceLegacy + "). Se lee igual, y la próxima vez que lo guardes queda como " +
+      "prompt-secuencia.md. No tenés que hacer nada.");
+  }
+
   /**
    * Lee y, además, MIGRA lo que hubiera quedado en el localStorage de esta
    * máquina. La llama la vista una vez por contexto y nadie más.
    *
    * Las tres salidas de la migración, y por qué:
    *
-   *  - Hay algo acá y el proyecto no tiene nada escrito → se escribe en el
-   *    proyecto. Es el caso normal al actualizar: lo que el editor venía usando
-   *    pasa a ser la base y desde ahí viaja con el .prproj.
+   *  - Hay algo acá y el proyecto no tiene nada escrito → se escribe como el
+   *    prompt general del curso. Es el caso normal al actualizar: lo que el
+   *    editor venía usando pasa a viajar con el .prproj.
    *  - Dice exactamente lo mismo que el proyecto → la copia local sobra y se
    *    borra, sin molestar a nadie.
    *  - Hay las dos cosas y DIFIEREN → no se toca ninguna. La copia local se
-   *    aparta entera y el panel pregunta qué es: el prompt de esta clase, la
-   *    base nueva de todo el proyecto, o algo que ya no sirve. Pisar en
-   *    silencio, para cualquiera de los dos lados, es tirar trabajo del editor;
-   *    y acá los dos lados pueden ser de personas distintas.
+   *    aparta entera y el panel pregunta qué es: el prompt de esta clase, el
+   *    general del curso, o algo que ya no sirve. Pisar en silencio, para
+   *    cualquiera de los dos lados, es tirar trabajo del editor; y acá los dos
+   *    lados pueden ser de personas distintas.
    */
   function migrate(projectPath, sequenceName) {
     return load(projectPath, sequenceName).then(function (st) {
       // El disco no contestó: no hay contra qué comparar, y mover algo con la
       // mitad de la información es la forma más cara de equivocarse.
       if (!st.loaded) return st;
+      avisarFormatoViejo(projectPath, sequenceName, st);
       var local = localDe(projectPath, sequenceName);
       if (!local) return st;
 
@@ -197,7 +215,7 @@
         return save(projectPath, sequenceName, local, "project").then(function (nuevo) {
           borrarLocal(projectPath, sequenceName);
           hpLog("Prompt general: lo que tenías guardado en esta máquina para “" + sequenceName +
-            "” pasó a ser la BASE del proyecto (" + nuevo.paths.project + "). Desde ahora viaja con el .prproj.");
+            "” pasó a ser el prompt general del curso (" + nuevo.paths.project + "). Desde ahora viaja con el .prproj.");
           return nuevo;
         });
       }
@@ -208,8 +226,8 @@
       }
 
       // Ni se pisa el proyecto ni se tira lo de acá: queda apartado hasta que
-      // el editor diga qué es. Sacarlo de `instruction` es lo que deja al campo
-      // mostrar lo que DE VERDAD viaja sin que escribir encima lo borre.
+      // el editor diga qué es. Sacarlo de `instruction` es lo que deja a los
+      // campos mostrar lo que DE VERDAD viaja sin que escribir encima lo borre.
       setPending(projectPath, sequenceName, local);
       borrarLocal(projectPath, sequenceName);
       st.pending = local;
@@ -220,16 +238,19 @@
   }
 
   /**
-   * Guarda el prompt general. `scope` = 'project' (la base, para todas las
-   * secuencias) o 'sequence' (solo esta, pisando la base).
+   * Guarda uno de los dos. `scope` = 'project' (el prompt general del curso,
+   * para todas las secuencias) o 'sequence' (el de esta clase).
+   *
+   * `scope` NO es un destino que se mueva: es CUÁL de los dos campos guardó, y
+   * cada campo manda siempre el suyo. Ésa es la forma nueva de la regla que
+   * antes sostenía `writeScope`: vaciar un campo borra su archivo y no toca el
+   * otro. Mientras el destino se deducía de qué archivo existiera en el disco,
+   * el editor que seleccionaba todo y borraba para reescribir terminaba
+   * escribiéndole el estilo del curso a los demás, sin que nada fallara.
    *
    * NO relee: la caché se actualiza con lo que contestó el motor. Por acá pasa
-   * cada tecleo del campo (con debounce), y releer era una segunda llamada por
-   * tecla para enterarse de algo que ya sabíamos.
-   *
-   * Tampoco mueve `writeScope`. Vaciar el propio de una secuencia borra el
-   * archivo —eso lo decide el motor—, pero el campo sigue escribiendo en la
-   * secuencia: borrar el texto no es pedir que lo próximo vaya a la base.
+   * cada tecleo (con debounce), y releer era una segunda llamada por tecla para
+   * enterarse de algo que ya sabíamos.
    */
   function save(projectPath, sequenceName, text, scope) {
     scope = scope === "sequence" ? "sequence" : "project";
@@ -248,43 +269,20 @@
         // `created: false` = era vacío y el archivo no existía, así que no se
         // escribió nada y el proyecto sigue sin haber decidido.
         hasProjectFile: scope === "project" ? (w.created !== false) : previo.hasProjectFile,
+        // Guardar el de la secuencia consolida el nombre nuevo (lo hace el
+        // motor), así que deja de haber nada del formato viejo.
+        sequenceLegacy: scope === "sequence" ? false : previo.sequenceLegacy,
         pending: previo.pending,
-        writeScope: previo.writeScope,
         paths: {
           project: (scope === "project" && w.path) ? w.path : previo.paths.project,
-          sequence: (scope === "sequence" && w.path) ? w.path : previo.paths.sequence
+          sequence: (scope === "sequence" && w.path) ? w.path : previo.paths.sequence,
+          sequenceLegacy: previo.paths.sequenceLegacy || ""
         },
         loaded: true,
         failed: false
       };
-      st.text = st.sequenceText || st.projectText;
-      st.source = st.sequenceText ? "sequence" : (st.projectText ? "project" : "none");
       cache[clave] = st;
       return st;
-    });
-  }
-
-  /**
-   * Las DOS transiciones deliberadas de destino, y las únicas que hay.
-   *
-   *  - a 'sequence': esta clase pasa a tener el suyo. Arranca con una COPIA de
-   *    la base y no en blanco, porque empezar vacío sería volver a generar sin
-   *    el estilo del curso, que es el bug de arriba.
-   *  - a 'project': se borra el propio de la clase y vuelve a valer la base.
-   *
-   * Están juntas acá y no en la vista porque son la máquina de estados: el
-   * destino de escritura solo se mueve cuando alguien lo pide, con el botón que
-   * pregunta antes. Que se moviera solo —cuando el archivo de la secuencia
-   * dejaba de existir— era reescribir la base de todo el proyecto, para todos
-   * los editores, porque uno vació un campo para volver a tipearlo.
-   */
-  function switchScope(projectPath, sequenceName, scope) {
-    var st = estado(projectPath, sequenceName);
-    var destino = scope === "sequence" ? "sequence" : "project";
-    var texto = destino === "sequence" ? st.projectText : "";
-    return save(projectPath, sequenceName, texto, "sequence").then(function (nuevo) {
-      nuevo.writeScope = destino;
-      return nuevo;
     });
   }
 
@@ -294,32 +292,27 @@
    * contexto, así que las palabras que lo dicen se prueban como cualquier otra
    * decisión, sin tener que levantar el panel entero.
    */
-  function describe(st) {
-    var propio = st.writeScope === "sequence";
+  function describe(st, sequenceName) {
+    var seq = String(sequenceName || "");
     var d = {
-      source: st.source,
-      pending: st.pending,
       loaded: st.loaded,
-      // En qué archivo escribe lo que se tipea en el campo.
-      scope: st.writeScope,
-      // Y qué texto va EN el campo: el del archivo al que escribe, que puede no
-      // ser el que viaja al modelo (una secuencia con el suyo vacío usa la base
-      // mientras tanto). Si estos dos se separan, lo próximo que se tipee se
-      // guarda en un lado y se lee del otro, que es como se pierde texto.
-      // Sin poder leer el proyecto no hay archivos: va lo que tenga la máquina.
-      fieldText: st.failed ? st.text : (propio ? st.sequenceText : st.projectText),
-      // Sin base no hay nada que pisar: ofrecer "uno propio" sería ofrecer
-      // escribir lo mismo en otro archivo.
-      offerOwn: propio || !!st.projectText,
-      showBase: propio && !!st.projectText,
-      baseText: st.projectText
+      pending: st.pending,
+      // Qué texto va EN cada campo: el de su archivo, siempre. Los dos campos y
+      // los dos archivos son uno a uno, así que lo que se lee y lo que se
+      // guarda no pueden separarse — que es como se perdía texto.
+      courseText: st.projectText,
+      sequenceText: st.sequenceText,
+      // Sin secuencia abierta no hay archivo donde guardar el de la clase.
+      sequenceEnabled: !!seq,
+      // El nombre de la secuencia va RECORTADO POR EL MEDIO: los nombres reales
+      // de este proyecto son del tipo "12_MKA_..._ARMADO_FINAL_105875_02" y lo
+      // que distingue un corte de otro es el sufijo, así que cortar por el final
+      // —que es lo que hace el CSS— deja dos clases con el mismo rótulo. A 320
+      // px, además, el rótulo entero no entra en un renglón.
+      sequenceLabel: seq
+        ? "Prompt de secuencia · solo “" + HPUtil.shortenMiddle(seq, 22) + "”"
+        : "Prompt de secuencia"
     };
-    d.ownLabel = propio
-      ? "Volver a la base del proyecto"
-      : "Usar uno propio para esta secuencia";
-    d.ownTitle = propio
-      ? "Borra el prompt propio de esta secuencia. Vuelve a valer la base del proyecto."
-      : "Arranca con una copia de la base para que la cambies solo en esta clase. La base no se toca.";
 
     if (st.pending) {
       d.badge = "⚠ dos versiones distintas — decidí cuál vale";
@@ -334,37 +327,10 @@
       // culpar al proyecto de un error de lectura.
       d.badge = "⚠ no pude leer el del proyecto";
       d.badgeState = "warn";
-      d.line = st.text
+      d.line = st.projectText
         ? "No pude leerlo del proyecto: va el que tiene esta máquina y no viaja a la otra"
         : "No pude leerlo del proyecto: se genera sin el estilo del curso";
       d.lineState = "warn";
-      return d;
-    }
-    if (propio && st.sequenceText) {
-      d.badge = "✓ propio de esta secuencia";
-      d.badgeState = "ok";
-      d.line = "Propio de esta secuencia · PISA la base del proyecto";
-      d.lineState = "override";
-      return d;
-    }
-    if (propio) {
-      // El campo edita el prompt de la clase y está vacío: no es lo mismo que
-      // haber vuelto a la base (eso es el botón), y mientras tanto lo que viaja
-      // es la base. Decirlo es lo que evita tipear creyendo que se está
-      // escribiendo en un lado cuando se escribe en el otro.
-      d.badge = st.projectText ? "✓ base del proyecto" : "sin estilo del curso — no viaja con el proyecto";
-      d.badgeState = st.projectText ? "ok" : "hint";
-      d.line = st.projectText
-        ? "Propio de esta secuencia · vacío por ahora, así que vale la base del proyecto"
-        : "Propio de esta secuencia · vacío. Lo que escribas acá vale solo para esta clase";
-      d.lineState = "";
-      return d;
-    }
-    if (st.projectText) {
-      d.badge = "✓ base del proyecto";
-      d.badgeState = "ok";
-      d.line = "Base del proyecto · la misma para todas las secuencias, viaja con el .prproj";
-      d.lineState = "";
       return d;
     }
     if (!st.loaded) {
@@ -373,7 +339,29 @@
       // afirmando algo que no sabe. `loaded` existe justo para esto.
       d.badge = "leyendo el proyecto…";
       d.badgeState = "hint";
-      d.line = "Buscando el estilo del curso al lado del proyecto…";
+      d.line = "Buscando los prompts generales al lado del proyecto…";
+      d.lineState = "";
+      return d;
+    }
+    if (st.projectText && st.sequenceText) {
+      d.badge = "✓ curso + esta secuencia";
+      d.badgeState = "ok";
+      d.line = "Al modelo van los DOS: el del curso como base y el de esta secuencia encima, " +
+        "que MANDA donde se contradigan";
+      d.lineState = "override";
+      return d;
+    }
+    if (st.sequenceText) {
+      d.badge = "✓ solo de esta secuencia";
+      d.badgeState = "ok";
+      d.line = "Al modelo va solo el de esta secuencia: el curso todavía no tiene prompt general";
+      d.lineState = "";
+      return d;
+    }
+    if (st.projectText) {
+      d.badge = "✓ del curso";
+      d.badgeState = "ok";
+      d.line = "Al modelo va el del curso, el mismo para todas las secuencias. Viaja con el .prproj";
       d.lineState = "";
       return d;
     }
@@ -392,26 +380,25 @@
     load: load,
     /** Lee Y migra lo que quedó en esta máquina. Solo la vista, una vez. Ver migrate(). */
     migrate: migrate,
+    /** Guarda uno de los dos campos, cada uno en su archivo. Ver save(). */
     save: save,
-    /** Las dos transiciones de destino del botón. Ver switchScope(). */
-    switchScope: switchScope,
 
     /**
-     * El estado cacheado de este contexto. `text` y `source` son lo que viaja al
-     * modelo AHORA, sin esperar al disco; `loaded` en false quiere decir que
-     * este contexto todavía no se leyó, y los que escriben el payload lo usan
-     * para completar y nunca vaciar.
+     * El estado cacheado de este contexto. `projectText` y `sequenceText` son
+     * los dos niveles que viajan al modelo AHORA, sin esperar al disco;
+     * `loaded` en false quiere decir que este contexto todavía no se leyó, y los
+     * que escriben el payload lo usan para completar y nunca vaciar.
      */
     state: estado,
 
     /** Ese mismo estado, ya con las palabras que va a mostrar el panel. */
     describe: function (projectPath, sequenceName) {
-      return describe(estado(projectPath, sequenceName));
+      return describe(estado(projectPath, sequenceName), sequenceName);
     },
 
     /**
      * Qué hacer con el prompt local que no coincidía con el del proyecto:
-     * 'sequence' (es el de esta clase), 'project' (es la base nueva) o
+     * 'sequence' (es el de esta clase), 'project' (es el general del curso) o
      * 'discard'. Cualquiera de las tres deja el limbo vacío.
      */
     resolvePending: function (projectPath, sequenceName, choice) {
@@ -426,11 +413,10 @@
       }
       var scope = choice === "sequence" ? "sequence" : "project";
       hpLog("Prompt general: el que tenías en esta máquina para “" + sequenceName + "” pasó a ser " +
-        (scope === "sequence" ? "el propio de esa secuencia (pisa la base)." : "la base del proyecto."));
-      // Contestar el conflicto ES elegir dónde escribe el campo de ahora en más.
+        (scope === "sequence" ? "el prompt de esa secuencia (se suma al del curso y manda si se contradicen)."
+          : "el prompt general del curso."));
       return save(projectPath, sequenceName, texto, scope).then(function (nuevo) {
         nuevo.pending = "";
-        nuevo.writeScope = scope;
         return nuevo;
       });
     }

@@ -140,9 +140,9 @@
    * corte, y mandar "(sin objetivo declarado)" es pedirle al modelo que corrija
    * sin saber de qué va la clase.
    *
-   * El prompt general NO se busca acá y no viaja en el job: lo resuelve la cola
-   * contra la secuencia de origen justo antes de llamar al modelo. Desde que
-   * vive al lado del .prproj hay una base del proyecto que cubre a todas las
+   * Los prompts generales NO se buscan acá y no viajan en el job: los resuelve
+   * la cola contra la secuencia de origen justo antes de llamar al modelo. Desde
+   * que viven al lado del .prproj hay uno del curso que cubre a todas las
    * secuencias, así que este rebusque de mirar al corte vecino dejó de tener
    * sentido — y de paso una corrección deja de poder salir con un estilo
    * distinto del que sale una generación normal del mismo marcador.

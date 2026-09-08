@@ -406,7 +406,7 @@ test('el objetivo de la clase viaja con la corrección', async function () {
 
 test('el prompt general NO lo arma la pestaña: lo resuelve la cola contra el proyecto', async function () {
   // Antes lo leía del localStorage de la secuencia de origen y, si no estaba,
-  // del corte abierto. Ahora hay una base del proyecto que vale para todas las
+  // del corte abierto. Ahora hay un prompt del curso que vale para todas las
   // secuencias, así que ese rebusque sobra — y mandarlo desde acá haría que una
   // corrección pudiera salir con un estilo distinto del que sale una generación
   // normal del mismo marcador, que es la clase de diferencia muda que no se ve
@@ -872,15 +872,14 @@ function montarCola(opts) {
           espia.transcriptsPedidos.push(arg);
           return Promise.resolve(opts.transcriptEnDisco || { ok: true, found: false });
         }
-        // El estilo del curso vive al lado del .prproj: una base del proyecto y,
-        // si la clase lo necesita, el propio de esa secuencia que la pisa.
+        // Los dos niveles generales viven al lado del .prproj: el del curso y,
+        // si la clase agrega algo, el de esa secuencia. Los dos viajan.
         if (m === 'loadGeneralPrompt') {
           espia.promptsPedidos.push(arg);
           var base = opts.baseDelProyecto || '';
           var propio = (opts.propioDeSecuencia || {})[arg.sequenceName] || '';
           return Promise.resolve({
-            ok: true, text: propio || base, source: propio ? 'sequence' : (base ? 'project' : 'none'),
-            projectText: base, sequenceText: propio, hasProjectFile: !!base,
+            ok: true, projectText: base, sequenceText: propio, hasProjectFile: !!base,
           });
         }
         return Promise.resolve({ ok: true });
@@ -974,18 +973,18 @@ test('si el panel se reinicia a mitad, la corrección sigue siendo corrección',
 // sale el material. Eso es lo que hace que corregir y generar de nuevo el mismo
 // marcador salgan con el mismo estilo.
 
-test('la corrección sale con la base del proyecto, sin que la pestaña la mande', async function () {
+test('la corrección sale con el prompt general del curso, sin que la pestaña lo mande', async function () {
   const c = montarCola({ baseDelProyecto: 'tipografía Inter, azul de marca' });
   c.ctx.HPQueue.add(jobBase({ correction: true }));
   await dejarCorrer();
 
   eq(c.espia.preparados[0].generalInstruction, 'tipografía Inter, azul de marca');
-  eq(c.espia.preparados[0].generalSource, 'project', 'y el log va a poder decir de dónde salió');
+  eq(c.espia.preparados[0].sequenceInstruction, '', 'esa clase no agrega nada');
 });
 
-test('corrigiendo de otro corte, el estilo sale del corte donde NACIÓ el recurso', async function () {
-  // Si ese corte tiene el suyo, es el que hizo bueno al original: leer el de la
-  // secuencia abierta rediseñaría con la marca de otra clase.
+test('corrigiendo de otro corte, el prompt de secuencia sale del corte donde NACIÓ el recurso', async function () {
+  // Si ese corte agrega algo, es lo que hizo bueno al original: leer el de la
+  // secuencia abierta rediseñaría con lo que pide otra clase.
   const c = montarCola({
     baseDelProyecto: 'azul de marca',
     propioDeSecuencia: { 'Clase 14 v1': 'verde, tipografía de la clase piloto' },
@@ -994,8 +993,8 @@ test('corrigiendo de otro corte, el estilo sale del corte donde NACIÓ el recurs
   await dejarCorrer();
 
   eq(c.espia.promptsPedidos[0].sequenceName, 'Clase 14 v1', 'se pregunta por el corte de origen');
-  eq(c.espia.preparados[0].generalInstruction, 'verde, tipografía de la clase piloto');
-  eq(c.espia.preparados[0].generalSource, 'sequence');
+  eq(c.espia.preparados[0].generalInstruction, 'azul de marca', 'el del curso viaja igual');
+  eq(c.espia.preparados[0].sequenceInstruction, 'verde, tipografía de la clase piloto');
 });
 
 // ── El tramo del guion, en la corrección y en su feedback ────────────

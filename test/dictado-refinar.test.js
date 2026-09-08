@@ -178,15 +178,164 @@ test('sin nada instalado no se inventa un modelo', function () {
 
 // --- 5. La cadena, y que nunca deje al editor sin su dictado -----------------
 
-test('cursor-cli NO está en la cadena, y no es un olvido', function () {
-  // Medido en este proyecto: piso de 5 a 10 s y ~31.823 tokens de contexto
-  // propio en la llamada más chica posible. Para dos frases es absurdo.
-  ok(refinar._REFINADORES.every((r) => r.id !== 'cursor-cli'));
+// --- 5 bis. Quién refina: primero el proveedor que el editor eligió ---------
+//
+// La regla vieja era una cadena fija que nunca miraba `cfg.provider`, y el
+// editor la reportó dos veces: *"si tengo configurado el CLI de Cursor, aún
+// siento que el botón de refinar manda el prompt por Claude"*. Tenía razón. Y
+// en su máquina no era solo raro: su cuenta de Claude no tenía cupo, así que el
+// botón no funcionaba TENIENDO con qué refinar.
+
+test('refina el proveedor que el editor eligió, no el primero de la lista', function () {
+  // El caso del reporte: con Cursor elegido, Cursor va primero. Antes ni
+  // figuraba, así que ganaba Claude siempre.
+  eq(refinar._ordenPara('cursor-cli')[0].id, 'cursor-cli');
+  ok(refinar._ordenPara('cursor-cli')[0].esElegido, 'y se sabe que es el elegido, no un respaldo');
 });
 
-test('el orden es API, después CLI, después local', function () {
-  eq(refinar._REFINADORES.map((r) => r.id).join(','), 'claude-api,claude-cli,ollama',
-    'la API primero porque es lo único que no paga el arranque de un CLI');
+test('vale para todos, no es un parche para Cursor', function () {
+  // La regla es "el elegido refina", así que cada proveedor tiene que ganarse
+  // el primer puesto cuando le toca. Un arreglo que solo contemple a Cursor
+  // deja el mismo bug para el que elija Ollama.
+  ['claude-cli', 'claude-api', 'ollama', 'openai-compat', 'cursor-cli'].forEach(function (p) {
+    eq(refinar._ordenPara(p)[0].id, p, 'con ' + p + ' elegido tiene que refinar ' + p);
+  });
+});
+
+test('el respaldo conserva su orden: API, después CLI, después local', function () {
+  // Lo que NO cambió: cuando el elegido no puede, el orden sigue siendo por
+  // costo y latencia. La API primero porque es lo único que no paga el arranque
+  // de un CLI.
+  eq(refinar._ordenPara('').map((r) => r.id).join(','), 'claude-api,claude-cli,ollama');
+  eq(refinar._ordenPara('cursor-cli').slice(1).map((r) => r.id).join(','),
+    'claude-api,claude-cli,ollama', 'y detrás del elegido, el mismo orden');
+});
+
+test('el elegido no se repite abajo como respaldo de sí mismo', function () {
+  const orden = refinar._ordenPara('claude-cli');
+  eq(orden.filter((r) => r.id === 'claude-cli').length, 1,
+    'probarlo dos veces son dos arranques de CLI para el mismo "no"');
+  eq(orden.map((r) => r.id).join(','), 'claude-cli,claude-api,ollama');
+});
+
+test('Cursor y la API compatible NO entran al respaldo de nadie', function () {
+  // Los dos pueden ser el elegido, y ninguno de los dos es un recurso: Cursor
+  // porque está medido que cuesta ~6 s y ~9.500 tokens a caché contra los ~2 s
+  // de Haiku por la API, y la API compatible porque atrás puede haber cualquier
+  // precio y no se le gasta plata al editor por una vía que no pidió.
+  ['claude-cli', 'claude-api', 'ollama', ''].forEach(function (p) {
+    const respaldo = refinar._ordenPara(p).filter((r) => !r.esElegido).map((r) => r.id);
+    ok(respaldo.indexOf('cursor-cli') === -1, 'con ' + (p || 'ninguno') + ' elegido, Cursor no es respaldo');
+    ok(respaldo.indexOf('openai-compat') === -1, 'ni la API compatible');
+  });
+});
+
+test('con Cursor elegido, un refinado que sale bien NO se refinó por Claude', async function () {
+  // El reclamo, actuado de punta a punta: el editor eligió Cursor, Cursor puede,
+  // y lo que vuelve tiene que decir Cursor. Si acá aparece Claude, es el bug.
+  let claudeLlamado = false;
+  const r = await conRefinadores([
+    falso({
+      id: 'cursor-cli', nombre: 'Cursor (Claude Sonnet)',
+      complete: async () => ({ text: 'El título entra desde la izquierda con un fade de medio segundo, easing suave en los keyframes, y el logo abajo a la derecha.' }),
+    }),
+    falso({
+      id: 'claude-api', nombre: 'Claude Haiku (API de Anthropic)',
+      complete: async () => { claudeLlamado = true; return { text: 'lo refinó Claude' }; },
+    }),
+  ], () => refinar.refinarDictado({ crudo: DICTADO }, { provider: 'cursor-cli' }));
+  ok(r.ok, r.aviso || '');
+  has(r.refinador, 'Cursor', 'refinó el que eligió');
+  ok(!claudeLlamado, 'y Claude no se enteró de que existía este dictado');
+  ok(String(r.refinador).indexOf('respaldo') === -1, 'no es un respaldo: es el elegido');
+});
+
+test('si el elegido no puede, refina el respaldo Y SE DICE que fue el respaldo', async function () {
+  // El editor tiene derecho a saber quién escribió lo que le apareció en el
+  // campo, sobre todo si es otro modelo del que eligió.
+  const r = await conRefinadores([
+    falso({
+      id: 'cursor-cli', nombre: 'Cursor (Claude Sonnet)',
+      detectar: async () => ({ disponible: false, motivo: 'el CLI de Cursor está pero sin sesión' }),
+    }),
+    falso({
+      id: 'claude-api', nombre: 'Claude Haiku (API de Anthropic)',
+      complete: async () => ({ text: 'El título entra desde la izquierda con un fade de medio segundo, easing suave en los keyframes, y el logo abajo a la derecha.' }),
+    }),
+  ], () => refinar.refinarDictado({ crudo: DICTADO }, { provider: 'cursor-cli' }));
+  ok(r.ok, r.aviso || '');
+  has(r.refinador, 'Claude Haiku');
+  has(r.refinador, 'respaldo', 'sin esto el editor cree que su elección se respetó');
+  has(r.aviso, 'no pudo', 'y se cuenta por qué el suyo quedó afuera');
+  has(r.aviso, 'sin sesión');
+});
+
+test('cuando el elegido no puede, no se lo manda a arreglar el que NO eligió', async function () {
+  // El otro lado del mismo problema: decir que refinó otro es información;
+  // pedirle que instale Ollama o que se loguee en Claude a alguien que eligió
+  // Cursor es mandarlo a trabajar para nosotros.
+  const r = await conRefinadores([
+    falso({ id: 'cursor-cli', nombre: 'Cursor (Claude Sonnet)', detectar: async () => ({ disponible: false, motivo: 'el CLI de Cursor está pero sin sesión (corré `cursor-agent login`)' }) }),
+    falso({ id: 'claude-api', nombre: 'Claude Haiku (API de Anthropic)', detectar: async () => ({ disponible: false, motivo: 'no hay API key de Anthropic configurada en ⚙' }) }),
+    falso({ id: 'ollama', nombre: 'Ollama local', detectar: async () => ({ disponible: false, motivo: 'Ollama no está corriendo en esta máquina' }) }),
+  ], () => refinar.refinarDictado({ crudo: DICTADO }, { provider: 'cursor-cli' }));
+  ok(!r.ok);
+  const suyoPrimero = r.aviso.indexOf('Cursor') < r.aviso.indexOf('Ollama');
+  ok(suyoPrimero, 'el problema del proveedor que eligió va primero: es el único que le conviene arreglar');
+  has(r.aviso, 'El proveedor que elegiste');
+  has(r.aviso, 'cursor-agent login', 'con SU próximo paso');
+  has(r.aviso, 'respaldo', 'y lo demás, contado como lo que es');
+});
+
+test('a Cursor se le pide el modelo CORTO, no el de diseñar', async function () {
+  // Refinar no es diseñar. El editor puede tener elegido un modelo con
+  // razonamiento para las animaciones, y pedirle ESO para reordenar dos frases
+  // es pagar el razonamiento entero por una tarea que no lo usa.
+  const cur = refinar._REFINADORES.filter((r) => r.id === 'cursor-cli')[0];
+  const cursorCli = require('../bridge/providers/cursor-cli');
+  eq(cur.model(), cursorCli.MODELO_CORTO);
+  ok(cur.model() !== cursorCli.DEFAULT_MODEL,
+    'el de diseño y el de refinar no pueden ser el mismo: se eligieron midiendo cosas distintas');
+  const c = await cur.config({ apiKey: 'k' });
+  eq(c.apiKey, 'k', 'la misma credencial que usa la generación, por la misma función');
+  ok(c.timeoutMs > 45_000,
+    'Cursor necesita más aire: al pedido hay que sumarle el arranque del agente');
+});
+
+test('el refinado por Cursor NO pasa por el desenvolver-HTML', async function () {
+  // `complete` y `generate` tienen que ser dos cosas distintas. Cuando eran una
+  // sola, todo lo que devolvía Cursor pasaba por `stripHtmlFence` — que sobre
+  // una composición es lo correcto y sobre una instrucción de diseño es una
+  // poda esperando a que alguien mencione un bloque de código.
+  if (saltarEnWindows) return console.log('      (se saltea en Windows: el CLI de mentira es un script con shebang)');
+  const cursorCli = require('../bridge/providers/cursor-cli');
+  const FAKE_CURSOR = path.join(__dirname, 'fixtures', 'fake-cli', 'fake-cursor.js');
+  const previo = process.env.FAKE_MODE;
+  process.env.FAKE_MODE = 'texto-con-fence';
+  try {
+    const opts = {
+      systemPrompt: 'x', userPrompt: 'y', model: 'claude-sonnet-5',
+      config: { cursorBinPath: FAKE_CURSOR, timeoutMs: 20_000 },
+    };
+    const crudo = await cursorCli.complete(opts);
+    has(crudo.text, '```html', 'complete devuelve lo que escribió el modelo, tal cual');
+    const compo = await cursorCli.generate(opts);
+    ok(compo.text.indexOf('```') === -1, 'y generate sí le saca el fence: es su trabajo');
+    eq(compo.text, 'El título entra con un fade.');
+  } finally {
+    if (previo === undefined) delete process.env.FAKE_MODE; else process.env.FAKE_MODE = previo;
+  }
+});
+
+test('cada refinador nombra a un proveedor de verdad que sabe dar texto crudo', function () {
+  // Cursor y la API compatible entraron a la cadena en la 1.5.0, y los dos
+  // implementaban solo `generate` (que desenvuelve el HTML de una composición).
+  // Sin partirlos, refinar por ellos habría pasado la instrucción del editor
+  // por un `stripHtmlFence` que no tiene nada que hacer ahí.
+  refinar._REFINADORES.forEach(function (r) {
+    eq(typeof getProvider(r.id).complete, 'function',
+      r.id + ' tiene que saber devolver texto crudo');
+  });
 });
 
 test('cada refinador nombra a un proveedor de verdad, y le pide texto crudo', function () {

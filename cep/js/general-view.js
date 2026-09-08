@@ -1,24 +1,26 @@
 /**
- * HPGeneralView — el bloque "Prompt general" del encabezado del panel.
+ * HPGeneralView — el bloque de los prompts generales, en el encabezado del panel.
  *
- * El TEXTO vive al lado del .prproj y lo administra HPGeneral (una base del
- * proyecto y, si una clase lo necesita, uno propio de la secuencia que la pisa).
- * Acá está solamente lo que se ve y se toca: el campo, el renglón que dice de
- * cuál de los dos sale lo que se está por mandar, el botón que cambia de destino
- * y el cartel de cuando esta máquina y el proyecto no dicen lo mismo.
+ * Son DOS campos y dos archivos al lado del .prproj, que los administra
+ * HPGeneral: el "Prompt general" del curso entero (se queda al cambiar de
+ * secuencia) y el "Prompt de secuencia" de esta clase. Los dos viajan al modelo,
+ * con la instrucción del marcador como tercer nivel. Acá está solamente lo que
+ * se ve y se toca: los dos campos, el renglón que dice qué niveles van a viajar y
+ * el cartel de cuando esta máquina y el proyecto no dicen lo mismo.
  *
- * Que se diga de dónde sale no es decoración: el bug entero fue no poder
- * saberlo. El segundo editor generaba con el campo vacío y el panel se callaba.
+ * Que se diga qué viaja no es decoración: el bug entero fue no poder saberlo. El
+ * segundo editor generaba con el campo vacío y el panel se callaba.
  *
  * Las IMÁGENES de referencia siguen siendo por secuencia y en esta máquina (ver
  * el README): son base64 y no entran en un archivo de texto al lado del
  * proyecto sin cambiarles el almacenamiento.
  *
- * La regla que sostiene todo esto: el campo muestra SIEMPRE el archivo al que
- * escribe (`fieldText`), y el destino solo cambia con las dos acciones del
- * botón. Si el campo y el destino se separan, lo que se tipea se guarda en un
- * lado y se lee del otro, y así se reescribe la base de todo el proyecto sin
- * querer.
+ * La regla que sostiene todo esto: cada campo muestra y guarda SU archivo, y
+ * nada más. Antes había un solo campo y un botón para cambiarle el destino
+ * (`writeScope`), y ahí la regla había que defenderla a mano: si el campo y el
+ * destino se separaban, lo que se tipeaba se guardaba en un lado y se leía del
+ * otro, y así se reescribía el estilo del curso sin querer. Con un campo por
+ * archivo eso no se puede escribir.
  *
  * Deps de main vía init(deps):
  *   context()            → { projectPath, sequenceName } del panel
@@ -31,33 +33,38 @@
 
   var DEBOUNCE_MS = 300;
 
-  var hpLog = HPLog.log;
-
   /**
    * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
    * `null`.
    *
-   * El dictado es un AGREGADO al campo, nunca un requisito: sin él, el prompt
-   * general se dibuja igual y se escribe a mano. La guarda está en HPUtil.
+   * El dictado es un AGREGADO a los campos, nunca un requisito: sin él, los
+   * prompts generales se dibujan igual y se escriben a mano. La guarda está en
+   * HPUtil.
    */
   var micOpcional = HPUtil.micOpcional;
 
   var deps = null;
 
-  var input = null;
   var mount = null;
   var summary = null;
   var sourceEl = null;
-  var scopeBtn = null;
-  var baseBox = null;
-  var baseText = null;
   var conflict = null;
 
-  // Qué hidratación es la que vale y si el editor ya escribió en esta. Sin
+  // Los dos niveles, cada uno con su campo y su archivo. `scope` es el que
+  // entiende HPGeneral.save: cuál de los dos se está guardando.
+  var niveles = [
+    { scope: "project", id: "general-instruction", mic: "prompt-general", texto: "courseText", input: null },
+    { scope: "sequence", id: "general-sequence-instruction", mic: "prompt-secuencia", texto: "sequenceText", input: null }
+  ];
+
+  var seqLabel = null;
+  var seqRow = null;
+
+  // Qué hidratación es la que vale y en qué campos ya escribió el editor. Sin
   // esto, la respuesta del disco (que llega cientos de ms después) le pisa el
   // campo al que ya empezó a tipear.
   var hidratacion = 0;
-  var tecleado = false;
+  var tecleado = {};
 
   function ctx() {
     return (deps && deps.context && deps.context()) || { projectPath: "", sequenceName: "" };
@@ -71,7 +78,7 @@
     return HPGeneral.describe(c.projectPath, c.sequenceName);
   }
 
-  /** El badge del encabezado plegado: qué estilo viaja y cuántos adjuntos hay. */
+  /** El badge del encabezado plegado: qué niveles viajan y cuántos adjuntos hay. */
   function refreshSummary() {
     if (!summary) return;
     var v = vista();
@@ -83,29 +90,25 @@
     summary.className = "cfg-summary section-state is-" + v.badgeState;
   }
 
-  /** El renglón que dice de dónde sale lo que está escrito en el campo. */
+  /** El renglón que dice qué niveles le van a llegar al modelo. */
   function pintarOrigen() {
     var v = vista();
     if (sourceEl) {
       sourceEl.textContent = v.line;
       sourceEl.className = "general-source" + (v.lineState ? " is-" + v.lineState : "");
     }
-    if (baseBox) {
-      baseBox.setAttribute("data-hidden", v.showBase ? "false" : "true");
-      if (baseText) baseText.textContent = v.baseText;
-    }
-    if (scopeBtn) {
-      scopeBtn.setAttribute("data-hidden", v.offerOwn ? "false" : "true");
-      scopeBtn.textContent = v.ownLabel;
-      scopeBtn.title = v.ownTitle;
-    }
+    // El rótulo nombra la secuencia: es la mitad de "nunca dudar de dónde estás
+    // escribiendo", y la otra mitad es que sean dos campos distintos.
+    if (seqLabel) seqLabel.textContent = v.sequenceLabel;
+    if (seqRow) seqRow.setAttribute("data-hidden", v.sequenceEnabled ? "false" : "true");
   }
 
   /**
    * El cartel de cuando esta máquina y el proyecto no dicen lo mismo.
    *
-   * No se resuelve solo a propósito: de un lado está lo que escribió el editor
-   * que tiene el panel adelante y del otro lo que puso su compañero en el
+   * Esto NO era parte del botón de destino: es lo que queda de la migración del
+   * localStorage, y sigue haciendo falta. De un lado está lo que escribió el
+   * editor que tiene el panel adelante y del otro lo que puso su compañero en el
    * proyecto. Elegir por ellos es tirar el trabajo de alguno de los dos sin
    * decírselo, que es justo la forma de perder trabajo que este cambio vino a
    * sacar. Las tres salidas cubren las tres cosas que ese texto puede ser.
@@ -131,8 +134,8 @@
     var acciones = document.createElement("div");
     acciones.className = "general-conflict-actions";
     [
-      ["Es el de esta clase", "sequence", "Lo guarda como prompt propio de esta secuencia: pisa la base del proyecto solo acá."],
-      ["Que sea la base de todo el proyecto", "project", "Reemplaza la base del proyecto. Le va a llegar a todas las secuencias y a la otra máquina."],
+      ["Es el de esta clase", "sequence", "Lo guarda como Prompt de secuencia: se suma al general del curso y manda donde se contradigan."],
+      ["Que sea el general del curso", "project", "Reemplaza el Prompt general del curso. Le va a llegar a todas las secuencias y a la otra máquina."],
       ["Descartarlo", "discard", "Se queda el del proyecto y este texto se borra."]
     ].forEach(function (o) {
       var b = document.createElement("button");
@@ -141,8 +144,6 @@
       b.title = o[2];
       b.addEventListener("click", function () {
         var c = ctx();
-        // Contestar el conflicto puede cambiar el destino de escritura, así que
-        // el campo se repinta: campo y destino no pueden quedar separados.
         HPGeneral.resolvePending(c.projectPath, c.sequenceName, o[1]).then(function () { pintar(); }, fallo);
       });
       acciones.appendChild(b);
@@ -150,14 +151,22 @@
     conflict.appendChild(acciones);
   }
 
+  /** Nunca se le escribe encima a ningún campo (el guardado con debounce). */
+  function ninguno() { return false; }
+
   /**
-   * Redibuja todo con lo que ya está en la caché. `escribirCampo: false` deja el
-   * textarea como está, para las dos veces que pisarlo sería borrarle al editor
-   * lo que está tipeando: el guardado con debounce y la respuesta tardía del
-   * disco. Toda transición de destino, en cambio, SÍ repinta.
+   * Redibuja todo con lo que ya está en la caché. `escribible(scope)` decide, por
+   * campo, si se le puede escribir el valor del disco encima: hay dos momentos
+   * en que hacerlo le borraría al editor lo que está tipeando —el guardado con
+   * debounce y la respuesta tardía del disco— y son por campo, porque tener uno
+   * a medio escribir no es motivo para dejar el otro sin actualizar.
    */
-  function pintar(opts) {
-    if (input && (!opts || opts.escribirCampo !== false)) input.value = vista().fieldText;
+  function pintar(escribible) {
+    var v = vista();
+    var puede = escribible || function () { return true; };
+    niveles.forEach(function (n) {
+      if (n.input && puede(n.scope)) n.input.value = v[n.texto];
+    });
     pintarConflicto();
     pintarOrigen();
     refreshSummary();
@@ -169,85 +178,39 @@
     }
   }
 
-  function guardar() {
+  /** Lo que hace cada tecleo: guardar ESE campo en SU archivo. */
+  function guardar(n) {
     var c = ctx();
-    var v = vista();
-    HPGeneral.save(c.projectPath, c.sequenceName, input.value, v.scope)
-      .then(function () { pintar({ escribirCampo: false }); })
+    HPGeneral.save(c.projectPath, c.sequenceName, n.input.value, n.scope)
+      .then(function () { pintar(ninguno); })
       .catch(fallo);
-  }
-
-  /** "Volver a la base del proyecto": se borra texto escrito, así que se pregunta. */
-  function volverALaBase() {
-    var c = ctx();
-    var st = estado();
-    HPWidgets.confirmOverlay("Volver a la base del proyecto", function (body) {
-      var p = document.createElement("p");
-      p.textContent = "Se borra el prompt propio de esta secuencia y vuelve a valer la base del proyecto.";
-      body.appendChild(p);
-      var q = document.createElement("p");
-      q.className = "muted";
-      // Puede estar vacío: el editor borró el texto para reescribirlo y todavía
-      // no escribió nada. Ahí no se pierde nada, y decir "se pierde: " a secas
-      // haría dudar de si hay algo que no se está mostrando.
-      q.textContent = st.sequenceText
-        ? "Se pierde: " + st.sequenceText
-        : "Esta clase no tiene nada escrito propio: no se pierde texto, solo vuelve a escribirse en la base.";
-      body.appendChild(q);
-      var r = document.createElement("p");
-      r.className = "muted";
-      r.textContent = "Queda: " + (st.projectText || "(el proyecto no tiene base)");
-      body.appendChild(r);
-    }, "Volver a la base", function () {
-      HPGeneral.switchScope(c.projectPath, c.sequenceName, "project").then(function () {
-        hpLog("Prompt general: “" + c.sequenceName + "” vuelve a usar la base del proyecto.");
-        pintar();
-      }).catch(fallo);
-    });
-  }
-
-  /** "Usar uno propio para esta secuencia": arranca con una copia de la base. */
-  function usarPropio() {
-    var c = ctx();
-    HPGeneral.switchScope(c.projectPath, c.sequenceName, "sequence").then(function () {
-      hpLog("Prompt general: “" + c.sequenceName + "” pasa a tener el suyo (copia de la base del proyecto).");
-      pintar();
-      if (input) input.focus();
-    }).catch(fallo);
   }
 
   global.HPGeneralView = {
     init: function (d) {
       deps = d || {};
 
-      input = document.getElementById("general-instruction");
       mount = document.getElementById("general-stills-mount");
       summary = document.getElementById("general-summary");
       sourceEl = document.getElementById("general-source");
-      scopeBtn = document.getElementById("btn-general-scope");
-      baseBox = document.getElementById("general-base");
-      baseText = document.getElementById("general-base-text");
       conflict = document.getElementById("general-conflict");
+      seqLabel = document.getElementById("general-sequence-label");
+      seqRow = document.getElementById("general-sequence-row");
 
-      if (input) {
+      niveles.forEach(function (n) {
+        n.input = document.getElementById(n.id);
+        if (!n.input) return;
         // Se marca en el evento crudo y no en el guardado: entre la primera
         // tecla y el debounce hay 300 ms, y es justo cuando llega el disco.
-        input.addEventListener("input", function () { tecleado = true; });
-        input.addEventListener("input", HPUtil.debounce(guardar, DEBOUNCE_MS));
-        // El prompt general es el campo más largo que se escribe a mano en el
-        // panel (marca, paleta, tipografía, tono), así que es el que más se
-        // agradece dictar. Va sin debounce: lo que escribe el dictado ya es el
-        // texto final, no una tecla.
-        var mic = micOpcional(input, { id: "prompt-general", onChange: guardar });
-        if (mic) input.parentNode.insertBefore(mic, input.nextSibling);
-      }
-
-      if (scopeBtn) {
-        scopeBtn.addEventListener("click", function () {
-          if (estado().writeScope === "sequence") volverALaBase();
-          else usarPropio();
-        });
-      }
+        n.input.addEventListener("input", function () { tecleado[n.scope] = true; });
+        n.input.addEventListener("input", HPUtil.debounce(function () { guardar(n); }, DEBOUNCE_MS));
+        // Los prompts generales son los campos más largos que se escriben a mano
+        // en el panel (marca, paleta, tipografía, tono), así que son los que más
+        // se agradecen dictar. Van sin debounce: lo que escribe el dictado ya es
+        // el texto final, no una tecla.
+        var mic = micOpcional(n.input, { id: n.mic, onChange: function () { guardar(n); } });
+        if (mic) n.input.parentNode.insertBefore(mic, n.input.nextSibling);
+      });
     },
 
     /**
@@ -263,11 +226,13 @@
         mount.appendChild(HPStills.createControl(HPStore.GENERAL_KEY));
       }
       var turno = ++hidratacion;
-      tecleado = false;
+      tecleado = {};
       pintar();
       // Si mientras tanto se cambió de secuencia, o el editor ya empezó a
-      // escribir, el campo NO se toca: pisarlo le borra lo que tipeó.
-      var repintar = function () { pintar({ escribirCampo: turno === hidratacion && !tecleado }); };
+      // escribir en ese campo, el campo NO se toca: pisarlo le borra lo que tipeó.
+      var repintar = function () {
+        pintar(function (scope) { return turno === hidratacion && !tecleado[scope]; });
+      };
       // El disco manda, pero tarda: se pinta lo cacheado y se repinta al volver.
       // También si falló: el renglón tiene que decir que no se pudo leer.
       HPGeneral.migrate(c.projectPath, c.sequenceName).then(repintar, repintar);

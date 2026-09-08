@@ -236,7 +236,7 @@ function montarCola(opts) {
         espia.llamadasMotor.push(m);
         if (m === 'mediaHasAudio') return Promise.resolve({ ok: true, hasAudio: false });
         if (m === 'loadGeneralPrompt') {
-          return Promise.resolve({ ok: true, text: '', source: 'none', projectText: '', sequenceText: '', hasProjectFile: false });
+          return Promise.resolve({ ok: true, projectText: '', sequenceText: '', hasProjectFile: false });
         }
         if (m === 'findRenderedVideo') {
           espia.buscadoEnDisco = arg;

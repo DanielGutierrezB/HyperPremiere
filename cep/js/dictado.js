@@ -1,10 +1,11 @@
 /**
  * HPDictado — el botón de micrófono que va al lado de cada campo de prompt.
  *
- * Es UNO solo para los cuatro campos donde se escribe una instrucción: la de
- * cada marcador, las Indicaciones generales, el feedback de la Cola y el de
- * Corrections. Ninguno de los cuatro sabe nada del dictado más allá de una
- * línea: `caja.appendChild(HPDictado.attachMic(textarea, {…}).el)`.
+ * Es UNO solo para los cinco campos donde se escribe una instrucción: la de
+ * cada marcador, el Prompt general del curso, el Prompt de secuencia, el
+ * feedback de la Cola y el de Corrections. Ninguno de los cinco sabe nada del
+ * dictado más allá de una línea:
+ * `caja.appendChild(HPDictado.attachMic(textarea, {…}).el)`.
  *
  * Por qué no vive en widgets.js
  * -----------------------------
@@ -326,9 +327,14 @@
         // El motivo entero, que es lo único que dice qué habría que hacer. No se
         // esconde el botón: que la función exista y no esté disponible es
         // información, y que no esté es un misterio.
+        // El motivo que arma el motor ya viene ordenado: primero el proveedor
+        // que el editor eligió en ⚙ —el único que le conviene arreglar— y
+        // después el respaldo. Acá NO se agrega la lista de "instalá Claude o
+        // Ollama" que había antes: con la regla de que refina el proveedor
+        // elegido (ver bridge/dictado-refinar.js), mandar a instalar otra cosa
+        // a quien ya eligió uno es mandarlo a trabajar para nosotros.
         titulo: "Refinar el texto no está disponible en esta máquina" +
-          (d.sinRefinador ? ": " + String(d.sinRefinador).replace(/[.\s]+$/, "") : "") +
-          ". Con una API key de Anthropic en ⚙, con el CLI de Claude con sesión, o con Ollama corriendo, se prende.",
+          (d.sinRefinador ? ": " + String(d.sinRefinador).replace(/[.\s]+$/, "") : "") + ".",
         apagado: true, clase: "is-off",
       };
     }
@@ -586,8 +592,8 @@
 
     /**
      * Despliega lo que tenga al campo tapado. Los contenedores que se pliegan en
-     * este panel son `<details>` —la tarjeta de cada marcador, "Preparación", el
-     * prompt general—, así que se usa ESE mecanismo, el mismo que mueve el
+     * este panel son `<details>` —la tarjeta de cada marcador, "Preparación",
+     * los prompts generales—, así que se usa ESE mecanismo, el mismo que mueve el
      * acordeón de main.js, y no una clase nueva que habría que mantener al día.
      */
     function desplegar() {

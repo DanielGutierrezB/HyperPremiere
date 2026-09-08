@@ -36,7 +36,14 @@ const claudeLogin = require('./claude-login');
 const claudeDoctor = require('./claude-doctor');
 // Si el CLI puede autenticarse acá y ahora: lo que mira el cartel de ⚙.
 const claudeSession = require('./claude-session');
-const { buildUserPrompt } = require('./prompt/build-context');
+// Lo mismo para Cursor, que hasta la 1.5.0 no tenía nada de esto: un editor que
+// elegía Cursor y fallaba veía el error crudo del proceso y ningún camino.
+const cursorSession = require('./cursor-session');
+// Lo que ya nos pasó con cada proveedor en esta sesión (sin cupo, credencial
+// rechazada): el semáforo de ⚙ no puede seguir en verde después de eso.
+const providerSalud = require('./provider-salud');
+const cliErrors = require('./providers/cli-errors');
+const { buildUserPrompt, generalPromptLabel } = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition, renderLanes } = require('./render/hyperframes');
 // Conseguir una composición renderizable (escalera de llamadas al modelo) y el
@@ -244,6 +251,10 @@ function saveConfig(patch) {
   // configura la key y el dictado sigue refinando con lo de antes hasta que
   // cierre Premiere.
   dictadoRefinar.olvidarRefinador();
+  // Y se olvida lo que sabíamos de ese proveedor: pegar una API key nueva o
+  // cambiar de modelo es "probá de nuevo". Hacerle repetir el error para
+  // convencer al panel de que ya cargó crédito sería absurdo.
+  providerSalud.olvidar(provider);
   return maskConfig(loadConfig());
 }
 
@@ -292,13 +303,12 @@ async function testProvider() {
       const cursorCli = require('./providers/cursor-cli');
       const r = await cursorCli.listModels(cfg);
       if (!r.ok) {
-        return {
-          ok: false,
-          error: 'No pude hablar con Cursor. Revisá que esta máquina tenga el CLI instalado y con sesión:' +
-            '\n  curl https://cursor.com/install -fsS | bash' +
-            '\n  cursor-agent login' +
-            (r.error ? '\nDetalle: ' + r.error : ''),
-        };
+        // El mensaje sale de preguntarle a la máquina, no de un texto fijo: "no
+        // está instalado", "está pero sin sesión" y "está, con sesión, y falló
+        // por otra cosa" son tres problemas con tres próximos pasos distintos, y
+        // durante mucho tiempo los tres se contaron con el mismo cartel y los
+        // dos comandos pegados (ver cursor-session.mensajeDeFalla).
+        return { ok: false, error: await cursorSession.mensajeDeFalla(cfg, r.error) };
       }
       const has = r.models.some((m) => m.id === cfg.model);
       return {
@@ -433,22 +443,6 @@ function loadTranscript(body) {
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
-}
-
-/**
- * Cómo se nombra el prompt general en el ⬇ Log de una generación.
- *
- * El "no" se escribe igual que siempre a propósito: es el texto por el que se
- * buscó en el log del editor para descubrir todo esto, y los logs viejos se
- * siguen pudiendo comparar contra los nuevos.
- */
-function generalSourceLabel(text, source) {
-  if (!String(text || '').trim()) return 'no';
-  if (source === 'sequence') return 'de esta secuencia (pisa la base del proyecto)';
-  if (source === 'project') return 'de la base del proyecto';
-  // Un job encolado por una versión anterior del panel no manda el origen. Vino
-  // texto, así que se dice; inventarle una procedencia sería peor que no saberla.
-  return 'sí (origen desconocido)';
 }
 
 /**
@@ -709,7 +703,12 @@ async function prepareGeneration(body, mode, onProgress) {
   const leanPrompt = mode === 'adjust';
   let userPrompt = buildUserPrompt({
     objective, transcriptSegments: transcript, marker, markerTranscript,
-    instruction, generalInstruction: body.generalInstruction, stillsCount: stillsList.length,
+    instruction, stillsCount: stillsList.length,
+    // Los dos niveles generales viajan por separado hasta acá: quién le gana a
+    // quién se le dice al modelo en el prompt, no se resuelve antes.
+    generalInstruction: body.generalInstruction,
+    sequenceInstruction: body.sequenceInstruction,
+    generalSource: body.generalSource,
     lean: leanPrompt,
   });
 
@@ -852,11 +851,11 @@ async function prepareGeneration(body, mode, onProgress) {
     (Array.isArray(markerTranscript) ? markerTranscript.length : 0) + ' del marcador',
     'objetivo ' + ((objective || '').trim() ? 'sí' : 'NO'),
     'instrucción ' + ((instruction || '').trim() ? 'sí' : 'NO'),
-    // De dónde salió el estilo del curso. "prompt general no" fue la línea que
-    // dejó ver que el segundo editor generaba sin nada; decir SÍ y callar de
-    // dónde vino dejaría el mismo agujero un escalón más arriba, ahora que la
-    // base del proyecto y el propio de la secuencia pueden no coincidir.
-    'prompt general ' + generalSourceLabel(body.generalInstruction, body.generalSource),
+    // Qué niveles del estilo viajaron. "prompt general no" fue la línea que dejó
+    // ver que el segundo editor generaba sin nada; decir SÍ y callar cuáles
+    // entraron dejaría el mismo agujero un escalón más arriba, ahora que el del
+    // curso y el de la secuencia van los dos y pueden contradecirse.
+    'prompt general ' + generalPromptLabel(body),
     resourcesList.length + ' recursos',
     continuidadNota,
   ].join(' · ') });
@@ -896,6 +895,13 @@ async function prepareGeneration(body, mode, onProgress) {
       durationSec, markerSlug, report,
     }));
   } catch (e) {
+    // Que el semáforo de ⚙ se entere. Una cuenta sin cupo tiene credencial, así
+    // que el chequeo de sesión la ve verde y la seguiría viendo verde hasta que
+    // alguien recargue el panel — que es justo lo que le pasó al editor que
+    // mandó la captura del indicador en verde con `Credit balance is too low`
+    // abajo. Acá es donde el motor se entera; provider-salud.js lo recuerda.
+    providerSalud.anotar(config.provider, cliErrors.causa(String((e && e.message) || e)),
+      String((e && e.message) || e));
     // compose corta cuando la composición no es renderizable. El HTML igual se
     // guarda: ya se pagó, y es con lo que el editor puede ver qué pasó o
     // arreglarlo a mano y darle a "Renderizar HTML".
@@ -1027,6 +1033,11 @@ function estimateTokens(body) {
         marker,
         markerTranscript,
         instruction: body.instruction || '',
+        // Los prompts generales entran en la llamada de verdad, así que entran
+        // acá: el semáforo de tokens que los omitía quedaba corto justo en los
+        // proyectos que más contexto mandan.
+        generalInstruction: body.generalInstruction || '',
+        sequenceInstruction: body.sequenceInstruction || '',
         stillsCount: stills.length,
         lean: body.mode === 'adjust',
       });
@@ -1109,8 +1120,24 @@ function claudeCliStatus() {
 // Lo que mira el cartel de sesión de ⚙. Es una pregunta al CLI, no a nuestra
 // config: el editor puede estar logueado por la terminal y generar bien sin
 // que nosotros tengamos ningún token guardado (ver claude-session.js).
-function claudeSessionStatus() {
-  return claudeSession.estadoDeSesion(loadConfig());
+// El chequeo de sesión dice si hay CON QUÉ autenticarse; `aplicarA` le suma lo
+// que ya sabemos que le pasó a ese proveedor en esta sesión del panel (sin
+// cupo, credencial rechazada). Ver bridge/provider-salud.js.
+async function claudeSessionStatus() {
+  const cfg = loadConfig();
+  return providerSalud.aplicarA('claude-cli', await claudeSession.estadoDeSesion(cfg));
+}
+
+// Los dos de arriba, para Cursor. Mismo contrato y mismos tres estados, porque
+// del lado del panel el cartel es el mismo y no tiene por qué saber con cuál de
+// los dos proveedores está hablando (ver cursor-session.js).
+function cursorCliStatus() {
+  return cursorSession.diagnose(loadConfig());
+}
+
+async function cursorSessionStatus() {
+  const cfg = loadConfig();
+  return providerSalud.aplicarA('cursor-cli', await cursorSession.estadoDeSesion(cfg));
 }
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -2251,12 +2278,15 @@ module.exports = {
   loginClaudeCancel,
   claudeCliStatus,
   claudeSessionStatus,
+  cursorCliStatus,
+  cursorSessionStatus,
   getVersion,
   checkUpdate,
   selfUpdate,
   saveCapture,
-  // Expuesto para el test del ⬇ Log: cómo se nombra el origen del prompt general.
-  _generalSourceLabel: generalSourceLabel,
+  // Expuesto para el test del ⬇ Log: qué niveles generales viajaron. Vive en
+  // prompt/build-context.js, que es donde se decide qué le llega al modelo.
+  _generalPromptLabel: generalPromptLabel,
   // Expuestos para los tests de continuidad (qué diseño se manda como referencia).
   _referencedMarkerNumbers: referencedMarkerNumbers,
   _listOtherResources: listOtherResources,

@@ -31,7 +31,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.4.51</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.5.0</span>
       </button>
     </div>
   </header>
@@ -45,7 +45,7 @@
       </div>
       <div class="help-body">
         <p><strong>1. Cargá marcadores.</strong> Poné marcadores con duración en tu secuencia de Premiere y pulsá <em>Cargar marcadores</em>. Cada marcador se vuelve una tarjeta.</p>
-        <p><strong>2. Dale contexto.</strong> Escribí el <em>Objetivo de la clase</em> (o cargá el transcript JSON y lo deriva solo). En <em>Prompt general</em> ponés estilo, marca, tipografía y colores que aplican a TODOS los marcadores (no lo repetís en cada uno). Por marcador escribís una instrucción específica, podés capturar el frame del programa (📸) y arrastrar imágenes/PDFs/referencias.</p>
+        <p><strong>2. Dale contexto.</strong> Escribí el <em>Objetivo de la clase</em> (o cargá el transcript JSON y lo deriva solo). En <em>Prompt general</em> ponés estilo, marca, tipografía y colores del curso entero (no lo repetís en cada clase ni en cada marcador), y en <em>Prompt de secuencia</em> lo que cambia solo en esta clase — los dos viajan, y donde se contradigan manda el de la secuencia. Por marcador escribís una instrucción específica, podés capturar el frame del programa (📸) y arrastrar imágenes/PDFs/referencias.</p>
 
         <p class="help-diff"><strong>— Transcript: generarlo o importarlo —</strong><br>
         <strong>🎙 Transcribir esta secuencia</strong> usa tu Whisper LOCAL (large-v3): transcribe el video del clip principal de la secuencia, detecta el idioma solo (sirve mezclando español e inglés) y se alinea automáticamente al timeline. Sin nube, sin tokens; guarda un respaldo (transcript-whisper.json) en la carpeta de la secuencia. Requiere <code>whisper</code> (pip install openai-whisper) o <code>mlx_whisper</code> en el PATH. También podés <strong>importar un JSON</strong>: al cargarlo, las <strong>unidades de tiempo se validan y corrigen solas</strong> contra la duración real de la secuencia (frames, milisegundos…) y el estado te muestra el veredicto (transcript vs secuencia ✓/⚠) — un transcript de la misma secuencia debe caer solo, sin ajustar nada. El <strong>Desfase (s)</strong> queda solo para transcripts de OTRA base de tiempo (video original + timeline editado): positivo = recortaste el inicio; negativo = agregaste intro; <strong>Detectar del timeline</strong> lo estima. Cada transcript nuevo reinicia el desfase a 0.</p>
@@ -158,24 +158,25 @@
 
     <div class="section-label">Marcadores</div>
 
-    <!-- Prompt general: encabezado PERSISTENTE que aplica a TODOS los marcadores
-         de abajo. Viene pre-replegado y sugiere desplegarlo para usarlo. -->
+    <!-- Prompts generales: encabezado PERSISTENTE que aplica a TODOS los
+         marcadores de abajo. Son dos niveles, y los dos viajan al modelo: el del
+         CURSO entero (se queda al cambiar de secuencia) y el de ESTA clase, que
+         manda donde se contradigan. Viene pre-replegado y sugiere desplegarlo. -->
     <details id="general-section" class="context-section general-section">
-      <summary><span class="section-title">Prompt general</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
+      <summary><span class="section-title">Prompts generales</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
       <div class="context-body">
         <!-- Dos editores, un mismo .prproj: el que abre el proyecto tiene que
-             ver DE DÓNDE sale el estilo con el que va a generar. -->
+             ver QUÉ contexto va a viajar con el que genera. -->
         <div id="general-conflict" class="general-conflict" data-hidden="true"></div>
-        <div class="general-source-row">
-          <span id="general-source" class="general-source"></span>
-          <button id="btn-general-scope" type="button" class="general-scope-btn" data-hidden="true"></button>
+        <div class="general-level">
+          <label class="field-label" for="general-instruction">Prompt general · TODO el curso</label>
+          <textarea id="general-instruction" rows="3" placeholder="Marca, paleta, tipografía, tono… lo que vale para todas las clases del curso. Se queda al cambiar de secuencia."></textarea>
         </div>
-        <label class="field-label" for="general-instruction">Indicaciones para TODOS los marcadores</label>
-        <textarea id="general-instruction" rows="3" placeholder="Estilo, marca, tipografía, colores, tono… lo que aplique a toda la clase. Se combina con la instrucción de cada marcador (no tenés que repetirlo)."></textarea>
-        <details id="general-base" class="general-base" data-hidden="true">
-          <summary>Ver la base del proyecto que esta secuencia está pisando</summary>
-          <div id="general-base-text" class="general-base-text"></div>
-        </details>
+        <div class="general-level is-sequence" id="general-sequence-row">
+          <label class="field-label" for="general-sequence-instruction" id="general-sequence-label">Prompt de secuencia</label>
+          <textarea id="general-sequence-instruction" rows="2" placeholder="Lo que cambia SOLO en esta clase (“esta va en blanco y negro”). Se suma al del curso y manda donde se contradigan."></textarea>
+        </div>
+        <span id="general-source" class="general-source"></span>
         <label class="field-label">Referencias generales (capturas, logos, PDFs)</label>
         <div id="general-stills-mount"></div>
       </div>
@@ -243,9 +244,23 @@
           </details>
         </div>
 
+        <!-- Cursor no tiene login desde el panel: `cursor-agent login` necesita
+             una terminal de verdad, igual que `claude setup-token`. Lo que sí
+             tiene que estar es el Diagnóstico (la ficha que el editor manda por
+             captura cuando algo falla) y el renglón de estado, que es el único
+             lugar donde se puede afirmar que falta la sesión. -->
+        <div id="row-login-cursor" class="cfg-row" data-hidden="true">
+          <div class="config-actions">
+            <button id="btn-cursor-doctor" type="button" title="Dice si esta máquina tiene el CLI de Cursor, en qué ruta, qué versión y con qué credencial entra. Sirve para mandar una captura cuando algo falla.">Diagnóstico</button>
+            <span id="cursor-status" class="muted"></span>
+          </div>
+          <p class="muted login-manual-how">Para iniciar sesión, abrí una terminal (en Windows: <b>PowerShell</b> o <b>CMD</b>; en Mac: <b>Terminal</b>) y corré <code>cursor-agent login</code>. Autorizá en el navegador y listo: el panel se da cuenta solo. Si todavía no tenés el CLI, instalalo con <code>curl https://cursor.com/install -fsS | bash</code> y reiniciá Premiere.</p>
+        </div>
+
         <div id="row-apikey" class="cfg-row" data-hidden="true">
           <label class="field-label" for="cfg-apikey">Token / API key</label>
           <input type="password" id="cfg-apikey" placeholder="Pegá tu API key">
+          <span id="apikey-hint" class="muted"></span>
         </div>
 
         <div id="row-baseurl" class="cfg-row" data-hidden="true">

@@ -41,7 +41,7 @@
     secuenciaEnPremiere: SEQ_ABIERTA,
     duracionSecuencia: 3418.4,
 
-    version: "1.4.47",
+    version: "1.5.0",
 
     // ── Contexto de la clase ────────────────────────────────────────────
     objetivo:
@@ -50,10 +50,11 @@
       "herramienta según el volumen que maneja, y dejar corriendo un flujo de " +
       "recuperación de carrito abandonado con dos correos y una espera de 24 h.",
 
-    // El "Prompt general" ahora vive al lado del .prproj (una base del proyecto
-    // y, si una clase la necesita, uno propio que la pisa).
+    // Los dos prompts generales viven al lado del .prproj: el del CURSO entero
+    // y el de ESTA clase. Los dos viajan al modelo, y donde se contradigan manda
+    // el de la clase.
     promptGeneral: {
-      proyecto:
+      curso:
         "Marca ACADEMIA NOVA. Tipografía: Söhne para títulos, Inter para cuerpo. " +
         "Paleta: fondo carbón #12161d, acento cian #35e0d6, texto hueso #efeadf; " +
         "el naranja queda reservado para alertas y no se usa de decoración.\n" +
@@ -63,10 +64,14 @@
         "Menos es más: máximo 7 palabras por pantalla, un solo elemento en movimiento " +
         "a la vez, y que todo respire 0,4 s antes de salir. Nada de degradados, nada " +
         "de sombras largas, nada de emojis.",
-      // El propio de la secuencia abierta, que PISA la base. Vacío = esta clase
-      // usa la base; llenalo para ver el panel con la secuencia pisándola. El
-      // botón "Usar uno propio para esta secuencia" también lo llena solo.
-      secuencia: "",
+      // El de la secuencia abierta, que se SUMA al del curso. Vaciá esto para
+      // ver el panel con una clase que no agrega nada. El caso que está puesto
+      // es el real: el curso pide una paleta y esta clase va en blanco y negro.
+      secuencia:
+        "Este módulo va en BLANCO Y NEGRO: se compara material de archivo y el " +
+        "cian de marca le pelea a los ejemplos.\n" +
+        "El logo del canal va ARRIBA A LA IZQUIERDA en estas clases (lo cambiaron " +
+        "en la entrega de febrero), no abajo a la derecha.",
       // Con ?e=conflicto, este texto aparece como "lo que tenías en esta máquina".
       pendienteLocal:
         "Marca ACADEMIA NOVA. Títulos en Söhne, cuerpo en Inter. Acento cian. " +
@@ -207,7 +212,9 @@
       }
     ],
 
-    // Referencias que aplican a TODOS los marcadores (Prompt general).
+    // Referencias que aplican a TODOS los marcadores (bloque de los prompts
+    // generales). Son de esta secuencia y de esta máquina: no viajan con el
+    // .prproj como sí viaja el texto.
     imagenesGenerales: [
       { etiqueta: "manual-de-marca-nova.png", color: "#35e0d6", fondo: "#12161d" },
       { etiqueta: "logo-canal-180x60.png", color: "#efeadf", fondo: "#0e1116", usar: true }
@@ -472,6 +479,23 @@
       "· Sesión: claude.ai (login interactivo, sin token en el panel)\n" +
       "· Se buscó además en: /opt/homebrew/bin, /usr/local/bin, ~/.claude/local, ~/.npm-global/bin\n" +
       "Si algo falla igual: corré `claude setup-token` en tu terminal y pegá el token acá abajo.",
+
+    // El caso bueno de Cursor: hay sesión del CLI y se dice con qué cuenta
+    // entra. Los otros tres estados los pone doble.js según el escenario.
+    sesionCursor: {
+      estado: "con-sesion",
+      resumen: "✓ Sesión de Cursor activa — con la sesión del CLI de esta máquina (editor@estudio.com)",
+      detalle: "cursor-agent 2026.08.14 · /Users/dani/.local/bin/cursor-agent"
+    },
+    diagnosticoCursor:
+      "CLI de Cursor en esta máquina\n" +
+      "· Ejecutable: /Users/dani/.local/bin/cursor-agent (encontrado en el PATH)\n" +
+      "· Versión: 2026.08.14\n" +
+      "· Sistema: darwin arm64 · macOS 26.1\n" +
+      "· Sesión: activa, con la del CLI (editor@estudio.com)\n" +
+      "· Se buscó además en: /opt/homebrew/bin, /usr/local/bin, ~/.cursor/bin\n" +
+      "Si `cursor-agent` te dice «command not found» en la Terminal, no falta: el panel agrega\n" +
+      "~/.local/bin a su PATH y tu shell no. Usá la ruta completa de arriba.",
 
     // ── Whisper ─────────────────────────────────────────────────────────
     whisper: {

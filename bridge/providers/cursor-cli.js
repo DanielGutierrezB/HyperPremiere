@@ -56,9 +56,42 @@ const { stripHtmlFence, parseImageDataUrl, makeUsage,
 const { run } = require('../exec');
 const agentStream = require('./agent-stream');
 const cliErrors = require('./cli-errors');
+const cursorSession = require('../cursor-session');
 
 const DEFAULT_TIMEOUT_MS = 900_000; // 900s: los modelos con thinking se toman su tiempo
 const DEFAULT_MODEL = 'claude-sonnet-5-thinking-high';
+
+// El modelo para las tareas CORTAS de texto (hoy: refinar un dictado), que no
+// son diseñar y no tienen por qué pagar como si lo fueran. Es el lugar de Haiku
+// en el proveedor de Claude — Cursor no ofrece ningún Haiku, así que el análogo
+// hay que elegirlo midiendo.
+//
+// Y midiendo sale al revés de lo que uno pondría de memoria. Refinando el mismo
+// dictado de 40 palabras, dos vueltas cada uno
+// (test/manual/cursor-refinado.js):
+//
+//   modelo                        latencia    entrada  salida  caché lee/escribe
+//   claude-sonnet-5                5,7-7,1 s        2      69   17641 / 9478
+//   claude-sonnet-5-thinking-high  5,6-6,6 s        2      69   17641 / 9478
+//   composer-2.5                   6,8-8,9 s     8647  231-447   7990 / 0
+//   cursor-grok-4.6-low            7,5-9,6 s  8102-10281 181-348 7424 / 0
+//
+// Composer es el modelo propio de Cursor y el que uno elegiría por "chico y
+// rápido", y sin embargo es el más lento y el que más caro sale: Cursor le
+// CACHEA el contexto del agente a los modelos de Anthropic y a los suyos no,
+// así que por Composer el prompt entero viaja fresco (8.647 tokens) en cada
+// llamada mientras que por Sonnet viajan 2. Los cuatro pasan el control de
+// tamaño y los cuatro refinan bien; la diferencia es de precio y de segundos.
+//
+// Entre los dos Sonnet, la medición es un empate, así que decide el criterio:
+// va el que NO razona. Reordenar dos frases no es una tarea de razonamiento, y
+// que hoy salga igual de barato no es motivo para pedirlo.
+//
+// OJO con lo que esto NO arregla: refinar por Cursor sigue teniendo un piso de
+// ~6 s y ~9.500 tokens escritos a caché, contra los ~2 s de Haiku por la API de
+// Anthropic. Elegir bien adentro de Cursor no lo vuelve barato; por eso Cursor
+// se usa cuando el editor lo eligió y no como respaldo (ver dictado-refinar.js).
+const MODELO_CORTO = process.env.HYPERPREMIERE_CURSOR_MODELO_CORTO || 'claude-sonnet-5';
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 4000;
 
@@ -102,12 +135,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Mensaje accionable cuando el CLI no está o no hay sesión. */
-function setupHint(bin) {
-  return 'cursor-cli: no se pudo ejecutar "' + bin + '".' +
-    '\nInstalalo con:  curl https://cursor.com/install -fsS | bash' +
-    '\nY autenticá la máquina con:  cursor-agent login' +
-    '\n(o poné la variable de entorno CURSOR_API_KEY).';
+/**
+ * Mensaje accionable cuando el CLI no está, no hay sesión, o falló por otra
+ * cosa. Los tres casos tienen tres próximos pasos distintos, así que se le
+ * pregunta a la máquina antes de escribir (ver cursor-session.mensajeDeFalla).
+ * Antes esto era un texto fijo con los dos comandos juntos y el editor tenía
+ * que adivinar cuál de los dos le tocaba.
+ */
+async function setupHint(cfg, detalle) {
+  return 'cursor-cli: ' + await cursorSession.mensajeDeFalla(cfg, detalle);
 }
 
 /**
@@ -116,13 +152,18 @@ function setupHint(bin) {
  * @param {string} opts.userPrompt
  * @param {string[]} [opts.images] - data URLs de stills
  * @param {string} opts.model
- * @param {object} [opts.config] - { timeoutMs?, cursorBinPath?, apiKey? }
+ * @param {object} [opts.config] - { timeoutMs?, apiKey?, cursorBinPath? }.
+ *   `cursorBinPath` es el override explícito de la ruta del binario: lo usan
+ *   los tests para apuntar al CLI de mentira y el diagnóstico para preguntarle
+ *   a la copia que ya encontró. En una corrida normal no viene, y la ruta la
+ *   resuelve cursor-session.binDe con el doctor.
  * @param {function} [opts.onActivity] - se lo llama con lo que el agente está
  *   haciendo mientras trabaja (ver agent-stream.js). Sin él, formato de salida
  *   de siempre.
- * @returns {Promise<{text:string, usage:object|null}>} HTML de la composicion
+ * @returns {Promise<{text:string, usage:object|null, warning?:string}>} lo que
+ *   escribió el modelo, CRUDO. `generate` es esto más quitarle el fence.
  */
-async function generate({ systemPrompt, userPrompt, images, model, config, onActivity }) {
+async function complete({ systemPrompt, userPrompt, images, model, config, onActivity }) {
   const cfg = config || {};
   if (!userPrompt || typeof userPrompt !== 'string') {
     throw new Error('cursor-cli: userPrompt es requerido');
@@ -131,7 +172,10 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
   const timeoutMs = Number.isFinite(cfg.timeoutMs) && cfg.timeoutMs > 0
     ? cfg.timeoutMs
     : DEFAULT_TIMEOUT_MS;
-  const bin = cfg.cursorBinPath || 'cursor-agent';
+  // La ruta la resuelve cursor-session (override explícito → PATH → rutas
+  // conocidas → escotilla por variable de entorno), no un nombre pelado que el
+  // PATH recortado de Premiere puede no saber resolver.
+  const bin = await cursorSession.binDe(cfg);
   const useModel = model || DEFAULT_MODEL;
 
   const ws = makeWorkspace(images);
@@ -217,8 +261,10 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
   }
 
   try {
-    const childEnv = Object.assign({}, process.env);
-    if (cfg.apiKey) childEnv.CURSOR_API_KEY = cfg.apiKey;
+    // El MISMO entorno con el que el panel pregunta si hay sesión. Que lo arme
+    // una sola función es lo que impide que la detección y la generación
+    // opinen distinto (ver cursor-session.envParaCursor).
+    const childEnv = cursorSession.envParaCursor(cfg);
 
     let streaming = live;
     let lastErr = '';
@@ -233,7 +279,8 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
       });
 
       if (r.timedOut) throw new Error(`cursor-cli: timeout tras ${timeoutMs}ms`);
-      if (r.code === -1) throw new Error(setupHint(bin) + '\nDetalle: ' + cliErrors.deProceso(r));
+      // Acá cae el ENOENT de la captura del editor: el proceso ni arrancó.
+      if (r.code === -1) throw new Error(await setupHint(cfg, cliErrors.deProceso(r)));
 
       const combined = (r.err || '') + '\n' + (r.out || '');
       // Un CLI más viejo que stream-json lo rechaza al instante, sin gastar un
@@ -252,10 +299,12 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
           await sleep(RETRY_DELAY_MS * attempt);
           continue;
         }
-        if (/not logged in|unauthor|401|no api key/i.test(combined)) {
-          throw new Error('cursor-cli: la máquina no tiene sesión de Cursor.' +
-            '\nCorré:  cursor-agent login' +
-            '\nDetalle: ' + lastErr.slice(0, 300));
+        // "Authentication required", 401, "not logged in": el CLI corrió y
+        // rebotó por credencial. Se le pregunta a la máquina en vez de suponer
+        // — puede ser que falte la sesión, o que la key pegada en el panel ya
+        // no sirva, y son dos frases distintas.
+        if (/not logged in|unauthor|authentication required|401|no api key/i.test(combined)) {
+          throw new Error(await setupHint(cfg, lastErr));
         }
         throw new Error(`cursor-cli: salió con código ${r.code}. ${lastErr.slice(0, 400)}`);
       }
@@ -304,8 +353,7 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         costUsd: null, // suscripción: no hay costo por llamada
       });
 
-      const html = stripHtmlFence(text);
-      if (!html) {
+      if (!text.trim()) {
         if (attempt < MAX_ATTEMPTS) { lastErr = 'respuesta vacía'; await sleep(RETRY_DELAY_MS); continue; }
         throw new Error('cursor-cli: la respuesta vino vacía');
       }
@@ -328,13 +376,34 @@ async function generate({ systemPrompt, userPrompt, images, model, config, onAct
         }
       }
 
-      return { text: html, usage, warning };
+      return { text: text, usage, warning };
     }
 
     throw new Error('cursor-cli: falló tras ' + MAX_ATTEMPTS + ' intentos. Último error: ' + lastErr.slice(0, 300));
   } finally {
     ws.cleanup();
   }
+}
+
+/**
+ * La composición, ya sin el fence de markdown. Es `complete` más eso y nada
+ * más, igual que en los otros proveedores.
+ *
+ * Estaban fundidos en una sola función porque a Cursor nadie le pedía texto
+ * crudo: el refinador del dictado lo excluía por caro. Desde que el refinado
+ * usa el proveedor que el editor eligió (ver bridge/dictado-refinar.js), sí se
+ * lo pide, y partirlo es lo que evita que el refinado herede el desenvolver-
+ * HTML —que sobre una instrucción de diseño no hace nada, hasta el día que la
+ * instrucción mencione un bloque de código y se la coma—.
+ *
+ * @param {object} opts - los mismos de `complete`
+ * @returns {Promise<{text:string, usage:object|null, warning?:string}>}
+ */
+async function generate(opts) {
+  const r = await complete(opts);
+  const html = stripHtmlFence(r.text);
+  if (!html) throw new Error('cursor-cli: la respuesta vino vacía');
+  return Object.assign({}, r, { text: html });
 }
 
 // Cursor ofrece ~193 modelos: inusable en un desplegable, y la mayoría no sirve
@@ -419,10 +488,9 @@ function curateModels(models) {
  */
 async function listModels(config) {
   const cfg = config || {};
-  const bin = cfg.cursorBinPath || 'cursor-agent';
   try {
-    const childEnv = Object.assign({}, process.env);
-    if (cfg.apiKey) childEnv.CURSOR_API_KEY = cfg.apiKey;
+    const bin = await cursorSession.binDe(cfg);
+    const childEnv = cursorSession.envParaCursor(cfg);
     // 60s y no 30: el listado normalmente tarda ~1s pero se lo vio irse a 30s.
     const r = await run(bin, ['--list-models'], { timeoutMs: 60_000, env: childEnv, shell: process.platform === 'win32' });
     // `r.err || r.out` se comía el stdout cuando stderr traía apenas un salto de
@@ -445,4 +513,4 @@ async function listModels(config) {
   }
 }
 
-module.exports = { generate, listModels, DEFAULT_MODEL };
+module.exports = { generate, complete, listModels, DEFAULT_MODEL, MODELO_CORTO };

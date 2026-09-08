@@ -1,6 +1,6 @@
 // Manejo del sistema de archivos para las salidas de HyperPremiere.
 // Las renders viven en "<dir del .prproj>/HyperPremiere/<slug(sequenceName)>/".
-// Y lo que es del proyecto entero —la cola, la base del prompt general— un
+// Y lo que es del proyecto entero —la cola, el prompt general del curso— un
 // nivel más arriba, en "<dir del .prproj>/HyperPremiere/".
 
 'use strict';
@@ -30,7 +30,7 @@ function slugify(name) {
 /**
  * La carpeta del PROYECTO: "<dir del .prproj>/HyperPremiere". Es el único nivel
  * que NO es de una secuencia, y ahí va lo que vale para el proyecto entero: la
- * cola y la base del prompt general. Existía repartida en dos copias (acá y en
+ * cola y el prompt general del curso. Existía repartida en dos copias (acá y en
  * engine.js, para queue.json); vive en un solo lugar porque ahora hay más de un
  * archivo que depende de dar la misma carpeta.
  * Si projectPath está vacío (proyecto sin guardar), usa ~/HyperPremiere.
@@ -131,60 +131,84 @@ function readTextFileOrNull(file) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 }
 
-// ── Prompt general: la base del proyecto y el que la pisa ────────────
+// ── Prompt general del curso y prompt de secuencia ───────────────────
 // El estilo del curso —marca, paleta, tipografía, tono— es del PROYECTO, no del
 // localStorage de una máquina. Mientras vivió ahí, el segundo editor abría el
 // mismo .prproj y generaba con el campo vacío: misma clase, mismo marcador,
 // contexto distinto y animaciones peores, sin nada que se lo dijera.
 //
-// Dos archivos, misma forma que el resto:
-//   <dir .prproj>/HyperPremiere/prompt-general.md            ← la base, del proyecto
-//   <dir .prproj>/HyperPremiere/<secuencia>/prompt-general.md ← el propio de esa clase
+// Dos archivos, un nivel cada uno:
+//   <dir .prproj>/HyperPremiere/prompt-general.md               ← el del CURSO entero
+//   <dir .prproj>/HyperPremiere/<secuencia>/prompt-secuencia.md ← el de ESA clase
+//
+// Los DOS viajan al modelo, y con la instrucción del marcador son los tres
+// niveles del contexto que escribe el editor. El de la secuencia NO reemplaza
+// al del curso: se le suma, y donde se contradigan manda el de la secuencia.
+// Quién gana no se deduce acá ni lo elige el modelo: se le dice con todas las
+// letras en el prompt (ver bridge/prompt/build-context.js).
 //
 // Es texto plano y no JSON a propósito: es prosa, y en un JSON las líneas se
 // escaparían a "\n" — dejaría de ser un archivo que el editor puede abrir y
 // arreglar a mano, que es medio punto de guardarlo al lado del proyecto.
-const GENERAL_PROMPT_FILE = 'prompt-general.md';
+const COURSE_PROMPT_FILE = 'prompt-general.md';
+const SEQUENCE_PROMPT_FILE = 'prompt-secuencia.md';
+// Cómo se llamaba el de la secuencia hasta la 1.4.51, cuando REEMPLAZABA al del
+// curso: también `prompt-general.md`, adentro de la carpeta de la clase. Los
+// proyectos que ya lo tienen siguen andando sin que nadie renombre nada: dentro
+// de una carpeta de secuencia ese archivo siempre quiso decir "el de esta
+// clase", que es exactamente el nivel nuevo. Se lee por el nombre viejo cuando
+// no hay uno con el nuevo, y la primera vez que se guarda queda consolidado.
+const SEQUENCE_PROMPT_FILE_LEGACY = 'prompt-general.md';
 
 function generalPromptPaths(projectPath, sequenceName) {
+  const seqDir = sequenceName ? outputDirPath(projectPath, sequenceName) : '';
   return {
-    project: path.join(projectRootPath(projectPath), GENERAL_PROMPT_FILE),
-    sequence: sequenceName
-      ? path.join(outputDirPath(projectPath, sequenceName), GENERAL_PROMPT_FILE)
-      : '',
+    project: path.join(projectRootPath(projectPath), COURSE_PROMPT_FILE),
+    sequence: seqDir ? path.join(seqDir, SEQUENCE_PROMPT_FILE) : '',
+    sequenceLegacy: seqDir ? path.join(seqDir, SEQUENCE_PROMPT_FILE_LEGACY) : '',
   };
 }
 
+/** Borra un archivo si está. Nunca lanza: que no estuviera es el caso normal. */
+function removeIfPresent(file) {
+  if (!file) return false;
+  try { fs.unlinkSync(file); return true; } catch { return false; }
+}
+
 /**
- * Qué prompt general le toca a esta secuencia y DE DÓNDE sale.
+ * Los dos niveles generales que le tocan a esta secuencia, cada uno por
+ * separado.
  *
  * La respuesta es una sola para todos —el panel, el log y el prompt— porque la
  * pregunta que resolvió el bug es exactamente ésa: con qué contexto se generó.
- * `source`: 'sequence' (la secuencia pisa la base), 'project' o 'none'.
- *
- * El propio de una secuencia REEMPLAZA a la base, no se le suma: dos textos
- * pegados que pueden contradecirse ("tipografía Inter" + "tipografía Roboto")
- * dejan al modelo eligiendo, que es la clase de contexto turbio que esto vino
- * a sacar. Se ve entero lo que viaja, y no hay precedencia que deducir.
+ * Acá no se combina nada ni se elige un ganador: se devuelven los dos textos y
+ * quien arma el pedido los manda juntos, con la precedencia escrita.
  */
 function loadGeneralPrompt(body) {
   body = body || {};
-  const vacio = { text: '', source: 'none', projectText: '', sequenceText: '', hasProjectFile: false };
+  const vacio = { projectText: '', sequenceText: '', hasProjectFile: false, sequenceLegacy: false };
   try {
     const files = generalPromptPaths(body.projectPath, body.sequenceName);
     const projectRaw = readTextFileOrNull(files.project);
-    const sequenceRaw = files.sequence ? readTextFileOrNull(files.sequence) : null;
-    const projectText = String(projectRaw == null ? '' : projectRaw).trim();
-    const sequenceText = String(sequenceRaw == null ? '' : sequenceRaw).trim();
+    let sequenceRaw = files.sequence ? readTextFileOrNull(files.sequence) : null;
+    // El nombre viejo SOLO si no hay uno con el nuevo: el nuevo manda siempre,
+    // así un proyecto a medio migrar no resucita un texto ya reemplazado.
+    let sequenceLegacy = false;
+    if (sequenceRaw == null && files.sequenceLegacy) {
+      sequenceRaw = readTextFileOrNull(files.sequenceLegacy);
+      sequenceLegacy = sequenceRaw != null;
+    }
     return {
       ok: true,
-      text: sequenceText || projectText,
-      source: sequenceText ? 'sequence' : (projectText ? 'project' : 'none'),
-      projectText,
-      sequenceText,
-      // Que el archivo EXISTA aunque esté vacío es un dato: quiere decir que el
-      // proyecto ya decidió que no hay base, y entonces no hay nada que migrar.
+      projectText: String(projectRaw == null ? '' : projectRaw).trim(),
+      sequenceText: String(sequenceRaw == null ? '' : sequenceRaw).trim(),
+      // Que el archivo del curso EXISTA aunque esté vacío es un dato: quiere
+      // decir que el proyecto ya decidió que no hay estilo, y entonces no hay
+      // nada que migrar desde el localStorage de una máquina.
       hasProjectFile: projectRaw != null,
+      // El de esta clase todavía se llama como antes de la 1.5.0. Se lee igual;
+      // se consolida solo, la próxima vez que se guarde.
+      sequenceLegacy,
       paths: files,
     };
   } catch (e) {
@@ -193,13 +217,16 @@ function loadGeneralPrompt(body) {
 }
 
 /**
- * Escribe la base del proyecto (`scope: 'project'`) o el propio de una secuencia
- * (`scope: 'sequence'`).
+ * Escribe el prompt general del curso (`scope: 'project'`) o el de una
+ * secuencia (`scope: 'sequence'`).
  *
- * Vaciar el de una secuencia ES volver a la base: se borra el archivo, así el
- * disco no queda diciendo "esta clase tiene el suyo" con nada adentro. Vaciar la
- * base se anota, pero no se crea la carpeta solo por eso — misma regla que la
- * cola: abrir el panel no deja carpetas por ahí.
+ * Cada campo del panel escribe en su propio archivo y en ninguno más: vaciar el
+ * de una clase la deja con el del curso y nada más, y no toca el del curso.
+ * Vaciar el de una secuencia borra su archivo —así el disco no queda diciendo
+ * "esta clase tiene el suyo" con nada adentro— y borra también el del nombre
+ * viejo, porque si quedara, el texto que el editor acaba de borrar volvería en
+ * la próxima lectura. Vaciar el del curso se anota, pero no crea la carpeta solo
+ * por eso: misma regla que la cola, abrir el panel no deja carpetas por ahí.
  */
 function saveGeneralPrompt(body) {
   body = body || {};
@@ -211,13 +238,17 @@ function saveGeneralPrompt(body) {
     if (!file) return { ok: false, error: 'para guardar el prompt de una secuencia hace falta su nombre' };
     if (!text) {
       if (scope === 'sequence') {
-        try { fs.unlinkSync(file); } catch { /* no estaba: ya está en la base */ }
+        removeIfPresent(file);
+        removeIfPresent(files.sequenceLegacy);
         return { ok: true, path: file, scope, removed: true };
       }
       if (!fs.existsSync(file)) return { ok: true, path: file, scope, created: false };
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, text ? text + '\n' : '', 'utf8');
+    // Guardar con el nombre nuevo CONSOLIDA: el del viejo ya se leyó, y dejarlo
+    // ahí sería un segundo archivo diciendo otra cosa.
+    if (scope === 'sequence') removeIfPresent(files.sequenceLegacy);
     return { ok: true, path: file, scope };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
@@ -311,7 +342,8 @@ module.exports = {
   saveMeta,
   readMeta,
   readTextFileOrNull,
-  // El estilo del curso, que viaja con el .prproj en vez de con la máquina.
+  // El estilo del curso y el de la clase, que viajan con el .prproj en vez de
+  // con la máquina que los escribió.
   generalPromptPaths,
   loadGeneralPrompt,
   saveGeneralPrompt,

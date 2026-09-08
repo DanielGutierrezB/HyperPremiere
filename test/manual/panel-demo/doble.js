@@ -63,6 +63,55 @@
       detalle: "claude 2.1.201 · /Users/dani/.local/bin/claude · authMethod: api_key"
     };
   }
+  // ── Cursor ────────────────────────────────────────────────────────────
+  // Los tres estados del chequeo de sesión, más el de cupo. Los cuatro se ven
+  // en ⚙ con Cursor elegido, y son cuatro carteles distintos a propósito:
+  // "no está el CLI", "está pero sin sesión", "no pude averiguar" y "hay
+  // credencial pero la cuenta no tiene cupo" mandan al editor a lugares
+  // distintos, y dibujarlos igual fue el bug que ya se pagó una vez con Claude.
+  if (esc("cursor") || esc("cursor-sin-sesion") || esc("cursor-sin-cli") || esc("cursor-sin-cupo")) {
+    D.config.provider = "cursor-cli";
+    D.config.model = "claude-sonnet-5-thinking-high";
+  }
+  // El caso del editor de las capturas: instaló el CLI y le faltaba el login.
+  if (esc("cursor-sin-sesion")) {
+    D.sesionCursor = {
+      estado: "sin-sesion",
+      resumen: "Esta máquina no tiene sesión de Cursor.",
+      // Con la ruta completa a propósito: en la máquina de este editor
+      // `cursor-agent` da `command not found` en su zsh y sin embargo está, en
+      // ~/.local/bin, que el panel agrega a su PATH y su shell no.
+      detalle: "Qué hacer: abrí una terminal y corré  ~/.local/bin/cursor-agent login\n" +
+        "Si `cursor-agent` te dice «command not found», no falta: usá la ruta completa."
+    };
+  }
+  // La primera captura del editor: spawn cursor-agent ENOENT.
+  if (esc("cursor-sin-cli")) {
+    D.sesionCursor = {
+      estado: "sin-cli",
+      resumen: "No encontré el CLI de Cursor en esta máquina.",
+      detalle: "Qué hacer: instalalo con  curl https://cursor.com/install -fsS | bash\n" +
+        "Después cerrá y volvé a abrir Premiere para que tome el PATH nuevo."
+    };
+    D.diagnosticoCursor =
+      "CLI de Cursor en esta máquina\n" +
+      "· Ejecutable: NO encontrado\n" +
+      "· Se buscó en: el PATH, ~/.local/bin, /opt/homebrew/bin, /usr/local/bin\n" +
+      "· Sistema: darwin arm64 · macOS 26.1\n" +
+      "Instalalo con: curl https://cursor.com/install -fsS | bash";
+  }
+  // Hay credencial y aun así no va a poder: el semáforo en ámbar. Es la captura
+  // del editor con el indicador en verde y `Credit balance is too low` abajo.
+  if (esc("cursor-sin-cupo")) {
+    D.sesionCursor = {
+      estado: "sin-cupo",
+      resumen: "⚠ hay credencial, pero la cuenta no tiene cupo.",
+      detalle: "La credencial está: Sesión de Cursor activa — con la sesión del CLI de esta máquina (editor@estudio.com).\n" +
+        "Pero la última generación de esta sesión del panel rebotó por eso.\n" +
+        "Qué hacer: esperá a que se renueve, cargá crédito, o cambiá de proveedor en ⚙.\n" +
+        "Lo que dijo el proveedor: Credit balance is too low"
+    };
+  }
   if (esc("whisper")) D.whisper = { ok: true, available: false, canInstall: true, installLabel: "mlx-whisper en un entorno propio", installMB: 260 };
   // El micrófono elegido en ⚙ ya no está enchufado: la fila lo dice en amarillo
   // y el dictado cae al del sistema.
@@ -214,10 +263,12 @@
       });
     });
 
-    // Prompt general: las IMÁGENES siguen siendo del panel; el TEXTO lo sirve
-    // el motor (loadGeneralPrompt), que es donde vive desde que viaja con el
-    // .prproj. Con ?e=conflicto se deja además un texto local distinto, que es
-    // lo que dispara el cartel de "decidí cuál vale".
+    // Prompts generales: las IMÁGENES siguen siendo del panel; los DOS TEXTOS
+    // los sirve el motor (loadGeneralPrompt), que es donde viven desde que
+    // viajan con el .prproj. Con ?e=conflicto se deja además un texto local
+    // distinto, que es lo que dispara el cartel de "decidí cuál vale" — ése
+    // sigue siendo un caso: es lo que queda de la migración del localStorage, no
+    // del botón de destino que se fue en la 1.5.0.
     (D.imagenesGenerales || []).forEach(function (img, i) {
       S.addMarkerStill(S.GENERAL_KEY, pngFalso(img.etiqueta, img.color, img.fondo));
       if (img.usar) S.setMarkerStillUse(S.GENERAL_KEY, i, true);
@@ -657,6 +708,12 @@
     listOllamaModels: function () { return luego(ok({ models: ["qwen3-vl:30b", "llama3.2-vision", "qwen3-coder:30b"] })); },
     claudeSessionStatus: function () { return luego(D.sesionClaude); },
     claudeCliStatus: function () { return luego(ok({ report: D.diagnosticoClaude })); },
+    cursorSessionStatus: function () { return luego(D.sesionCursor); },
+    cursorCliStatus: function () {
+      // `ok:false` cuando el CLI no está: es lo que pinta el renglón en rojo.
+      // La ficha se arma igual, que es el único caso donde de verdad sirve.
+      return luego({ ok: D.sesionCursor.estado !== "sin-cli", report: D.diagnosticoCursor });
+    },
     loginClaudeStart: function () { return luego(ok({ url: "https://claude.ai/oauth/authorize?code=true&client_id=demo" })); },
     loginClaudeCode: function () { return luego(ok({})); },
     loginClaudeToken: function () { return luego(ok({})); },
@@ -695,24 +752,36 @@
     cancelTranscription: function () { return luego(ok({})); },
     deriveObjective: function () { return luego(ok({ objective: D.objetivo, usage: usoFalso })); },
 
-    // — prompt general (vive al lado del .prproj) —
+    // — prompts generales (viven al lado del .prproj) —
+    // Dos niveles y dos archivos, y los DOS viajan al modelo: el del curso
+    // entero y el de esta clase.
     loadGeneralPrompt: function (body) {
-      var proj = D.promptGeneral.proyecto;
-      // El propio de la clase se devuelve igual que la base: si acá se
-      // contestara siempre "" —como se contestaba—, escribir el prompt de una
-      // secuencia y volver a leer lo haría desaparecer, que es justo lo que el
-      // panel de verdad no hace. Solo lo tiene la secuencia abierta: las demás
-      // (las que mira la cola) usan la base.
+      var curso = D.promptGeneral.curso;
+      // El de la clase se devuelve igual que el del curso: si acá se contestara
+      // siempre "" —como se contestaba—, escribir el prompt de una secuencia y
+      // volver a leer lo haría desaparecer, que es justo lo que el panel de
+      // verdad no hace. Solo lo tiene la secuencia abierta: las demás (las que
+      // mira la cola) van solo con el del curso.
       var propio = (body && body.sequenceName === D.secuenciaAbierta)
         ? (D.promptGeneral.secuencia || "") : "";
       return luego(ok({
-        text: propio || proj, source: propio ? "sequence" : (proj ? "project" : "none"),
-        projectText: proj, sequenceText: propio, hasProjectFile: !!proj
+        projectText: curso, sequenceText: propio,
+        hasProjectFile: !!curso, sequenceLegacy: false,
+        paths: {
+          project: D.carpetaSalida + "/prompt-general.md",
+          sequence: carpetaDe(D.secuenciaAbierta) + "/prompt-secuencia.md"
+        }
       }));
     },
     saveGeneralPrompt: function (body) {
-      if (body && body.scope === "sequence") D.promptGeneral.secuencia = body.text || "";
-      else D.promptGeneral.proyecto = body ? (body.text || "") : "";
+      if (body && body.scope === "sequence") {
+        D.promptGeneral.secuencia = body.text || "";
+        return luego(ok({
+          path: carpetaDe(body.sequenceName) + "/prompt-secuencia.md",
+          removed: !D.promptGeneral.secuencia
+        }));
+      }
+      D.promptGeneral.curso = body ? (body.text || "") : "";
       return luego(ok({ path: D.carpetaSalida + "/prompt-general.md" }));
     },
 

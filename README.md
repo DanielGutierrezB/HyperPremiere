@@ -68,8 +68,10 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    y después **te devuelve a la que estabas**). Las secuencias que ya están listas
    **no esperan**: se van generando mientras otra se transcribe.
    Al final, el
-   **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODOS los
-   marcadores (no lo repetís en cada uno).
+   **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODO el curso, y
+   el **Prompt de secuencia** lo que sea propio de esa clase (no lo repetís en cada
+   marcador). Los dos viajan juntos al modelo y, donde se contradigan, manda el de la
+   secuencia.
 3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa**
    (📸) y arrastrar **imágenes / PDFs / referencias** (drag & drop).
 4. La IA diseña una animación **HyperFrames**, se **renderiza** y se **coloca sobre el
@@ -912,6 +914,64 @@ mucho a "el hijo no llega al llavero". Puede no serlo: en la máquina donde se i
 esto, `claude auth status` contestaba `"authMethod": "none"` — simplemente no había ninguna
 sesión, ni interactiva ni de ninguna clase. Conviene preguntar antes de deducir.
 
+## Cuando el proveedor es Cursor y algo no anda
+
+Cursor tardó en tener lo que Claude ya tenía, y se notó. Un editor mandó dos capturas del
+mismo camino, con días de diferencia:
+
+1. `✕ No pude hablar con Cursor… Detalle: spawn cursor-agent ENOENT` — el binario no estaba.
+2. Después de instalarlo, el mismo cartel con `Detalle: Error: Authentication required. Run
+   'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.` —
+   el binario estaba y faltaba la sesión.
+
+Los dos se arreglan en un minuto, pero lo que el panel le mostraba era el error crudo del
+proceso: ninguna diferencia entre "no está instalado" y "está pero sin sesión", y ningún
+camino desde el panel. Ahora ⚙ **pregunta antes**, igual que con Claude, y el semáforo
+distingue los cuatro casos: sesión activa (con qué cuenta entra), falta el CLI (con el
+comando de instalación), falta la sesión (con `cursor-agent login`), y **no se pudo
+averiguar** — que se dibuja como lo que es, una duda nuestra, y no como un problema del
+editor. Ese último estado existe porque tratar "no sé" como "no tenés" ya se pagó una vez con
+Claude (ver **Cuando el panel dice que falta iniciar sesión y no falta**), y no había ningún
+motivo para pagarlo de nuevo.
+
+**El botón de Diagnóstico** al lado dice si el CLI está, en qué ruta, qué versión y con qué
+credencial entra, en un texto que entra en una captura. Es lo que conviene pedirle a alguien
+cuando no tenemos su máquina adelante, y funciona igual cuando el CLI **no** está: ahí
+informa dónde se buscó, que es lo que distingue "no está instalado" de "está en un lugar
+donde no miré".
+
+**"No me lo encuentra la Terminal" no quiere decir que falte.** En la máquina de este editor,
+`cursor-agent` y `claude` devuelven los dos `command not found` en su `zsh`, y sin embargo
+están: viven en `~/.local/bin`, que el panel agrega a su PATH y su shell no. Si un comando
+que sugiere el panel no arranca en tu Terminal, probá con la ruta completa
+(`~/.local/bin/cursor-agent login`) antes de reinstalar nada.
+
+**La API key de Cursor se puede pegar en ⚙.** El motor siempre supo usarla, pero la fila
+estaba escondida para este proveedor, así que no había forma de llegar a ella desde el panel.
+Se pasa como `CURSOR_API_KEY` y nada más: `CURSOR_AUTH_TOKEN`, la otra variable que nombra el
+mensaje de error del CLI, quedó descartada a propósito porque al usarla el CLI intenta
+**escribir en el llavero del sistema** y puede pisar la sesión que ya tenías. Si el CLI ya
+tiene sesión no hace falta pegar nada; la key es para las máquinas donde el login interactivo
+no es una opción.
+
+## Cuando el indicador está en verde y la generación dice que no hay crédito
+
+Otra captura del mismo editor, y las dos cosas eran ciertas: arriba el semáforo de ⚙ en
+verde, abajo en la cola `Credit balance is too low`. El chequeo de sesión pregunta si hay
+**con qué autenticarse**, y una cuenta sin saldo tiene credencial: contestaba que sí y tenía
+razón. Pero lo único que se mira antes de apretar "Generar" es el semáforo.
+
+Ahora, cuando una generación o un refinado rebota por cupo o límite de uso, el panel se
+acuerda y el indicador de **ese** proveedor pasa a **ámbar**: *"hay credencial, pero la
+cuenta no tiene cupo"*. Ámbar y no rojo, porque no te falta configurar nada —está todo
+puesto— y no se arregla desde acá adentro. Es por proveedor: que Claude se quede sin cupo no
+dice nada de Cursor, y cambiarte al otro no te arrastra el cartel.
+
+Se olvida sola en cuanto puede haber cambiado algo: al guardar la configuración de ese
+proveedor (pegar una API key nueva es "probá de nuevo") y al reiniciar el panel. No se
+persiste a propósito: cargar crédito se hace afuera y de eso no nos vamos a enterar nunca, así
+que un aviso guardado en disco sería un cartel pegado hasta la próxima versión.
+
 ## Cuando el modelo diseña sin mirar la imagen de referencia
 
 El mismo editor del cartel mandó otra cosa: *"tampoco está tomando la imagen de referencia
@@ -1048,7 +1108,7 @@ sobre `--betas`) pero es sobre los headers beta en general, y para esta generaci
 modelos el 1M **ya no es un beta**. Lo que de verdad no se puede saber es la otra cosa: qué
 ventana da Claude Code con una suscripción. La conclusión no cambia; el motivo sí.
 
-## Cuando el estilo del curso no viaja con el proyecto
+## El estilo del curso, el de la clase, y el del marcador
 
 Dos editores, el mismo `.prproj`, animaciones distintas. Diagnosticando por qué al
 compañero le salían peores apareció esta línea, igual en las tres generaciones de su log:
@@ -1072,46 +1132,59 @@ crearla (`projectRootPath`, que ya estaba escondido dentro de `outputDirPath`). 
 junto al `.prproj`, viaja con él por el mismo camino que ya usan los editores para pasarse
 el proyecto, sin que nadie tenga que acordarse de nada.
 
-Una clase puede necesitar algo distinto —un módulo con otra paleta, una clase invitada— y
-para eso cada secuencia puede tener su propio `prompt-general.md` adentro de su carpeta.
-Ese **reemplaza** la base, no se le suma. Sumar era tentador y es lo que más rompe: el
-editor escribe *"esta clase va en blanco y negro"* esperando que mande, y le llega pegado
-al *"paleta azul institucional"* de la base, con el modelo eligiendo cuál gana. Reemplazar
-es lo que el editor puede predecir leyendo lo que escribió. Vaciar el prompt de una
-secuencia **borra el archivo**, que es la manera de no dejar uno vacío que después parece
-una decisión: mientras esté vacío, esa clase usa la base y el panel lo dice.
+### Tres niveles que se acumulan
 
-Lo que **no** hace vaciar el campo es cambiar dónde se escribe. Volver a la base es el
-botón que pregunta antes, no una consecuencia de haber borrado el texto, y esa distinción
-es la diferencia entre arreglar el prompt de una clase y reescribirle el estilo al curso
-entero. El que selecciona todo y borra casi siempre lo hace para volver a escribir; si el
-destino se moviera solo, lo que teclee a continuación se estaría guardando en la base que
-comparten todos, sin que nada falle y sin que nadie se entere hasta ver los videos del
-compañero. El campo muestra siempre el archivo al que escribe —el propio de la clase, o la
-base—, así que lo que se lee y lo que se guarda no pueden separarse.
+Un curso tiene una marca, una clase puede tener lo suyo, y un marcador pide una animación
+concreta. Son tres cosas distintas y hoy se escriben en tres lugares distintos:
 
-**Lo que ya estaba escrito no se pierde.** Al abrir el panel por primera vez con esta
-versión, lo que había en el `localStorage` se sube al proyecto si el proyecto todavía no
-tiene nada, y recién ahí se limpia lo local. Si el proyecto ya tiene un texto **idéntico**,
-se limpia sin decir nada: no hay nada que preguntar. Y si tiene uno **distinto**, no se
-pisa ninguno de los dos: el panel muestra los dos textos y pregunta cuál vale, con tres
-respuestas —*es el de esta clase* (lo guarda como prompt de la secuencia y deja la base
-intacta), *que sea la base* (reemplaza la del proyecto, y le llega a todos) o descartarlo.
-Pisar en silencio hubiera sido perder trabajo escrito de un editor sin avisarle, que es
-exactamente la clase de cosa por la que este bug existió. Mientras no se conteste, el texto
-local queda guardado: cerrar el panel no es una respuesta. Y si el motor no puede leer el
-proyecto —disco de red caído, permisos—, el texto local se sigue mostrando y usando: la
-alternativa era volver a generar sin estilo por un error de lectura, que es el bug original
-otra vez.
+- **Prompt general**, el del curso entero. Vive fuera de las secuencias, en
+  `HyperPremiere/prompt-general.md`, y **se mantiene al cambiar de secuencia**: es la marca,
+  y la marca no cambia porque hoy estés editando otra clase.
+- **Prompt de secuencia**, el de esta clase. Vive en la carpeta de la secuencia, en
+  `HyperPremiere/<slug-secuencia>/prompt-secuencia.md`.
+- **La instrucción del marcador**, la de este recurso y ningún otro, que se escribe en la
+  tarjeta y no se guarda en ningún archivo.
 
-**El panel dice de dónde sale.** Arriba del campo hay una línea que aclara si lo que está
-escrito es la base del proyecto o el prompt propio de esa secuencia, y cuando una secuencia
-está pisando la base se ve que la está pisando y se puede leer la base que quedó abajo.
-El log tampoco vuelve a decir `no` a secas:
+**Los tres viajan al modelo, juntos, en ese orden.** El del curso primero, como base; el de
+la secuencia encima; la instrucción del marcador al final. Hasta la 1.4.51 el de la clase
+**reemplazaba** al del curso: si una secuencia tenía el suyo, el del curso no se mandaba. La
+razón que dábamos para reemplazar era buena y sigue siendo cierta —el editor escribe *"esta
+clase va en blanco y negro"* esperando que mande, y pegado al *"paleta azul institucional"*
+del curso deja al modelo eligiendo cuál gana— pero la conclusión estaba mal. Lo que faltaba
+no era **sacar** el del curso: era **decir quién gana**. Reemplazando, escribir dos palabras
+sobre el color de una clase tiraba a la basura la tipografía, el tono y todo el resto del
+estilo del curso, que nadie quiso tirar.
+
+Así que ahora se acumulan y la precedencia se le dice al modelo con todas las letras, en el
+prompt, en vez de dejársela a su criterio. Esto es literalmente lo que le llega:
 
 ```
-prompt general de la base del proyecto
-prompt general de esta secuencia (pisa la base del proyecto)
+# El estilo del curso (base)
+Marca ACADEMIA NOVA. Tipografía: Söhne para títulos, Inter para cuerpo.
+Paleta: fondo carbón #12161d, acento cian #38e1c4...
+
+# El estilo de esta secuencia
+Lo propio de ESTA clase, sobre la base del curso. PRECEDENCIA: donde diga algo
+distinto al estilo del curso, MANDA ESTO.
+Este módulo va en BLANCO Y NEGRO: se compara material de archivo...
+
+# Qué animación hacer acá
+Es el nivel MÁS específico: donde contradiga a los estilos de arriba, manda esto.
+Comparación lado a lado: archivo a la izquierda, hoy a la derecha...
+```
+
+La regla general está también en el system prompt, dicha una vez para los tres niveles: el
+más específico manda, y **no es una invitación a promediar**. Si el curso pide azul y la
+clase pide blanco y negro, la clase gana en el color y el curso sigue mandando en todo lo
+demás. Eso es lo que un editor puede predecir leyendo lo que escribió, que era el punto de
+reemplazar, sin el precio de perder el resto del estilo.
+
+El log dice qué niveles viajaron:
+
+```
+prompt general del curso
+prompt general de esta secuencia
+prompt general del curso + de esta secuencia (si se contradicen, manda la secuencia)
 ```
 
 El caso sin estilo sigue diciendo `prompt general no`, palabra por palabra. Es el texto por
@@ -1119,13 +1192,65 @@ el que se buscó en el log del editor, y cambiarlo dejaría los logs de las vers
 anteriores sin con qué compararse. Lo que cambió es que ahora ese `no` **quiere decir algo
 distinto**: antes podía significar *nadie definió el estilo* o *lo definieron en la otra
 máquina y a vos no te llegó*, que es justo la ambigüedad que hizo falta desenredar a mano.
-Ahora el estilo está en el proyecto, así que `no` es una sola cosa: no hay estilo escrito
-en ningún lado. Y cuando sí lo hay, el log dice de cuál de los dos lugares salió.
+Ahora el estilo está en el proyecto, así que `no` es una sola cosa: no hay estilo escrito en
+ningún lado.
 
-Todo lo que arma un pedido al modelo lee ahora del mismo lugar: la generación normal por
-marcador, los reintentos de la cola —que releen el archivo al momento de generar, así que
-arreglar el estilo y reintentar sale con el arreglado, no con el que tenía pegado el job— y
-la pestaña de correcciones, que dejó de armar el prompt por su cuenta.
+### Dos campos, dos archivos, y ninguna duda de dónde estás escribiendo
+
+En el panel los dos niveles se ven y se editan a la vez: **Prompt general · todo el curso**
+arriba, y debajo **Prompt de secuencia · solo "<nombre de la clase>"**, con una guía de
+color al costado que lo marca como el más acotado de los dos. El rótulo nombra la secuencia
+porque nombrar el alcance en abstracto —"esta secuencia"— obliga a mirar otra parte del
+panel para saber cuál es. Abajo, una línea dice qué está pasando de verdad: *"Al modelo van
+los DOS: el del curso como base y el de esta secuencia encima, que MANDA donde se
+contradigan"*. Sin secuencia abierta el segundo campo se deshabilita y lo dice, en vez de
+aceptar texto que no tendría dónde guardarse.
+
+Cada campo escribe en su propio archivo y en ninguno más. Eso, que suena obvio, es la
+regresión que más caro salió: con un solo campo que editaba uno u otro archivo según un
+estado interno, vaciar el prompt de una clase borraba su archivo y el tecleo siguiente se
+guardaba en el del curso —el que le llega a todos los editores— sin que nada fallara. El
+estado explícito que lo arreglaba (`writeScope`, más un botón para elegir destino) **ya no
+existe**: con los dos campos a la vista no hay ningún destino que elegir, cada uno tiene el
+suyo escrito en el HTML. La disciplina sí sigue, y hay tests que la fijan en la forma nueva:
+vaciar un campo no toca el archivo del otro, ni al guardar ni en lo que queda en pantalla.
+
+Vaciar el **Prompt de secuencia** borra su archivo, que es la manera de no dejar uno vacío
+que después parece una decisión: mientras no esté, esa clase usa el del curso y nada más.
+
+### Los proyectos que ya existen
+
+El de la raíz no cambió: se sigue llamando `prompt-general.md` y sigue queriendo decir lo
+mismo. El de la clase sí cambió de nombre —`prompt-general.md` adentro de una carpeta de
+secuencia pasó a `prompt-secuencia.md`— porque el nombre viejo ya no lo describe, y los dos
+llamándose igual es una trampa cuando hay que hablar de ellos.
+
+Los archivos que ya están en los proyectos siguen andando **sin que nadie renombre nada**.
+Adentro de una carpeta de secuencia, `prompt-general.md` siempre quiso decir "el de esta
+clase", así que se lee tal cual cuando no hay uno con el nombre nuevo; lo único que cambia
+es que ahora **se suma** al del curso en vez de reemplazarlo. La primera vez que ese campo
+se guarda, el texto va al nombre nuevo y el del nombre viejo se borra: queda uno solo, y
+nunca dos diciendo cosas distintas. El editor no se entera de nada de esto.
+
+**Lo que ya estaba escrito en el `localStorage` tampoco se pierde.** Al abrir el panel por
+primera vez con esta versión, lo que había se sube al proyecto si el proyecto todavía no
+tiene nada, y recién ahí se limpia lo local. Si el proyecto ya tiene un texto **idéntico**,
+se limpia sin decir nada: no hay nada que preguntar. Y si tiene uno **distinto**, no se pisa
+ninguno de los dos: el panel muestra los dos textos y pregunta cuál vale, con tres
+respuestas —*es el de esta clase* (lo guarda como Prompt de secuencia, que se suma al del
+curso y manda donde se contradigan), *que sea el general del curso* (reemplaza el del
+proyecto, y le llega a todos) o descartarlo. Pisar en silencio hubiera sido perder trabajo
+escrito de un editor sin avisarle, que es exactamente la clase de cosa por la que este bug
+existió. Mientras no se conteste, el texto local queda guardado: cerrar el panel no es una
+respuesta. Y si el motor no puede leer el proyecto —disco de red caído, permisos—, el texto
+local se sigue mostrando y usando: la alternativa era volver a generar sin estilo por un
+error de lectura, que es el bug original otra vez.
+
+Todo lo que arma un pedido al modelo lee ahora de los mismos dos archivos: la generación
+normal por marcador, los reintentos y el feedback de la cola —que releen al momento de
+generar, así que arreglar el estilo y reintentar sale con el arreglado, no con el que tenía
+pegado el job—, la pestaña de correcciones y la estimación de costo, que cuenta los tokens
+del prompt que se va a mandar de verdad.
 
 Lo que **quedó afuera** son las imágenes de referencia del prompt general, que tienen el
 mismo problema: las que se arrastran al panel se guardan como data URL en el mismo
@@ -1203,16 +1328,44 @@ instrucción de su marcador y pensaría que la función está rota. Para una sal
 micrófono flojo, `HYPERPREMIERE_DICTADO_RMS` lo ajusta. Lo que igual se cuele tiene una red
 abajo: si la transcripción entera es una de esas frases, se descarta.
 
-**El refinado no depende de una credencial que quizás no esté.** El resto del panel usa el
-proveedor elegido en ⚙, y para generar una animación está bien esperar tres minutos; para
-refinar dos frases cada vez que se suelta el botón, no. Así que se mira qué hay en la
-máquina y se usa el mejor disponible, diciéndolo: la **API de Anthropic** si hay key
-configurada (HTTP directo, sin arranque de ningún CLI), el **CLI de Claude con Haiku** si
-esta máquina tiene con qué autenticarse, **Ollama local** si está corriendo, y si no hay
-ninguno el dictado no se rompe: queda el texto crudo en el campo y se dice por qué no se
-pudo refinar. Cursor no está en la lista y no es un olvido: medido acá, una llamada mínima a
-su CLI tarda entre 5 y 10 segundos y escribe ~31.800 tokens de su propio contexto a la
-caché. Para dos frases es la herramienta equivocada por dos órdenes de magnitud. Lo que
+**Refina el proveedor que elegiste en ⚙.** Durante un tiempo no fue así, y el editor lo
+notó: *"si tengo configurado el CLI de Cursor, aún siento que el botón de refinar manda el
+prompt por Claude, no por el que tengo seleccionado"*. Tenía razón. El refinado recorría una
+lista fija —API de Anthropic, CLI de Claude, Ollama— y nunca miraba qué proveedor estaba
+elegido. El razonamiento era de costo, y no era descabellado: refinar dos frases es una
+llamada de segundos que pasa cada vez que alguien suelta el botón del micrófono, así que
+convenía la vía más barata que hubiera en la máquina. Pero en la suya la cuenta de Claude no
+tenía cupo, así que el botón **no funcionaba teniendo la máquina con qué refinar**. Elegir un
+proveedor y que el panel hable con otro es confuso; que además rompa la función es
+directamente un bug.
+
+Ahora la regla es una sola: **si el proveedor elegido puede refinar, refina él**. Vale para
+todos —elegiste Claude, refina Claude; elegiste Ollama, refina Ollama; elegiste Cursor,
+refina Cursor—. La cadena vieja quedó como **respaldo**, y solo entra cuando el elegido no
+puede (sin sesión, sin cupo, sin credencial). Ahí su orden sigue siendo por costo y latencia:
+la **API de Anthropic** primero si hay key configurada (HTTP directo, sin arranque de ningún
+CLI), después el **CLI de Claude con Haiku**, después **Ollama local**. Si no hay ninguno el
+dictado no se rompe: queda el texto crudo en el campo y se dice por qué no se pudo refinar,
+empezando por el proveedor que elegiste, que es el único que te conviene arreglar. Y cuando
+refina el respaldo **se dice** —"Claude Haiku (API de Anthropic) (respaldo)"—, porque el
+texto que apareció en el campo lo escribió otro modelo y eso hay que saberlo.
+
+**Qué modelo se le pide a cada uno.** Refinar no es diseñar, así que a nadie se le pide el
+modelo con el que generás animaciones: a Claude se le pide **Haiku**, a Ollama el modelo
+chico que ya tengas instalado, y a Cursor **Claude Sonnet 5**. Ese último se eligió midiendo
+y salió al revés de lo esperable: refinando el mismo dictado, Composer 2.5 —el modelo propio
+de Cursor, el que uno tomaría por "chico y rápido"— tardó 6,8-8,9 s y mandó **8.647 tokens
+frescos**, mientras que Sonnet tardó 5,7-7,1 s y mandó **2**. Cursor le cachea el contexto
+del agente a los modelos de Anthropic y a los suyos no. Con la API compatible se usa el
+modelo que hayas configurado: atrás puede haber OpenAI, Gemini u OpenRouter, y el ID de un
+hermano más barato no existe en la mitad de ellos.
+
+**Refinar por Cursor cuesta más, y por eso no es el respaldo de nadie.** Medido en esta
+máquina: ~6 segundos y ~9.500 tokens escritos a caché por llamada, contra los ~2 segundos de
+Haiku por la API, porque el CLI arrastra su propio contexto de agente por corto que sea el
+pedido. Como respaldo sería elegir lo más caro habiendo alternativa; como proveedor elegido
+es lo que pediste, y el panel te avisa lo que estás pagando (la demora, y que ese gasto va a
+tu cupo de Cursor). Lo que
 vuelve del refinador pasa por un control de tamaño antes de tocar el campo —con un modelo
 chico corriendo local, `llama3` se comió dónde iba el título y agregó un *"sin pérdida"* que
 nadie dijo— y si no lo pasa se conserva el crudo con el motivo escrito. El log dice qué
