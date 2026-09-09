@@ -83,6 +83,16 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
 5. Iterás con **Generar / Refinar / Regenerar**, o editás el **HTML a mano** (con
    resaltado de sintaxis) y lo renderizás sin gastar IA.
 
+**La carpeta `HyperPremiere/` aparece cuando la usás, no cuando abrís el panel.** Todo lo
+que la herramienta guarda vive en `<carpeta-del-.prproj>/HyperPremiere/` —la cola y el
+estilo del curso arriba, y una carpeta por secuencia con sus renders, su transcript y sus
+referencias—, y esa carpeta se crea con la **primera escritura de verdad**: generar,
+transcribir, capturar un cuadro, agregar una referencia, escribir un prompt o encolar un
+trabajo. Abrir un proyecto y mirar no deja nada: ni la carpeta del proyecto ni la de la
+secuencia. Importa porque **viaja con el `.prproj`** —al disco compartido y a las otras
+máquinas—, así que una carpeta vacía en un proyecto donde nunca se usó la herramienta es
+basura que se propaga y encima miente sobre que ahí hay algo.
+
 ## Imágenes: referencia vs. usar
 
 Cada imagen adjunta se etiqueta:
@@ -639,7 +649,13 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
     nombra por **ruta absoluta**: el buscador del agente no indexa su directorio
     temporal, así que con el nombre suelto a veces contestaba "no encuentro la imagen"
     en vez de componer.
-  - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`;
+  - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`.
+    Tiene **dos** helpers y la diferencia es el contrato de arriba: `outputDirPath` arma la
+    ruta y `ensureOutputDir` la **crea**. Todo lo que solo lee —¿hay transcript?, ¿qué
+    versiones hay?, ¿hay videos viejos que limpiar?— pide el primero y tolera que la carpeta
+    no exista; el segundo es de las escrituras. Pedir el que crea desde una lectura es cómo
+    volvería el bug de la carpeta que aparece sola;
+
     `bridge/store/versions.js` — dueño único del esquema de nombres versionados
     (`<slug> vN [modelo].ext`): parse, formato, próxima versión y listados.
   - `bridge/store/references.js` — las **referencias** de los dos niveles generales como

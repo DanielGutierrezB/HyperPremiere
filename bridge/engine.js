@@ -390,7 +390,25 @@ const TRANSCRIPT_FILE = 'transcript.json';
 // perder los transcripts de las secuencias que ya existen.
 const TRANSCRIPT_FILE_LEGACY = 'transcript-whisper.json';
 
-function transcriptPath(projectPath, sequenceName) {
+// Dónde VA el transcript de una secuencia. Son dos funciones y no una porque la
+// ruta la piden los dos lados y no quieren lo mismo: el que va a escribir
+// necesita la carpeta creada, y el que solo viene a mirar si hay algo no puede
+// dejarla hecha al pasar. Mientras fue una sola —la que crea, que usaban los
+// dos—, abrir el panel sobre un proyecto donde nunca se generó nada dejaba la
+// carpeta de la secuencia vacía al lado del .prproj, y esa carpeta viaja con el
+// proyecto a las otras máquinas.
+
+/** Los dos nombres posibles, del nuevo al viejo, sin crear nada. */
+function transcriptCandidates(projectPath, sequenceName) {
+  const dir = outputDirPath(projectPath, sequenceName);
+  return [
+    { file: path.join(dir, TRANSCRIPT_FILE), legacy: false },
+    { file: path.join(dir, TRANSCRIPT_FILE_LEGACY), legacy: true },
+  ];
+}
+
+/** El nombre canónico con la carpeta ya creada: solo para escribir. */
+function ensureTranscriptPath(projectPath, sequenceName) {
   return path.join(ensureOutputDir(projectPath, sequenceName), TRANSCRIPT_FILE);
 }
 
@@ -404,7 +422,7 @@ function saveTranscript(body) {
   const segments = Array.isArray(body.segments) ? body.segments : [];
   if (!segments.length) return { ok: false, error: 'no hay segmentos que guardar' };
   try {
-    const file = transcriptPath(body.projectPath, body.sequenceName);
+    const file = ensureTranscriptPath(body.projectPath, body.sequenceName);
     fs.writeFileSync(file, JSON.stringify({
       sequenceName: String(body.sequenceName || ''),
       source: String(body.source || ''),
@@ -429,12 +447,9 @@ function saveTranscript(body) {
 function loadTranscript(body) {
   body = body || {};
   try {
-    const dir = ensureOutputDir(body.projectPath, body.sequenceName);
-    const candidates = [
-      { file: path.join(dir, TRANSCRIPT_FILE), legacy: false },
-      { file: path.join(dir, TRANSCRIPT_FILE_LEGACY), legacy: true },
-    ];
-    for (const c of candidates) {
+    // Consulta de solo lectura: el panel la hace al abrir cada secuencia, así
+    // que va por el camino que no crea la carpeta.
+    for (const c of transcriptCandidates(body.projectPath, body.sequenceName)) {
       if (!fs.existsSync(c.file)) continue;
       let data;
       try {
@@ -1867,7 +1882,10 @@ function listMarkerVersions(body) {
     body = body || {};
     const markerSlug = String(body.markerSlug || '').trim();
     if (!markerSlug) return { ok: false, error: 'falta markerSlug', versions: [] };
-    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+    // Escaneo, no escritura: una tarjeta de marcador la pide al dibujarse, antes
+    // de que ese marcador haya generado nada. Sin carpeta la lista es vacía, que
+    // es la misma respuesta que daba con la carpeta recién creada.
+    const baseDir = outputDirPath(body.projectPath, body.sequenceName);
     return { ok: true, versions: listVersions(baseDir, markerSlug, '.html') };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e), versions: [] };
@@ -2197,7 +2215,8 @@ function readMarkerHtml(body) {
     const markerSlug = String(body.markerSlug || '').trim();
     const version = parseInt(body.version, 10);
     if (!markerSlug || !version) return { ok: false, error: 'faltan markerSlug/version' };
-    const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+    // Abrir un HTML ya guardado: si la carpeta no está, no hay versión que abrir.
+    const baseDir = outputDirPath(body.projectPath, body.sequenceName);
     const p = versionFile(baseDir, markerSlug, version, '.html');
     if (!p) return { ok: false, error: 'no se encontró la versión ' + version };
     return { ok: true, html: fs.readFileSync(p, 'utf8'), version };
@@ -2294,7 +2313,12 @@ async function rerenderLatest(body, onProgress) {
   const durationSec = Number((body.marker || {}).duration) || 0;
   if (durationSec <= 0) throw new Error('re-render: marker.duration debe ser > 0');
 
-  const baseDir = ensureOutputDir(body.projectPath, body.sequenceName);
+  // Re-render lee antes de escribir, y lo que lee decide si hay algo que hacer:
+  // sin HTML previo esto se corta acá, y crear la carpeta para después tirar
+  // dejaba un directorio vacío por un reintento imposible. El video sí se
+  // escribe adentro, pero ahí la carpeta ya existe —de ella salió el HTML— y
+  // renderComposition crea la del archivo de salida igual.
+  const baseDir = outputDirPath(body.projectPath, body.sequenceName);
   const versions = listVersions(baseDir, markerSlug, '.html');
   if (!versions.length) throw new Error('No hay versiones (HTML) para re-renderizar de ' + markerSlug);
   const latest = versions[versions.length - 1];
@@ -2339,7 +2363,9 @@ function groupMarkerVideos(baseDir) {
 // job terminado, cuando el editor quedó conforme con un recurso y no quiere
 // tocar los demás (que pueden estar a medio aprobar).
 function oldVersionVideos(projectPath, sequenceName, markerSlug) {
-  const bySlug = groupMarkerVideos(ensureOutputDir(projectPath, sequenceName));
+  // Mirar qué hay (y después borrar) nunca necesita la carpeta creada: sin ella
+  // no hay videos viejos, que es la lista vacía de siempre.
+  const bySlug = groupMarkerVideos(outputDirPath(projectPath, sequenceName));
   const out = [];
   Object.keys(bySlug).forEach((slug) => {
     if (markerSlug && slug !== markerSlug) return;
@@ -2364,7 +2390,7 @@ function listOldVersions(body) {
 function cleanupPreview(body) {
   try {
     body = body || {};
-    const bySlug = groupMarkerVideos(ensureOutputDir(body.projectPath, body.sequenceName));
+    const bySlug = groupMarkerVideos(outputDirPath(body.projectPath, body.sequenceName));
     const groups = []; let totalDeletes = 0, totalBytes = 0;
     Object.keys(bySlug).forEach((slug) => {
       if (body.markerSlug && slug !== body.markerSlug) return;

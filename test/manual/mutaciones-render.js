@@ -2067,6 +2067,41 @@ const MUTACIONES = [
     de: '    userPrompt += bloqueDeAssets(assetInfos) +',
     a:  '    userPrompt += "" +',
   },
+
+  // ── La carpeta del proyecto: cuándo aparece ──────────────────────────
+  //
+  // Las tres son la misma decisión mirada desde sus tres lados, y las tres son
+  // mudas. La primera es LA regresión que se acaba de arreglar: una lectura que
+  // pide la carpeta creada, y entonces abrir un .prproj donde nunca se generó
+  // nada deja una carpeta vacía que después viaja con el proyecto. La tercera es
+  // el precio de arreglarla mal: sacarle la creación a la escritura que sí la
+  // necesita rompe el PRIMER uso —y solo el primero, así que en la máquina donde
+  // ya se generó una vez no se nota nunca—.
+  {
+    // Exactamente el bug del reporte: loadTranscript es de lo primero que el
+    // panel pregunta al abrir una secuencia.
+    nombre: 'una lectura vuelve a crear la carpeta: abrir el panel la deja hecha',
+    archivo: 'bridge/engine.js',
+    de: 'function transcriptCandidates(projectPath, sequenceName) {\n  const dir = outputDirPath(projectPath, sequenceName);',
+    a:  'function transcriptCandidates(projectPath, sequenceName) {\n  const dir = ensureOutputDir(projectPath, sequenceName);',
+  },
+  {
+    // La misma familia, por otra puerta: la vista de la cola mira si hay videos
+    // viejos que limpiar, y mirar no puede dejar la carpeta hecha.
+    nombre: 'preguntar si hay versiones viejas crea la carpeta de la secuencia',
+    archivo: 'bridge/engine.js',
+    de: '  const bySlug = groupMarkerVideos(outputDirPath(projectPath, sequenceName));',
+    a:  '  const bySlug = groupMarkerVideos(ensureOutputDir(projectPath, sequenceName));',
+  },
+  {
+    // El otro extremo: la escritura se queda sin la carpeta. Guardar el
+    // transcript falla con un ENOENT en el proyecto donde todavía no hay nada,
+    // que es justo la primera vez que se usa la herramienta.
+    nombre: 'la escritura del transcript se queda sin la carpeta y el primer uso falla',
+    archivo: 'bridge/engine.js',
+    de: '  return path.join(ensureOutputDir(projectPath, sequenceName), TRANSCRIPT_FILE);',
+    a:  '  return path.join(outputDirPath(projectPath, sequenceName), TRANSCRIPT_FILE);',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -2082,7 +2117,8 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'panel-cartel-preparar-motor', 'panel-encabezado-microfono', 'panel-botones-flex',
   'panel-caja-feedback',
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
-  'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga'];
+  'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
+  'carpeta-solo-cuando-se-usa'];
 
 function correrSuite() {
   const guion = "const {runAll,group}=require('./test/harness');" +
