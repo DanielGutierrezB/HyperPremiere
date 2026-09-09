@@ -72,7 +72,9 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    aplican a TODO el curso; abajo, en **Estilo de esta secuencia** (dentro del área de
    marcadores), el **Prompt de secuencia** lleva lo que sea propio de esa clase (no lo
    repetís en cada marcador). Los dos viajan juntos al modelo y, donde se contradigan,
-   manda el de la secuencia.
+   manda el de la secuencia. Los dos bloques aceptan además **referencias** —capturas,
+   logos, manuales de marca, PDFs—, y como los dos textos, se guardan en archivos del
+   proyecto: las del curso las ve cualquiera que abra el `.prproj`.
 3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa**
    (📸) y arrastrar **imágenes / PDFs / referencias** (drag & drop).
 4. La IA diseña una animación **HyperFrames**, se **renderiza** y se **coloca sobre el
@@ -93,6 +95,12 @@ Cada imagen adjunta se etiqueta:
 Las imágenes van **numeradas** en orden, así las referenciás en la instrucción:
 "imagen 1 arriba, imagen 2 es solo referencia". Las capturas del programa **se acumulan**
 (cada 📸 suma una) y se guardan en la carpeta de la secuencia (`_capturas/`).
+
+Se adjuntan en **tres lugares**, y el orden en que llegan al modelo es el del alcance: las
+del **curso**, las de **esta secuencia** y las del **marcador**. Las dos primeras se guardan
+en archivos del proyecto y viajan con el `.prproj` (ver *Las referencias viajan con el
+proyecto*); las del marcador siguen siendo de esta máquina, porque son de un marcador de una
+clase y no le sirven a nadie más.
 
 **Viajan en toda generación, también al refinar.** Cada llamada al modelo es nueva y no
 recuerda la anterior: lo único que sobrevive es el HTML previo que le mandamos. Cuando
@@ -228,6 +236,18 @@ lado—, y en la Cola una corrección recién encolada se estimaba sin ningún n
 hasta que el job arrancaba. Sigue siendo un estimado (el prompt del sistema y la respuesta
 no se pueden saber de antemano), pero ya no es el de otro pedido. Y **refinar se estima
 como refinar**: ese prompt es más chico y el número lo dice.
+
+**Y cuentan lo que va a viajar, no lo que se adjuntó.** El estimado no multiplica listas
+por un fijo: le pregunta a las mismas funciones que arman la llamada. Una imagen que el
+manifiesto nombra y el disco no tiene **no se cobra** —es el disco externo desmontado, y el
+renglón de al lado ya está avisando que ese archivo no está—; un documento de texto se
+cuenta por **lo que se pega en el prompt** (hasta 20.000 caracteres, ≈5.000 tokens) y no por
+un fijo; y un PDF se cuenta **según el proveedor elegido**: con `claude-cli` o `cursor-cli`
+viaja y cuesta, con `ollama` no viaja y no cuesta. Los tres eran el mismo bug con tres
+caras: un número fijo donde había que mirar el contenido. Medido: con un `.md` de marca de
+26.600 caracteres el semáforo decía 5.131 y se mandaban 8.679 —**41% corto**—; ahora da el
+mismo número que se paga. Con una referencia borrada del disco cobraba 3 imágenes y viajaban
+2: **2.064 tokens de más**.
 
 ## La cola
 
@@ -540,7 +560,11 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
   (`HPTabs`, conmuta las tres vistas), `js/store.js`
   (`HPStore`, persiste por proyecto+secuencia), `js/transcript.js`, `js/widgets.js`
   (select propio, editor de código, tooltips — CEF no dibuja los `title` nativos),
-  `js/stills.js` (control de imágenes/recursos por marcador), `js/queue.js` (cola
+  `js/stills.js` (control de imágenes/recursos **por marcador**, que siguen en esta
+  máquina), `js/refs.js` (`HPRefs`, las referencias de los dos niveles generales, que
+  viven en archivos del proyecto, con la caché partida por alcance y la migración de lo
+  que quedó en el `localStorage`) y `js/refs-view.js` (su caja: miniaturas, chips,
+  arrastrar y soltar, y el cartel de la migración), `js/queue.js` (cola
   `HPQueue`, máquina de estados), `js/queue-view.js` (pestaña Cola + limpieza),
   `js/corrections.js` (pestaña Corrections, que lee lo generado del disco),
   `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
@@ -618,6 +642,11 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
   - `bridge/store/project-fs.js` — salidas en `<carpeta-del-.prproj>/HyperPremiere/<secuencia>/`;
     `bridge/store/versions.js` — dueño único del esquema de nombres versionados
     (`<slug> vN [modelo].ext`): parse, formato, próxima versión y listados.
+  - `bridge/store/references.js` — las **referencias** de los dos niveles generales como
+    archivos del proyecto: `_referencias/` al lado del `.prproj` para las del curso y una
+    adentro de cada secuencia para las suyas, con un `referencias.json` que lleva lo que un
+    archivo suelto no dice (orden, tipo y la marca ✓ usar). La carpeta manda sobre el
+    manifiesto en lo que puede: lo que falta se reporta y lo que apareció a mano se adopta.
   - `bridge/transcribe.js` **detecta** el Whisper que hay y `bridge/whisper-install.js`
     lo **instala**; están separados a propósito y no se conocen entre sí. Lo que
     comparten es `bridge/store/whisper-home.js`: la carpeta propia y el registro de qué
@@ -677,8 +706,9 @@ instalación limpia, el panel muestra **"Preparar motor"** y corre `npm install`
   con un prompt de veinte caracteres, **31.823 tokens** de piso, y por eso el
   contador de la sesión marca una entrada mucho mayor que nuestro prompt— y tarda
   ~1,5–3 min, más que Claude directo. Lo que puede ver es un
-  **directorio temporal nuestro** —ahí dejamos las imágenes de referencia, nunca
-  se le pasa la carpeta de tu proyecto— y va **sin permisos abiertos**, así que
+  **directorio temporal nuestro** —ahí dejamos las imágenes de referencia y una **copia**
+  de los documentos (un PDF de marca), nunca se le pasa la carpeta de tu proyecto— y va
+  **sin permisos abiertos**, así que
   cualquier herramienta que necesite aprobación queda denegada. Lo que **no** hace
   es correr en los modos de solo lectura del CLI (`ask`, `plan`): son para
   preguntar y para planear, y componer una animación es producir el entregable
@@ -1329,7 +1359,8 @@ que le corresponde por alcance. **Estilo del curso** va arriba de todo, pegado a
 de la clase*: adentro está **Prompt general · TODO el curso**. **Estilo de esta secuencia**
 va abajo del rótulo *Marcadores*, arriba de las tarjetas: adentro está **Prompt de
 secuencia · solo "<nombre de la clase>"**, con la guía de color al costado que lo marca
-como el más acotado de los dos, y las **referencias**. El rótulo nombra la secuencia porque
+como el más acotado de los dos. Cada bloque tiene además **su caja de referencias**, con el
+alcance del bloque. El rótulo nombra la secuencia porque
 nombrar el alcance en abstracto —"esta secuencia"— obliga a mirar otra parte del panel para
 saber cuál es. Sin secuencia abierta el bloque de abajo **no se ofrece**, entero: no hay
 carpeta donde guardar ni el texto ni las referencias.
@@ -1355,20 +1386,25 @@ el HTML: un renglón que mande a una sección que se llama distinto es peor que 
 Cada bloque tiene además **su propio badge**, que es todo lo que se ve plegado, y dice de su
 nivel y no del otro: *"✓ del curso"* arriba, *"✓ MANDA sobre el del curso · 3 adj."* abajo.
 
-Las **referencias** (capturas, logos, PDFs) se quedaron del lado de la secuencia. Son una
-sola bolsa para los dos niveles y no se partieron —eso es un cambio de datos y de migración,
-no de layout—, pero se guardan **por secuencia y en esta máquina**, que es el alcance del
-bloque de abajo y no el del curso. Arriba, en la caja que promete *"viaja con el .prproj"*,
-habrían sido la excepción muda a esa promesa: la misma clase de falsedad que costó el bug
-del prompt general. El rótulo lo dice con todas las letras, *"Referencias de esta secuencia"*.
+Las **referencias** (capturas, logos, manuales de marca, PDFs) son **dos cajas, una por
+bloque**, y cada una tiene el alcance de su bloque: *"Referencias del curso"* arriba y
+*"Referencias de esta secuencia"* abajo. Fueron una sola bolsa por secuencia hasta la
+1.5.1, y eso dejaba la caja de arriba —la que promete *"viaja con el .prproj"*— sin
+referencias, o sea prometiendo estilo del curso y sin manera de darle el manual de marca.
+Partirlas era un cambio de datos y de migración, no de layout, y por eso tardó: está contado
+en *Las referencias viajan con el proyecto*.
 
-El **cartel de conflicto** —el de la migración del `localStorage`, más abajo— vive en el
-bloque del curso. Puede hablar de cualquiera de los dos niveles, y por eso su lugar lo
+El **cartel de conflicto del texto** —el de la migración del `localStorage`, más abajo— vive
+en el bloque del curso. Puede hablar de cualquiera de los dos niveles, y por eso su lugar lo
 decide otra cosa: es el único bloque que se dibuja **siempre** (sin secuencia abierta el
 otro no existe, y ahí el cartel quedaría inalcanzable), y de sus tres respuestas la cara
 reemplaza justo ese archivo, el que comparten los dos editores. Cuando hay algo sin decidir,
 el bloque de abajo lo dice y señala dónde: *"Ese texto puede ser el de esta clase: se decide
 arriba, en 'Estilo del curso'"*. Su comportamiento y sus tres respuestas no cambiaron.
+
+El de las **referencias** es otro cartel y vive en el bloque de la secuencia, que es donde
+estaba lo que migra. Son dos migraciones distintas y contestarlas por separado es lo
+correcto: decidir de quién es un texto no dice nada de un PDF.
 
 Cada campo escribe en su propio archivo y en ninguno más. Eso, que suena obvio, es la
 regresión que más caro salió: con un solo campo que editaba uno u otro archivo según un
@@ -1437,15 +1473,157 @@ entera tirada por salir con el estilo viejo—. Los diseños que arrancan juntos
 sola vez** si son de la misma clase, y un parpadeo de lectura en el medio del lote no borra
 lo que ya se había leído bien: se sigue con eso y el ⬇ Log lo dice.
 
-Lo que **quedó afuera** son las imágenes de referencia del prompt general, que tienen el
-mismo problema: las que se arrastran al panel se guardan como data URL en el mismo
-`localStorage`, y tampoco viajan. No entraron acá porque el peso las hace otro problema: un
-solo cuadro de 1920×1080 en base64 pesa alrededor de 1,5 MB y se reescribe entero en cada
-tecleo del campo de texto (medido: +1,6 ms por `setItem`), y el `localStorage` de CEP tiene
-un techo que al pasarse **falla en silencio**. Hacerlas viajar es guardarlas en archivos y
-migrar lo que ya está guardado, con su propio caso de conflicto; es un cambio del mismo
-tamaño que éste y merece el suyo. Las capturas de Premiere, que ya se guardan como ruta y
-no como data URL, están a mitad de camino de esa solución.
+Lo que **quedó afuera** de este cambio fueron las imágenes de referencia, que tenían el mismo
+problema. Ya no: está contado en la sección que sigue.
+
+## Las referencias viajan con el proyecto
+
+El texto del estilo del curso viajaba desde la 1.5.0; sus **referencias** —capturas, logos,
+manuales de marca, PDFs— no. Se guardaban como data URL en el `localStorage` de la máquina
+que las arrastró, con una sola bolsa por secuencia y ninguna del curso. O sea: el bloque que
+promete *"viaja con el .prproj"* no tenía dónde poner el manual de marca, y lo que sí se
+podía adjuntar —del lado de la clase— se quedaba en una computadora. El compañero abría el
+mismo proyecto, generaba, y el gráfico salía sin la marca. Nada fallaba.
+
+El peso lo hacía urgente aparte de incorrecto. Un cuadro de programa de 1920×1080 en PNG
+pesa **3,5 MB medidos**; en base64 son 4,7 MB, y el panel reescribía la entrada **entera** en
+cada tecleo del campo de texto (+1,6 ms por `setItem`). El `localStorage` de CEP tiene un
+techo y al pasarse **falla en silencio**: dos capturas y un PDF ya lo rozaban.
+
+### Dónde quedan ahora
+
+Dos carpetas, con la misma geometría que los dos `.md` y por el mismo motivo:
+
+```
+<carpeta del .prproj>/HyperPremiere/_referencias/                ← las del CURSO
+<carpeta del .prproj>/HyperPremiere/<secuencia>/_referencias/    ← las de ESA clase
+```
+
+Las del curso son **del proyecto**, no de una secuencia: se leen igual con cualquier clase
+abierta, y sin ninguna abierta también. Las de la clase viven en su carpeta y se van con
+ella. Cada bloque escribe en la suya y en ninguna otra: quitar una del curso no toca las de
+la clase, y hay tests que lo fijan en los dos sentidos.
+
+Al lado de los archivos hay un **`referencias.json`**, y no es redundante: de cada referencia
+hay que saber tres cosas que un archivo suelto no dice —en qué **orden** va (el prompt las
+numera *imagen 1, imagen 2…* y el editor las nombra así en su instrucción), si es imagen o
+documento, y si está marcada **✓ usar**, o sea si se incrusta o solo se mira—. La carpeta
+manda sobre el manifiesto en lo único que puede: un archivo que el manifiesto nombra y no
+está se dibuja como **faltante**, con su motivo (el disco externo desmontado es el caso), en
+vez de desaparecer de una lista más corta y sin explicación; y un archivo que alguien soltó
+en la carpeta desde el Finder se **adopta** al final, como referencia. La carpeta viaja con
+el proyecto: que se vea lo que hay adentro es parte del trato.
+
+### Lo que ya estaba en el `localStorage`
+
+Se migra al abrir el panel, con las mismas tres salidas que el texto y por el mismo criterio.
+La migración es **explícita** (`HPRefs.migrate`) y la llama **solo la vista**, una vez por
+contexto: la cola llama a `load`, que lee y nada más. Si migrar viviera adentro de la
+lectura, encolar una corrección de un corte que nunca se abrió en esta máquina subiría al
+proyecto —para los dos editores— material que estaba en una sola, desde un camino que nadie
+mira.
+
+- **La carpeta de la secuencia está vacía** → sube ahí, y recién entonces se limpia lo local.
+  A la de la **secuencia** y no a la del curso porque es lo que ese material decía ser: el
+  bloque se llamaba *"Referencias de esta secuencia"* y la clave del `localStorage` lleva el
+  nombre de la clase. Promoverlo al curso sería decidir por el editor que el manual de una
+  clase es el de todas, y eso le llega a todos.
+- **Ya está lo mismo en el proyecto** (mismo nombre y mismo tamaño) → la copia local sobra y
+  se borra sin molestar a nadie. Se compara por nombre y bytes, que es lo que distingue un
+  archivo de otro sin leerlo entero: decodificar 1,5 MB en el hilo del panel para contestar
+  *¿es la misma?* sería pagar justo lo que este cambio vino a dejar de pagar.
+- **Hay las dos cosas y no son lo mismo** → no se toca ninguna. Lo local se aparta y el panel
+  pregunta, con tres respuestas: *son de esta clase*, *son del curso* o *descartarlas*. Las
+  dos primeras **suman**, no reemplazan: del otro lado hay material que puso otro editor, y
+  borrarlo para poner el propio es la pérdida que este cartel existe para evitar. Si sobra
+  una, se saca con su ✕ viendo cuál se saca.
+
+Lo local se aparta **antes** de vaciarse, y solo se vacía si el apartado quedó escrito: al
+revés, un `localStorage` lleno perdería las dos copias de una. Y si la escritura en el
+proyecto falla —disco de red caído, permisos—, **no se borra nada de esta máquina**: hay un
+test que lo comprueba rompiendo el guardado a propósito.
+
+### Y mientras eso no termina, no se genera
+
+Entre que el panel abre y que la migración contesta hay una ventana en la que las
+referencias todavía no viajan; y si quedó **en conflicto**, esperando que el editor
+conteste, no viajan hasta que conteste. Generar ahí sale **sin la marca**, se ve
+presentable y no falla nada: es el modo de falla mudo que en este proyecto ya se pagó
+tres veces. Y el motor no puede avisar, porque no sabe que hay material en el limbo: el
+único que lo sabe es el panel.
+
+Así que el panel **frena la cola antes de gastar un token**, con las mismas tres
+respuestas que usa para el transcript:
+
+- **La migración está en vuelo** → se espera y listo. Es el caso del día que se
+  actualiza: dura lo que tarda el disco, se resuelve sola, no aparece ningún cartel y el
+  material viaja.
+- **Quedó material esperando una decisión** (el conflicto), **o de una clase que esta
+  máquina nunca abrió** → la cola se pausa y se dice qué falta: cuántas referencias, de
+  qué clase, y qué hacer para soltarlas.
+- **Volvés a apretar ▶ Iniciar cola** → se genera igual, y queda escrito en el ⬇ Log qué
+  salió sin qué. La decisión es del editor —puede tener el material en la otra máquina y
+  querer el gráfico igual—; lo que no puede pasar es que salga callado.
+
+El chequeo corre para **todos** los jobs de IA, correcciones incluidas, y mira la clase de
+la que sale el material: al corregir algo generado en otro corte, la de **origen**. Con el
+`localStorage` vacío —o sea todos los días menos uno— contesta que sí en la primera línea:
+nadie espera nada ni ve ningún cartel.
+
+Queda un caso que solo se puede **contar**, no detallar: quien guardó referencias contra
+seis clases y abre una deja las otras cinco esperando. Al abrir el panel se dice cuántas
+son y que se suben solas al abrir esa clase, pero no de cuál es cada una: el namespace del
+`localStorage` es un hash de proyecto + secuencia y no se invierte. Nombrarlas exigiría
+guardar un índice de contextos que existe únicamente para este aviso.
+
+### Cómo llegan al modelo, proveedor por proveedor
+
+Las imágenes **viajan como rutas hasta el último momento**. El contrato de los proveedores
+sigue siendo data URL, así que el que lo necesita convierte al momento de llamar; el que lee
+archivos usa la ruta y se ahorra el viaje. Esa decisión se toma por proveedor y no por el
+panel, que es lo que estaba mal antes: `claude-cli` no puede recibir imágenes inline y
+escribía a archivos temporales lo que el panel había convertido desde archivos reales.
+
+Con los **documentos** hay una diferencia que sí importa:
+
+- **Los de texto** (`.md`, `.txt`, `.csv`, `.json`) se **pegan en el prompt**, en su propia
+  sección. Es lo mismo que escribir su contenido en el campo, y así llega igual por una API
+  que por un CLI. Llegan a los cinco proveedores.
+- **Los binarios —un PDF—** solo pueden llegar por un agente que abra archivos, y son dos:
+  **`claude-cli`**, al que se le declara la carpeta con `--add-dir`, y **`cursor-cli`**, que
+  trabaja encerrado en un workspace temporal y necesita una **copia adentro**. Nombrar la
+  ruta no alcanza para ninguno de los dos, y escribirla desde el motor sin saber cuál
+  atiende era exactamente lo que hacía que con Cursor el PDF quedara nombrado en el prompt y
+  fuera de su alcance.
+- Con **`claude-api`, `openai-compat` y `ollama` el PDF no llega**, y ahora **se dice antes
+  de gastar la llamada**. Antes pasaba en silencio: el panel aceptaba el archivo, el prompt
+  escribía su ruta y el modelo, que no tiene disco, componía sin él. Prometer en la interfaz
+  que se puede pasar documentación y no mandarla es la clase de mentira que ya salió cara
+  acá; si no llega, se dice.
+
+Los documentos que **ya son archivos del proyecto** se usan **donde están** y no se copian a
+la carpeta de cada versión. No es cosmético: los dos niveles generales entran en **todos** los
+marcadores de la clase, y copiar un PDF de 8 MB al lado de cada versión de cada uno son
+cientos de MB de la misma cosa —veinte marcadores por tres versiones ya son 480 MB—.
+
+### Cuánto pesa
+
+Medido, no estimado, sobre un caso realista: un curso con 3 referencias del curso (logo,
+guía de estilo en PDF y una captura de programa) y 3 por clase en 3 clases.
+
+| | |
+| --- | --- |
+| carpeta del curso | 3,6 MB |
+| las tres clases | 31,7 MB |
+| **total** | **35,3 MB** |
+| lo mismo en base64, que es lo que iba al `localStorage` | 47,1 MB |
+
+Lo que pesa son las **capturas de programa**: 3,5 MB cada una, porque un cuadro de video en
+PNG no se comprime. El PDF y el logo juntos no llegan a 100 kB. Al lado de los `.mov` de
+decenas de MB que están en esa misma carpeta, no hay nada que discutir, y **no se dedupe por
+hash**: sumar un índice de hashes para ahorrar unos MB en la carpeta donde se guardan los
+renders es complejidad que se paga siempre para un ahorro que casi nunca aparece. Si algún
+día el mismo logo aparece en veinte clases, se revisa entonces.
 
 ## Dictar la instrucción en vez de escribirla
 
@@ -1970,6 +2148,28 @@ reintentar sale con el arreglado); y del lado del guardado explícito, que **pre
 que escriba el archivo que dice y ninguno más, y que guardar el del curso deje al día a las
 demás clases del proyecto sin pisarles el suyo.
 
+Y las **referencias que viajan con el proyecto**, que es un cambio de almacenamiento y por
+eso se prueba de las dos puntas. Del lado del disco: que las del curso queden al lado del
+`.prproj` y las de la clase en su carpeta, que **otra máquina** que abre el mismo proyecto
+las lea, que el manifiesto conserve el orden y la marca ✓ usar, que un nombre repetido se
+desempate en vez de comerse al anterior, que un archivo que ya no está se reporte
+**faltante** y uno que apareció a mano se **adopte**, y que vaciar o borrar en un nivel no
+toque el otro —en los dos sentidos—. De la migración: que lo local suba a la carpeta de la
+**secuencia** y no a la del curso, que lo idéntico se limpie sin preguntar, que lo distinto
+**no pise nada** y quede apartado, que el apartado **sobreviva** a cerrar el panel, que las
+tres respuestas **sumen** en vez de reemplazar, y que si la escritura en el proyecto falla
+**no se borre nada** de esta máquina. Y del camino al modelo: que un pedido de verdad salga
+con las del curso **y** las de la clase, en ese orden; que una corrección de otro corte vea
+las de **su** secuencia de origen; que la cola no migre nada; que el estimado de tokens
+cuente las mismas que se van a mandar; que un `.md` se pegue en el prompt, que un PDF llegue
+a `claude-cli` por su carpeta declarada y a `cursor-cli` por una copia en su workspace, y
+que con un proveedor que no abre archivos se **avise** en vez de mandar sin él. Y del
+**chequeo previo**: que con material sin migrar la cola frene sin gastar un token y lo
+explique, que insistiendo se genere igual dejándolo escrito en el log, que una migración en
+vuelo se **espere** y el material viaje sin ningún cartel, que una corrección de otro corte
+se frene por el material de **su** clase, y que a quien no tiene nada guardado no le
+aparezca nada ni tenga que esperar.
+
 Y el caso de la clase **re-cortada**, que es el que apareció en producción: que estando
 parado en "…_105875_02" se encuentren los recursos de "…_105875" y se **avise** que la
 elección la hicimos nosotros; que "Clase 10" **no** pase por otro corte de "Clase 1"; que
@@ -2045,6 +2245,14 @@ correr las cuarenta y pico es un rato largo de espera.
 Y `node test/manual/live-providers.js` habla con los CLI de verdad (gasta tokens y tarda):
 es lo que hay que correr cuando un CLI se actualiza, para ver si sigue hablando el mismo
 idioma.
+
+Y dos que contestan la pregunta que se hace mirando un recurso que salió mal, armando un
+pedido de punta a punta con un proyecto de verdad y un solo doble —el proveedor, que anota
+lo que le mandaron en vez de contestar—: `node test/manual/prompt-tres-niveles.js` vuelca el
+**texto** exacto que recibe el modelo con los tres niveles puestos, y
+`node test/manual/referencias-al-modelo.js` hace lo mismo con las **referencias**, corriendo
+el mismo proyecto con un proveedor que abre archivos y con uno que no, para poder ver de qué
+manera llega —o no llega— cada documento. Los dos aceptan `--out archivo.md`.
 
 ## Diagnóstico
 

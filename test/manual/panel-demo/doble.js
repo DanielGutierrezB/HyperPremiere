@@ -40,8 +40,8 @@
     D.transcript = [];
     D.objetivo = "";
     D.promptGeneral.proyecto = "";
-    D.imagenesGenerales = [];
-    D.recursosGenerales = [];
+    D.referenciasCurso = [];
+    D.referenciasSecuencia = [];
     D.correcciones.recursos = [];
     D.correcciones.fuentes = [];
     D.uso = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, costGenerations: 0, costInputTokens: 0, generations: 0, rule: 2, legacyMix: false };
@@ -57,7 +57,14 @@
     D.marcadoresFrameIo = [];
     D.transcript = [];
     D.promptGeneral.secuencia = "";
+    D.referenciasSecuencia = [];
   }
+  // La migración de las referencias, en sus dos finales. Con ?e=refs-migran la
+  // carpeta de la secuencia está VACÍA y lo que quedó en esta máquina sube solo,
+  // que es lo que le va a pasar a casi todos al actualizar. Con ?e=refs-conflicto
+  // el proyecto ya tiene otras —las puso el compañero— y ahí no se pisa nada:
+  // sale el cartel que pregunta de quién son.
+  if (esc("refs-migran")) D.referenciasSecuencia = [];
   // El cartel amarillo de "estás en otra secuencia" no lo dispara el arranque
   // sino el vigía (seq-watch), cuando ve que Premiere se movió DESPUÉS de que
   // el panel cargó. Por eso se cambia unos segundos más tarde, no de entrada.
@@ -223,14 +230,106 @@
     }
   }
 
-  function dataUrlPdf(nombre) {
-    return "data:application/pdf;base64," + btoa("%PDF-1.4 demo " + nombre);
-  }
-
   function slug(nombre) {
     return String(nombre || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   }
   function carpetaDe(seq) { return D.carpetaSalida + "/" + slug(seq); }
+
+  // ── Las dos carpetas `_referencias`, en memoria ───────────────────────
+  // La del CURSO al lado del .prproj —le llega a todas las clases y a la otra
+  // máquina— y una por secuencia adentro de la suya. Están separadas de verdad,
+  // no por convención: tocar un nivel no puede tocar el otro, que es la mitad de
+  // lo que la maqueta tiene que poder mostrar.
+  var refs = (function () {
+    var carpetas = { course: [], sequence: {} };
+
+    function lista(scope, seq) {
+      if (scope === "sequence") {
+        return (carpetas.sequence[seq] = carpetas.sequence[seq] || []);
+      }
+      return carpetas.course;
+    }
+    function dirDe(body) {
+      var scope = (body && body.scope) === "sequence" ? "sequence" : "course";
+      return scope === "sequence"
+        ? carpetaDe(body.sequenceName) + "/_referencias"
+        : D.carpetaSalida + "/_referencias";
+    }
+    /** Un nombre libre, como el motor: dos capturas del mismo día no se pisan. */
+    function nombreLibre(l, name) {
+      var base = String(name || "referencia");
+      var punto = base.lastIndexOf(".");
+      var ext = punto > 0 ? base.slice(punto) : "";
+      var raiz = punto > 0 ? base.slice(0, punto) : base;
+      var intento = base, n = 1;
+      while (l.some(function (it) { return it.fileName === intento; })) {
+        n += 1; intento = raiz + "-" + n + ext;
+      }
+      return intento;
+    }
+    function esImagen(name, mediaType) {
+      return /\.(png|jpe?g|webp|gif)$/i.test(name) || /^image\//i.test(mediaType || "");
+    }
+    /**
+     * Qué pone la maqueta en `file`, que es de donde el panel saca el <img>.
+     *
+     * En Premiere es una ruta del disco y la miniatura se carga por `file://`.
+     * Acá no hay disco, así que para las IMÁGENES va el PNG dibujado al vuelo —
+     * `stillThumbSrc` deja pasar los data URL tal cual, así que el panel no se
+     * entera— y para los documentos va la ruta, que es lo que se ve en su
+     * tooltip. Es la única concesión de la maqueta en este bloque.
+     */
+    function fuente(dir, file, name, mediaType, img) {
+      return esImagen(name, mediaType) ? img : (dir + "/" + file);
+    }
+    return {
+      dirDe: dirDe,
+      listar: function (scope, seq) { return lista(scope, seq).slice(); },
+      /** Siembra desde datos.js, sin pasar por el panel. */
+      sembrar: function (scope, seq, entradas) {
+        (entradas || []).forEach(function (e) {
+          var l = lista(scope, seq);
+          var dir = dirDe({ scope: scope, sequenceName: seq });
+          var file = nombreLibre(l, e.name);
+          l.push({
+            file: fuente(dir, file, e.name, e.mediaType, pngFalso(e.etiqueta || e.name, e.color, e.fondo)),
+            fileName: file, name: e.name,
+            mediaType: e.mediaType || (esImagen(e.name, "") ? "image/png" : ""),
+            kind: esImagen(e.name, e.mediaType) ? "image" : "doc",
+            use: !!e.usar, bytes: e.bytes || 84210, missing: !!e.falta
+          });
+        });
+      },
+      agregar: function (body) {
+        var scope = (body && body.scope) === "sequence" ? "sequence" : "course";
+        var l = lista(scope, body && body.sequenceName);
+        var pedido = String((body && body.name) || "referencia");
+        var file = nombreLibre(l, pedido);
+        var mediaType = String((body && body.mediaType) || "");
+        var dado = String((body && body.dataUrl) || "");
+        l.push({
+          file: fuente(dirDe(body), file, pedido, mediaType,
+            /^data:image\//i.test(dado) ? dado : pngFalso(pedido, "#f0b429")),
+          fileName: file, name: pedido,
+          mediaType: mediaType, kind: esImagen(pedido, mediaType) ? "image" : "doc",
+          use: !!(body && body.use), bytes: 84210, missing: false
+        });
+        return l.slice();
+      },
+      quitar: function (body) {
+        var l = lista((body && body.scope) === "sequence" ? "sequence" : "course", body && body.sequenceName);
+        var i = parseInt(body && body.index, 10);
+        if (!isNaN(i) && i >= 0 && i < l.length) l.splice(i, 1);
+        return l.slice();
+      },
+      marcar: function (body) {
+        var l = lista((body && body.scope) === "sequence" ? "sequence" : "course", body && body.sequenceName);
+        var i = parseInt(body && body.index, 10);
+        if (!isNaN(i) && i >= 0 && i < l.length) l[i].use = !!(body && body.use);
+        return l.slice();
+      }
+    };
+  })();
   function movDe(seq, slugMarcador, v, modelo, conFondo) {
     return carpetaDe(seq) + "/" + slugMarcador + " v" + v + " [" + (modelo || "claude-sonnet-5") + "]" +
       (conFondo ? ".mp4" : ".mov");
@@ -305,20 +404,27 @@
       });
     });
 
-    // Prompts generales: las IMÁGENES siguen siendo del panel; los DOS TEXTOS
-    // los sirve el motor (loadGeneralPrompt), que es donde viven desde que
-    // viajan con el .prproj. Con ?e=conflicto se deja además un texto local
-    // distinto, que es lo que dispara el cartel de "decidí cuál vale" — ése
-    // sigue siendo un caso: es lo que queda de la migración del localStorage, no
-    // del botón de destino que se fue en la 1.5.0.
-    (D.imagenesGenerales || []).forEach(function (img, i) {
-      S.addMarkerStill(S.GENERAL_KEY, pngFalso(img.etiqueta, img.color, img.fondo));
-      if (img.usar) S.setMarkerStillUse(S.GENERAL_KEY, i, true);
-    });
-    (D.recursosGenerales || []).forEach(function (r) {
-      S.addMarkerResource(S.GENERAL_KEY, { name: r.name, dataUrl: dataUrlPdf(r.name), mediaType: r.mediaType });
-    });
+    // Los dos niveles generales: TEXTO y REFERENCIAS, y desde la 1.5.2 los dos
+    // los sirve el motor, porque los dos viven al lado del .prproj. El texto por
+    // loadGeneralPrompt y las referencias por loadReferences: acá se siembran
+    // las dos carpetas `_referencias` de mentira, la del curso y la de la clase.
+    //
+    // Lo que queda en el localStorage es la migración, y son DOS carteles
+    // distintos que se piden por separado: ?e=conflicto es el del TEXTO (el
+    // prompt de esta máquina contra el del proyecto) y ?e=refs-conflicto el de
+    // las REFERENCIAS. Ninguno de los dos es el botón de destino que se fue en
+    // la 1.5.0.
+    refs.sembrar("course", "", D.referenciasCurso);
+    refs.sembrar("sequence", D.secuenciaAbierta, D.referenciasSecuencia);
     if (esc("conflicto")) S.setMarkerInstruction(S.GENERAL_KEY, D.promptGeneral.pendienteLocal);
+    // Las referencias locales se siembran con la API pública de HPStore, igual
+    // que las guardó la versión anterior: así lo que migra es exactamente lo que
+    // se encontraría en la máquina del editor, no un objeto armado a mano.
+    if (esc("refs-conflicto") || esc("refs-migran")) {
+      (D.referenciasLocales || []).forEach(function (img) {
+        S.addMarkerStill(S.GENERAL_KEY, pngFalso(img.etiqueta, img.color, img.fondo));
+      });
+    }
 
     // La otra secuencia de la cola: tiene objetivo pero NO transcript, para que
     // se vea la etiqueta "falta transcript" al lado de su nombre.
@@ -833,6 +939,34 @@
         removed: !D.promptGeneral.curso,
         created: !!D.promptGeneral.curso
       }));
+    },
+
+    // — referencias de los dos niveles generales (archivos del proyecto) —
+    // El estado vive en `refs` (arriba): es la maqueta de las dos carpetas
+    // `_referencias`, la del curso al lado del .prproj y la de cada secuencia
+    // adentro de la suya. Se contesta la lista ENTERA del nivel en cada
+    // escritura, igual que el motor de verdad, porque el panel no reconstruye
+    // nada por su cuenta: si al guardar hubo que desempatar un nombre, el que
+    // vale es el que quedó en el disco.
+    loadReferences: function (body) {
+      var seq = body && body.sequenceName;
+      return luego(ok({
+        course: refs.listar("course", ""),
+        sequence: seq ? refs.listar("sequence", seq) : [],
+        paths: {
+          course: D.carpetaSalida + "/_referencias",
+          sequence: seq ? carpetaDe(seq) + "/_referencias" : ""
+        }
+      }));
+    },
+    addReference: function (body) {
+      return luego(ok({ items: refs.agregar(body), dir: refs.dirDe(body) }));
+    },
+    removeReference: function (body) {
+      return luego(ok({ items: refs.quitar(body) }));
+    },
+    setReferenceUse: function (body) {
+      return luego(ok({ items: refs.marcar(body) }));
     },
 
     // — cola —

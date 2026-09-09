@@ -461,9 +461,12 @@
     HPStore.withContext(job.projectPath, job.storeSeqName || job.seqName, function () {
       var segments = HPStore.getTranscript() || [];
       var md = HPStore.getMarkerData(job.markerKey) || {};
-      // Las imágenes del prompt general siguen viviendo contra la secuencia
-      // (ver el README: por ahora no viajan). El TEXTO ya no: sale del disco.
-      var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {};
+      // Las referencias de los dos niveles generales salen del proyecto, igual
+      // que los dos textos: las del curso de la carpeta del .prproj y las de la
+      // clase de la carpeta de SU secuencia —la del job, que al corregir algo de
+      // otro corte no es la que el editor tiene abierta—. Viajan como RUTAS y el
+      // motor las lee al armar la llamada.
+      var gen = HPRefs.forModel(job.projectPath, job.storeSeqName || job.seqName);
       // Si esa secuencia no tiene transcript acá, NO se pisa lo que el payload
       // ya trajera: rehidratar existe para completar, no para vaciar. Pasa al
       // corregir algo de otro corte en una máquina donde ese corte nunca se
@@ -474,23 +477,32 @@
         dest.markerTranscript = HPTranscript.sliceForMarker(
           segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
       }
-      // Stills (visión) + assets (a incrustar) = marcador + generales.
-      dest.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
+      // Stills (visión), assets (a incrustar) y documentos = marcador + generales.
+      //
       // Las imágenes viajan en TODA generación, también al refinar: el modelo no
       // recuerda la llamada anterior, así que una imagen que no se manda es una
       // imagen que no existe para él. Lo único que se respeta es que el editor
       // apague alguna a mano en la caja de feedback (stillsSend = índices en los
-      // stills DEL MARCADOR); las del prompt general van siempre, son la marca.
-      if (dest.mode === "adjust" && Array.isArray(dest.stillsSend)) {
-        var _all = md.stills || [];
-        dest.stills = dest.stillsSend
-          .map(function (ix) { return _all[ix]; })
-          .filter(function (s) { return !!s; })
-          .concat(gen.stills || []);
-      } else {
-        dest.stills = (md.stills || []).concat(gen.stills || []);
+      // stills DEL MARCADOR); las generales van siempre, son la marca.
+      //
+      // Y el mismo cuidado que con el transcript y con los dos textos: si las
+      // referencias del proyecto NO se pudieron leer —disco externo desmontado,
+      // el .prproj en una carpeta sincronizando— no se pisa con vacío lo que el
+      // job ya traía. Un recurso generado sin la marca no falla: sale distinto y
+      // se descubre viendo el video.
+      var refsSt = HPRefs.state(job.projectPath, job.storeSeqName || job.seqName);
+      var hayRefs = refsSt.loaded || gen.images.length || gen.docs.length;
+      if (hayRefs || !(dest.stills && dest.stills.length)) {
+        var mkStills = md.stills || [];
+        if (dest.mode === "adjust" && Array.isArray(dest.stillsSend)) {
+          mkStills = dest.stillsSend
+            .map(function (ix) { return (md.stills || [])[ix]; })
+            .filter(function (s) { return !!s; });
+        }
+        dest.stills = mkStills.concat(gen.images);
+        dest.assets = HPStore.getMarkerAssets(job.markerKey).concat(gen.assets);
+        dest.resources = (md.resources || []).concat(gen.docs);
       }
-      dest.resources = (md.resources || []).concat(gen.resources || []);
       // Los dos niveles del estilo se releen del proyecto y no se confía en lo
       // que el job traiga: si el editor lo arregló porque las animaciones
       // salían mal, reintentar tiene que salir con el arreglado. La relectura la
@@ -549,7 +561,9 @@
     // panel (una corrección de un corte que nunca se abrió acá). Es la misma
     // recuperación que va a hacer el job antes de correr, así que estimar sin
     // ella sería estimar otro pedido.
-    return Promise.all([ensureTranscript(job), ensureGeneralPromptCached(job)]).then(function () {
+    return Promise.all([
+      ensureTranscript(job), ensureGeneralPromptCached(job), ensureRefsCached(job)
+    ]).then(function () {
       var copia = {};
       for (var k in job.payload) {
         if (Object.prototype.hasOwnProperty.call(job.payload, k)) copia[k] = job.payload[k];
@@ -659,12 +673,52 @@
     return ensureGeneralPrompt(job);
   }
 
+  // Lecturas de las referencias EN VUELO, por contexto: lo mismo que arriba con
+  // los textos, y por lo mismo (tres diseños de la misma clase arrancando juntos
+  // no tienen por qué listar la carpeta tres veces).
+  var leyendoRefs = {};
+
+  /**
+   * Trae del disco las referencias de los dos niveles generales de la secuencia
+   * de la que sale el material de este job: las del curso y las de esa clase.
+   *
+   * Se relee por job y contra el disco por el mismo motivo que los textos: la
+   * carpeta viaja con el .prproj y puede cambiar POR AFUERA del panel mientras
+   * un lote de veinte marcadores avanza durante más de una hora. Lo que cuesta
+   * es listar dos carpetas y leer dos manifiestos de unos pocos kB — los
+   * archivos NO se leen acá, solo se nombran; el que los abre es el motor, y
+   * recién cuando arma la llamada.
+   *
+   * `load` y NUNCA `migrate`, igual que con los textos: encolar una corrección
+   * de un corte que el editor no tiene adelante no puede subirle al proyecto
+   * —para los dos editores— material que estaba en una sola máquina.
+   */
+  function ensureRefs(job) {
+    var seq = job.storeSeqName || job.seqName;
+    var clave = String(job.projectPath || "") + "::" + String(seq || "");
+    if (leyendoRefs[clave]) return leyendoRefs[clave];
+    var p = HPRefs.load(job.projectPath, seq).catch(function () {}).then(function () {
+      delete leyendoRefs[clave];
+    });
+    leyendoRefs[clave] = p;
+    return p;
+  }
+
+  /** Para el ESTIMADO de la vista: alcanza con la caché, se lee una sola vez. */
+  function ensureRefsCached(job) {
+    var seq = job.storeSeqName || job.seqName;
+    if (HPRefs.state(job.projectPath, seq).loaded) return Promise.resolve();
+    return ensureRefs(job);
+  }
+
   function startModel(job) {
     modelRunning++; job.status = "modeling"; job.pct = 3; job.msg = "Diseñando…"; job.startedAt = Date.now();
     job._modelStart = Date.now(); job._modelMs = 0; job.act = null; job._actSeen = false;
     job._modelLanes = modelRunning; // para calibrar en carril-segundos
     emit();
-    Promise.all([ensureTranscript(job), ensureGeneralPrompt(job)]).then(function () { runModel(job); });
+    Promise.all([
+      ensureTranscript(job), ensureGeneralPrompt(job), ensureRefs(job)
+    ]).then(function () { runModel(job); });
   }
 
   function runModel(job) {

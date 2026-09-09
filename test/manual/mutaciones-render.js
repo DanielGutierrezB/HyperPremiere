@@ -1016,8 +1016,10 @@ const MUTACIONES = [
   {
     nombre: 'la cola no va a buscar los prompts generales del proyecto antes de generar',
     archivo: 'cep/js/queue.js',
-    de: '    Promise.all([ensureTranscript(job), ensureGeneralPrompt(job)]).then(function () { runModel(job); });',
-    a:  '    ensureTranscript(job).then(function () { runModel(job); });',
+    // REAPUNTADA (estaba obsoleta): a ese Promise.all le entró después la
+    // lectura de las referencias, así que el `de` de antes ya no existía.
+    de: '      ensureTranscript(job), ensureGeneralPrompt(job), ensureRefs(job)',
+    a:  '      ensureTranscript(job), ensureRefs(job)',
   },
   {
     nombre: 'la tarjeta del marcador manda un solo texto ya combinado',
@@ -1312,8 +1314,17 @@ const MUTACIONES = [
   {
     nombre: 'guardar una API key nueva no cambia con qué se refina',
     archivo: 'bridge/engine.js',
-    de: '  dictadoRefinar.olvidarRefinador();\n  return maskConfig(loadConfig());',
-    a:  '  return maskConfig(loadConfig());',
+    // REAPUNTADA (estaba obsoleta): entre esas dos líneas entró el olvido de la
+    // salud del proveedor, así que el `de` de antes ya no existía en el archivo.
+    //
+    // Y apuntada a código de verdad SOBREVIVE, que es lo que la obsolescencia
+    // estaba tapando: ningún test entra por `engine.setConfig`. El de
+    // dictado-refinar ("guardar la config vuelve a preguntar") llama a
+    // `olvidarRefinador()` a mano y anota al lado "es lo que hace saveConfig",
+    // así que prueba el olvido y no que guardar la config lo dispare. Cerrarlo
+    // pide un test que escriba la config de verdad en disco.
+    de: '  dictadoRefinar.olvidarRefinador();\n',
+    a:  '',
   },
   {
     nombre: 'un modelo local enorme se elige igual y el refinado tarda un minuto',
@@ -1820,6 +1831,242 @@ const MUTACIONES = [
     de: '    refBtn.appendChild(refIco);\n    refBtn.appendChild(refTxt);',
     a:  '    refBtn.appendChild(refIco);',
   },
+
+  // ── Las referencias de los dos niveles generales ─────────────────────
+  //
+  // Las dos primeras son las que este cambio existe para evitar, y son las dos
+  // que ya costaron caro en esta familia: el ALCANCE que se va de su nivel y la
+  // migración que PISA lo que ya estaba. Ninguna hace fallar nada a la vista —
+  // en la primera el recurso sale bien y el que sale distinto es el de otra
+  // clase; en la segunda no sale nada distinto: falta trabajo del compañero.
+  {
+    // El bug de alcance que la 1.5.1 acaba de matar en los prompts, con otra
+    // ropa: las del CURSO guardadas adentro de la carpeta de una secuencia. El
+    // manual de marca deja de valer para el resto del curso y nadie se entera
+    // hasta ver los otros videos.
+    nombre: 'las referencias del curso se guardan por secuencia',
+    archivo: 'bridge/store/references.js',
+    de: "  const scope = body.scope === 'sequence' ? 'sequence' : 'course';\n" +
+        '  if (scope === \'sequence\' && !body.sequenceName) return \'\';\n' +
+        "  return referencesDirPath(body.projectPath, scope === 'sequence' ? body.sequenceName : '');",
+    a: '  return referencesDirPath(body.projectPath, body.sequenceName || \'\');',
+  },
+  {
+    // La otra mitad del mismo bug, del lado del panel: la caché del curso
+    // guardada contra proyecto::secuencia. Abrir otra clase deja de ver las del
+    // curso, que es exactamente lo que el bloque promete que no pasa.
+    nombre: 'la caché del curso se guarda por secuencia, no por proyecto',
+    archivo: 'cep/js/refs.js',
+    de: '    var pKey = String(projectPath || "");\n    var sKey = claveDe(projectPath, sequenceName);',
+    a:  '    var pKey = claveDe(projectPath, sequenceName);\n    var sKey = claveDe(projectPath, sequenceName);',
+  },
+  {
+    // LA regresión de la migración: lo que esta máquina tenía se sube igual,
+    // encima de lo que ya estaba en el proyecto. Del otro lado hay trabajo del
+    // compañero, y desaparece sin que nada falle.
+    nombre: 'la migración pisa las referencias que ya estaban en el proyecto',
+    archivo: 'cep/js/refs.js',
+    de: '      if (!st.sequence.length) {',
+    a:  '      if (true) {',
+  },
+  {
+    // El mismo daño por la puerta de al lado: el cartel de conflicto REEMPLAZA
+    // en vez de sumar, así que contestarlo tira lo del proyecto.
+    nombre: 'resolver el conflicto reemplaza en vez de sumar',
+    archivo: 'cep/js/refs.js',
+    de: '      var scope = choice === "course" ? "course" : "sequence";\n' +
+        '      return subir(projectPath, sequenceName, scope, locales).then(function () {',
+    a: '      var scope = choice === "course" ? "course" : "sequence";\n' +
+       '      var previas = estado(projectPath, sequenceName)[scope === "course" ? "course" : "sequence"];\n' +
+       '      return previas.reduce(function (c) { return c.then(function () {\n' +
+       '        return HPEngine.call("removeReference", { projectPath: projectPath, sequenceName: sequenceName, scope: scope, index: 0 });\n' +
+       '      }); }, Promise.resolve()).then(function () { return load(projectPath, sequenceName); })\n' +
+       '      .then(function () { return subir(projectPath, sequenceName, scope, locales); }).then(function () {',
+  },
+  {
+    // Vaciar el localStorage ANTES de que el proyecto confirme. Si la escritura
+    // falla —disco desmontado, permisos— las referencias no están en ningún
+    // lado. Es la misma forma de perder trabajo que el bug del prompt.
+    nombre: 'la migración borra lo local antes de que el proyecto confirme',
+    archivo: 'cep/js/refs.js',
+    de: '        return subir(projectPath, sequenceName, "sequence", locales).then(function (nuevo) {\n' +
+        '          borrarLocales(projectPath, sequenceName);',
+    a: '        borrarLocales(projectPath, sequenceName);\n' +
+       '        return subir(projectPath, sequenceName, "sequence", locales).then(function (nuevo) {',
+  },
+  {
+    // Migrar desde la LECTURA: encolar una corrección de un corte que el editor
+    // no tiene adelante le subiría al proyecto —para los dos editores— material
+    // que estaba en una sola máquina, desde un camino que nadie mira.
+    nombre: 'la cola migra al leer, y sube al proyecto lo de esta máquina',
+    archivo: 'cep/js/queue.js',
+    de: '    var p = HPRefs.load(job.projectPath, seq).catch(function () {}).then(function () {',
+    a:  '    var p = HPRefs.migrate(job.projectPath, seq).catch(function () {}).then(function () {',
+  },
+  {
+    // Rehidratar VACÍA en vez de completar: un fallo de lectura del proyecto
+    // deja al job sin las referencias que ya traía. Un recurso generado sin la
+    // marca no falla, sale distinto, y se descubre viendo el video.
+    nombre: 'un fallo de lectura vacía las referencias que el job traía',
+    archivo: 'cep/js/queue.js',
+    de: '      var hayRefs = refsSt.loaded || gen.images.length || gen.docs.length;',
+    a:  '      var hayRefs = true;',
+  },
+  {
+    // Las de la clase salen de la secuencia ABIERTA y no de la de origen: una
+    // corrección de otro corte se rediseña sin las referencias que hicieron
+    // bueno al original, y con las de una clase que no es la suya.
+    nombre: 'una corrección de otro corte lee las referencias de la clase abierta',
+    archivo: 'cep/js/queue.js',
+    de: '      var gen = HPRefs.forModel(job.projectPath, job.storeSeqName || job.seqName);',
+    a:  '      var gen = HPRefs.forModel(job.projectPath, job.seqName);',
+  },
+  {
+    // Quitar una referencia borra el renglón del manifiesto y deja el archivo:
+    // en la próxima lectura se adopta de vuelta y la referencia que el editor
+    // sacó vuelve sola.
+    nombre: 'quitar una referencia deja el archivo y vuelve sola',
+    archivo: 'bridge/store/references.js',
+    de: "      try { fs.unlinkSync(fuera.file); } catch { /* ya no estaba */ }",
+    a:  '      void fuera;',
+  },
+  {
+    // Un archivo que el manifiesto nombra y no está se saltea: el panel dibuja
+    // una lista más corta sin explicación y el modelo diseña sin esa referencia.
+    // Es el proyecto en un disco externo desmontado.
+    nombre: 'una referencia que falta se saltea en vez de reportarse',
+    archivo: 'bridge/store/references.js',
+    de: '    try { bytes = fs.statSync(abs).size; } catch { missing = true; }',
+    a:  '    try { bytes = fs.statSync(abs).size; } catch { return; }',
+  },
+  {
+    // El desempate de nombres desaparece: dos capturas del mismo día se llaman
+    // igual y la segunda se come a la primera. El panel muestra dos miniaturas
+    // y el disco tiene un archivo.
+    nombre: 'dos referencias con el mismo nombre se pisan',
+    archivo: 'bridge/store/references.js',
+    de: '  while (fs.existsSync(path.join(dir, intento))) {',
+    a:  '  while (false) {',
+  },
+  {
+    // Los cinco proveedores tratados igual: el PDF se le nombra también a los
+    // tres que hablan por HTTP y no tienen disco. El editor adjunta el manual de
+    // marca, el modelo compone sin haberlo visto, y nada avisa.
+    nombre: 'el PDF se le manda también a los proveedores que no abren archivos',
+    archivo: 'bridge/providers/index.js',
+    de: "const LEEN_ARCHIVOS = ['claude-cli', 'cursor-cli'];",
+    a:  "const LEEN_ARCHIVOS = ['claude-cli', 'cursor-cli', 'claude-api', 'openai-compat', 'ollama'];",
+  },
+  {
+    // A cursor-agent se le nombra la ruta del proyecto, que le queda AFUERA de
+    // su --workspace: el PDF aparece en el pedido y fuera de su alcance, y
+    // compone igual.
+    nombre: 'a cursor-agent el documento no se le copia adentro del workspace',
+    archivo: 'bridge/providers/cursor-cli.js',
+    de: '      docPaths.push(destino);',
+    a:  '      docPaths.push(String(src));',
+  },
+
+  // ── Que no se genere en silencio sin el material sin migrar ──────────
+  //
+  // La primera es LA regresión: la generación sale, se ve presentable y no tiene
+  // la marca. No falla nada, no hay ningún renglón, y es la primera generación
+  // después de actualizar —justo la que nadie mira con desconfianza. Las otras
+  // son las formas de perder el aviso de a poco: mirar la clase equivocada, no
+  // contar lo que quedó esperando una decisión, o frenar para siempre.
+  {
+    // El chequeo dice que sí sin mirar nada: se vuelve al defecto entero.
+    nombre: 'se genera igual con material sin migrar, y en silencio',
+    archivo: 'cep/js/main.js',
+    de: '    var st = HPRefs.unmigrated(projectPath, seqName);\n    if (!st.total) return true;',
+    a:  '    var st = HPRefs.unmigrated(projectPath, seqName);\n    if (true) return true;',
+  },
+  {
+    // El mismo daño un escalón más arriba: el chequeo existe y nadie lo llama.
+    nombre: 'el chequeo previo no le pregunta por las referencias',
+    archivo: 'cep/js/main.js',
+    de: '    var refs = refsListasPara(job, dryRun);',
+    a:  '    var refs = true;',
+  },
+  {
+    // Lo que la migración APARTÓ no se cuenta: el conflicto es justo el caso que
+    // no se resuelve solo esperando, y es el que quedaría pasando de largo.
+    nombre: 'el material que espera una decisión no cuenta como pendiente',
+    archivo: 'cep/js/refs.js',
+    de: '        total: locales + apartadas,',
+    a:  '        total: locales,',
+  },
+  {
+    // La clase equivocada: se mira la que el editor tiene abierta y no la de
+    // donde sale el material. Una corrección de otro corte pasa en silencio, que
+    // es el pedido más caro (la clase ya salió).
+    nombre: 'el chequeo mira la clase abierta y no la de origen del material',
+    archivo: 'cep/js/main.js',
+    de: '    var seqName = (job && (job.storeSeqName || job.seqName)) || currentSequenceName;\n' +
+        '    var projectPath = (job && job.projectPath) || currentProjectPath;\n' +
+        '    var st = HPRefs.unmigrated(projectPath, seqName);',
+    a: '    var seqName = (job && job.seqName) || currentSequenceName;\n' +
+       '    var projectPath = (job && job.projectPath) || currentProjectPath;\n' +
+       '    var st = HPRefs.unmigrated(projectPath, seqName);',
+  },
+  {
+    // Esperar deja de servir: la migración que está EN VUELO no se espera y se
+    // frena igual. El día de la actualización todo el mundo ve un cartel por
+    // algo que se resolvía solo, y aprende a apretar Iniciar dos veces.
+    nombre: 'la migración en vuelo no se espera: se frena igual',
+    archivo: 'cep/js/main.js',
+    de: '    if (st.migrating && !yaEspere) {',
+    a:  '    if (false) {',
+  },
+  {
+    // Frena y no suelta: el editor que tiene el material en otra máquina no
+    // puede generar nunca, y un cartel del que no se sale es un panel roto.
+    nombre: 'insistir no alcanza: la cola queda frenada para siempre',
+    archivo: 'cep/js/main.js',
+    de: '    if (refsDecidido[clave] === "sin ellas") return true;',
+    a:  '    if (false) return true;',
+  },
+
+  // ── El estimado: que cuente lo que DE VERDAD va a viajar ─────────────
+  //
+  // Las tres son la misma familia y ya se pagó tres veces: un fijo donde había
+  // que mirar el contenido. Ninguna falla: el semáforo dice un número y la
+  // factura dice otro, y el usuario pidió explícitamente que fuera preciso.
+  {
+    // El documento de texto se cobra por un fijo, sin mirar cuánto se pega en el
+    // prompt. Con un .md de marca de 26.600 caracteres el semáforo decía 5.131 y
+    // se mandaban 8.679: 41% corto, y siempre para el mismo lado.
+    nombre: 'el estimado cobra el documento por un fijo y no por lo que se pega',
+    archivo: 'bridge/engine.js',
+    de: '      bloqueDeDocumentos(docs.textuales) +',
+    a:  '      "" + (docs.textuales.length ? "x".repeat(6000) : "") +',
+  },
+  {
+    // Se cobran las imágenes que el manifiesto nombra y el disco no tiene: el
+    // semáforo dice tres y viajan dos, 2.064 tokens de más. Y miente sobre lo
+    // mismo que el WARN de al lado ya está avisando: que ese archivo no está.
+    nombre: 'el estimado cobra las imágenes que el disco no tiene',
+    archivo: 'bridge/engine.js',
+    de: '    const imagenes = stills.filter(imagenViaja);',
+    a:  '    const imagenes = stills.slice();',
+  },
+  {
+    // El PDF se cobra igual para los cinco proveedores, cuando solo dos pueden
+    // abrirlo. Con Ollama se paga por un archivo que no viaja de ninguna forma.
+    nombre: 'el estimado cobra el PDF igual para el proveedor que no lo puede abrir',
+    archivo: 'bridge/engine.js',
+    de: "    const docs = repartirDocumentos(resources, body.provider || loadConfig().provider);",
+    a:  "    const docs = repartirDocumentos(resources, 'claude-cli');",
+  },
+  {
+    // El bloque que nombra las imágenes a INCRUSTAR lo agrega prepareGeneration
+    // después de armar el cuerpo, así que el estimado no lo veía: 710 caracteres
+    // que el semáforo no contaba, ~177 tokens por marcador con assets.
+    nombre: 'el estimado no ve el bloque de las imágenes a incrustar',
+    archivo: 'bridge/engine.js',
+    de: '    userPrompt += bloqueDeAssets(assetInfos) +',
+    a:  '    userPrompt += "" +',
+  },
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -1831,7 +2078,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'claude-session', 'panel-cartel-sesion', 'panel-cartel-cursor',
   'provider-salud', 'imagen-de-referencia',
   'selector-pensamiento', 'ventana-de-contexto', 'prompt-general-proyecto',
-  'estimado-tokens', 'cola-feedback-otra-secuencia',
+  'estimado-tokens', 'cola-feedback-otra-secuencia', 'referencias-proyecto',
   'panel-cartel-preparar-motor', 'panel-encabezado-microfono', 'panel-botones-flex',
   'panel-caja-feedback',
   'dictado-motor', 'dictado-refinar', 'dictado-panel',

@@ -31,7 +31,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.5.1</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.5.2</span>
       </button>
     </div>
   </header>
@@ -155,6 +155,14 @@
           <textarea id="general-instruction" rows="3" placeholder="Marca, paleta, tipografía, tono… lo que vale para todas las clases del curso. Se queda al cambiar de secuencia."></textarea>
         </div>
         <span id="general-source" class="general-source"></span>
+        <!-- Las referencias del curso: el manual de marca, el logo, la paleta.
+             Van acá arriba porque su alcance es el de este bloque —todo el
+             curso— y viven en archivos al lado del .prproj, como los dos
+             textos. Hasta la 1.5.1 este bloque no las tenía y las de abajo se
+             quedaban en el localStorage de la máquina: el renglón prometía
+             "viaja con el .prproj" y las imágenes eran la excepción muda. -->
+        <label class="field-label" title="Se guardan en la carpeta del proyecto: viajan con el .prproj y las ve cualquiera que lo abra.">Referencias del curso (capturas, logos, PDFs)</label>
+        <div id="general-course-refs"></div>
       </div>
     </details>
 
@@ -196,11 +204,13 @@
           <textarea id="general-sequence-instruction" rows="2" placeholder="Lo que cambia SOLO en esta clase (“esta va en blanco y negro”). Se suma al del curso y manda donde se contradigan."></textarea>
         </div>
         <span id="general-sequence-source" class="general-source"></span>
-        <!-- Las referencias se quedan de este lado: se guardan por secuencia y
-             en esta máquina (ver el README), que es el alcance de este bloque y
-             no el del curso. Arriba harían creer que viajan con el .prproj, que
-             es la clase de promesa falsa que costó el bug del prompt general. -->
-        <label class="field-label" title="Se guardan en esta máquina y para esta secuencia: a diferencia de los dos textos, NO viajan con el .prproj.">Referencias de esta secuencia (capturas, logos, PDFs)</label>
+        <!-- Las referencias de ESTA clase, en la carpeta de esta secuencia. Ya
+             no en el localStorage: viajan con el .prproj igual que las del
+             curso, pero adentro de su carpeta, que es el alcance de este
+             bloque. El cartel de abajo es lo que queda de la migración: lo que
+             esta máquina tenía guardado cuando el proyecto ya tenía otras. -->
+        <label class="field-label" title="Se guardan en la carpeta de esta secuencia, adentro del proyecto: viajan con el .prproj y valen solo para esta clase.">Referencias de esta secuencia (capturas, logos, PDFs)</label>
+        <div id="general-refs-conflict" class="general-conflict" data-hidden="true"></div>
         <div id="general-stills-mount"></div>
       </div>
     </details>
@@ -361,10 +371,12 @@
   <script src="js/tabs.js"></script>
   <script src="js/store.js"></script>
   <script src="js/general-prompt.js"></script>
+  <script src="js/refs.js"></script>
   <script src="js/transcript.js"></script>
   <script src="js/widgets.js"></script>
   <script src="js/dictado.js"></script>
   <script src="js/stills.js"></script>
+  <script src="js/refs-view.js"></script>
   <script src="js/queue.js"></script>
   <script src="js/queue-view.js"></script>
   <script src="js/corrections-contexto.js"></script>

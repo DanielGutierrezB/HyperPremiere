@@ -42,7 +42,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { stripHtmlFence, parseImageDataUrl, makeUsage,
-  imageFileName, imagesAsFilesNote } = require('./index');
+  imageFileName, imagesAsFilesNote, docsAsFilesNote } = require('./index');
 const { run } = require('../exec');
 const agentStream = require('./agent-stream');
 const cliErrors = require('./cli-errors');
@@ -296,7 +296,11 @@ async function complete({ systemPrompt, userPrompt, images, model, config, onAct
 
   // Las imágenes se referencian por ruta absoluta (ver TODO arriba): acá el
   // directorio de trabajo no es el nuestro, así que el nombre suelto no alcanza.
-  const prompt = userPrompt + imagesAsFilesNote(imagePaths);
+  //
+  // Los DOCUMENTOS (PDFs) van por su ruta en el proyecto, que es donde el motor
+  // los dejó al lado de la render: este CLI puede leer cualquier carpeta que se
+  // le declare con --add-dir, así que no hace falta copiarlos a ningún lado.
+  const prompt = userPrompt + imagesAsFilesNote(imagePaths) + docsAsFilesNote(cfg.docFiles);
 
   // El texto del system prompt es el MISMO en las dos plataformas, hasta el
   // último byte: se recorta una sola vez acá y de ahí sale para los dos caminos.

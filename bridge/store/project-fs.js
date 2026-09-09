@@ -11,6 +11,9 @@ const path = require('path');
 
 // Contrato de nombres versionados ("<slug> vN [modelo].ext"): vive en versions.js.
 const { formatBase, listVersions } = require('./versions');
+// Las referencias de los dos niveles generales (capturas, logos, PDFs) como
+// archivos al lado del .prproj: su I/O y su manifiesto viven en references.js.
+const referencias = require('./references');
 // Qué es una composición y qué no: el contrato vive en composition.js.
 const { inspectComposition, PROBLEM } = require('../composition');
 
@@ -353,6 +356,19 @@ function saveGeneralPrompt(body) {
   }
 }
 
+// ── Referencias de los dos niveles generales ─────────────────────────
+// La otra mitad de lo que el bloque "Estilo del curso" promete: si el texto
+// viaja con el .prproj y las imágenes no, la caja miente en el mismo renglón
+// donde dice "viaja con el .prproj". Dos carpetas, la misma geometría que los
+// dos .md — la del curso arriba, la de la clase adentro de su carpeta. El I/O y
+// el manifiesto están en references.js; acá se las ata a la convención de
+// carpetas de este módulo, que es la única que sabe dónde vive cada nivel.
+const referencesDirPath = referencias.makePaths(projectRootPath, outputDirPath);
+const loadReferences = referencias.makeLoad(referencesDirPath);
+const addReference = referencias.makeAdd(referencesDirPath);
+const removeReference = referencias.makeRemove(referencesDirPath);
+const setReferenceUse = referencias.makeSetUse(referencesDirPath);
+
 /**
  * El HTML de la última versión de `markerSlug` anterior a `version` que sea UNA
  * COMPOSICIÓN DE VERDAD. '' si no hay ninguna.
@@ -403,8 +419,40 @@ function saveStills(stillsDir, dataUrls) {
 }
 
 /**
- * Guarda recursos de referencia (PDFs, imágenes, docs) subidos por el editor.
- * `resources` = [{ name, dataUrl, mediaType }]. dataUrl = "data:<mime>;base64,<...>".
+ * Con qué nombre queda en disco un recurso adjunto.
+ *
+ * Vive acá y se exporta porque hay dos que necesitan la misma respuesta: el que
+ * lo ESCRIBE (saveResources, abajo) y el que tiene que saber cómo va a viajar
+ * SIN escribirlo (el estimado de tokens del motor). La extensión es justo lo que
+ * decide si un documento se pega en el prompt —un `.md`, un `.txt`— o si solo
+ * puede llegar por un agente que abra archivos, así que las dos respuestas
+ * tienen que ser la misma antes y después de guardarlo. Un adjunto llamado
+ * "notas" con media type text/markdown queda como `notas.md` en el disco: si el
+ * estimado mirara el nombre pelado lo tomaría por binario y cobraría un fijo por
+ * un documento que en realidad se pega entero.
+ */
+function resourceFileName(r, i) {
+  const desde = r && typeof r.path === 'string' ? r.path.replace(/^file:\/\//, '') : '';
+  const m = r && typeof r.dataUrl === 'string' ? /^data:([^;,]*);base64,/.exec(r.dataUrl) : null;
+  const mime = (m && m[1]) || (r && r.mediaType) || '';
+  let name = safeFileName((r && r.name) || (desde ? path.basename(desde) : ''));
+  if (!name) name = `recurso-${String(i + 1).padStart(2, '0')}`;
+  // Asegurar extensión: si el nombre no trae una, derivarla del media type.
+  if (!/\.[a-z0-9]+$/i.test(name)) name += extForMime(mime);
+  return name;
+}
+
+/**
+ * Guarda recursos de referencia (PDFs, imágenes, docs) subidos por el editor al
+ * lado de la render, para que la versión tenga en su carpeta lo que se le mandó.
+ *
+ * `resources` = [{ name, mediaType, dataUrl }] o [{ name, mediaType, path }].
+ * Las dos formas conviven a propósito: lo que el editor arrastra a la tarjeta de
+ * un marcador sigue siendo un data URL, y lo de los dos niveles generales ya es
+ * un archivo en la carpeta del proyecto (ver references.js). Copiar el archivo
+ * en vez de re-decodificarlo evita el viaje de ida y vuelta por base64 de un PDF
+ * de varios MB, que era todo el punto de sacarlos del localStorage.
+ *
  * Devuelve las rutas absolutas escritas. Best-effort: nunca lanza.
  */
 function saveResources(resourcesDir, resources) {
@@ -412,17 +460,14 @@ function saveResources(resourcesDir, resources) {
   fs.mkdirSync(resourcesDir, { recursive: true });
   const out = [];
   resources.forEach((r, i) => {
-    if (!r || typeof r.dataUrl !== 'string') return;
-    const m = /^data:([^;,]*);base64,([\s\S]+)$/.exec(r.dataUrl);
-    if (!m) return;
-    const mime = m[1] || r.mediaType || '';
-    let name = safeFileName(r.name);
-    if (!name) name = `recurso-${String(i + 1).padStart(2, '0')}`;
-    // Asegurar extensión: si el nombre no trae una, derivarla del media type.
-    if (!/\.[a-z0-9]+$/i.test(name)) name += extForMime(mime);
-    const filePath = path.join(resourcesDir, name);
+    if (!r || typeof r !== 'object') return;
+    const desde = typeof r.path === 'string' ? r.path.replace(/^file:\/\//, '') : '';
+    const m = typeof r.dataUrl === 'string' ? /^data:([^;,]*);base64,([\s\S]+)$/.exec(r.dataUrl) : null;
+    if (!m && !desde) return;
+    const filePath = path.join(resourcesDir, resourceFileName(r, i));
     try {
-      fs.writeFileSync(filePath, Buffer.from(m[2].replace(/\s+/g, ''), 'base64'));
+      if (m) fs.writeFileSync(filePath, Buffer.from(m[2].replace(/\s+/g, ''), 'base64'));
+      else fs.copyFileSync(desde, filePath);
       out.push(filePath);
     } catch {
       // best-effort: seguimos con los demás recursos
@@ -447,7 +492,14 @@ module.exports = {
   generalPromptPaths,
   loadGeneralPrompt,
   saveGeneralPrompt,
+  // Y sus referencias, que viajan por el mismo camino y por el mismo motivo.
+  referencesDirPath,
+  loadReferences,
+  addReference,
+  removeReference,
+  setReferenceUse,
   lastCompositionHtml,
   saveStills,
   saveResources,
+  resourceFileName,
 };

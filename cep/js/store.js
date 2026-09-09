@@ -129,6 +129,26 @@
     return Object.prototype.toString.call(value) === '[object Array]';
   }
 
+  /**
+   * Con qué nombre subir al proyecto un still que esta máquina tenía guardado.
+   *
+   * Una captura del programa ya se guardaba como RUTA, así que trae su nombre
+   * puesto y conviene conservarlo (dice de qué marcador y de qué momento salió).
+   * Una imagen arrastrada es un data URL pelado: el nombre del archivo original
+   * no se guardó nunca, así que lo único honesto es numerarla.
+   */
+  function nombreDeStill(s, i) {
+    var v = String(s || '');
+    if (!/^data:/i.test(v)) {
+      var partes = v.replace(/\\/g, '/').split('/');
+      var base = partes[partes.length - 1];
+      if (base) return base;
+    }
+    var m = /^data:image\/([a-z0-9.+-]+);/i.exec(v);
+    var ext = m ? (m[1] === 'jpeg' ? 'jpg' : m[1].replace(/[^a-z0-9]/gi, '')) : 'png';
+    return 'referencia-' + (i + 1) + '.' + (ext || 'png');
+  }
+
   // Quién quiere enterarse de que el acumulado de la sesión cambió. Ver
   // onUsageChange, abajo.
   var oyentesUso = [];
@@ -406,6 +426,118 @@
       var t = String(text == null ? '' : text);
       if (t) entry.pendingLocal = t; else delete entry.pendingLocal;
       writeState(state);
+    },
+
+    // ── Las referencias generales que quedaron en el limbo ─────────────
+    // Lo mismo que arriba, para las IMÁGENES y los DOCUMENTOS del bloque
+    // general. Tampoco viven ya acá: viven en archivos al lado del .prproj (ver
+    // HPRefs), y esta máquina puede tener las suyas guardadas mientras el
+    // proyecto ya tiene otras que puso el compañero.
+    //
+    // Ahí no se pisa ninguna de las dos: las de acá se apartan ENTERAS —con su
+    // base64, sin recodificar nada— hasta que el editor diga qué son. Sacarlas
+    // de `stills`/`resources` es lo que deja al bloque mostrar lo que DE VERDAD
+    // viaja sin que agregar una borre lo apartado.
+
+    /** Lo que hay en el limbo: [{ name, dataUrl, mediaType, use }]. */
+    getGeneralRefsPending: function () {
+      var entry = readState().markers[this.GENERAL_KEY];
+      var p = entry && entry.pendingRefs;
+      return isArray(p) ? p : [];
+    },
+
+    setGeneralRefsPending: function (list) {
+      var state = readState();
+      var entry = ensureMarker(state, this.GENERAL_KEY);
+      if (isArray(list) && list.length) entry.pendingRefs = list;
+      else delete entry.pendingRefs;
+      writeState(state);
+    },
+
+    /**
+     * Las referencias generales de esta máquina, tal como quedaron guardadas:
+     * [{ name, dataUrl, mediaType, use }]. Las imágenes primero, en su orden, y
+     * después los documentos, que es como se veían en el panel.
+     *
+     * `dataUrl` puede ser una RUTA y no un data URL: las capturas del programa
+     * ya se guardaban así desde antes (para no reventar la cuota). Quien las
+     * suba al proyecto tiene que aceptar las dos formas; acá no se convierte
+     * nada, porque convertir 1,5 MB de base64 en el hilo del panel es
+     * exactamente lo que este cambio vino a dejar de hacer.
+     */
+    getGeneralRefsLocal: function () {
+      var d = this.getMarkerData(this.GENERAL_KEY);
+      var out = [];
+      var i;
+      for (i = 0; i < d.stills.length; i++) {
+        out.push({
+          name: nombreDeStill(d.stills[i], i),
+          dataUrl: d.stills[i],
+          mediaType: '',
+          use: !!d.stillUse[i]
+        });
+      }
+      for (i = 0; i < d.resources.length; i++) {
+        out.push({
+          name: String(d.resources[i].name || 'recurso'),
+          dataUrl: d.resources[i].dataUrl,
+          mediaType: String(d.resources[i].mediaType || ''),
+          use: false
+        });
+      }
+      return out;
+    },
+
+    /**
+     * Vacía las referencias generales de esta máquina. La llama HPRefs DESPUÉS
+     * de que el motor confirmó que quedaron en el proyecto, nunca antes: si se
+     * borraran primero y la escritura fallara, se perderían.
+     */
+    clearGeneralRefsLocal: function () {
+      var state = readState();
+      var entry = ensureMarker(state, this.GENERAL_KEY);
+      entry.stills = [];
+      entry.stillUse = [];
+      entry.resources = [];
+      writeState(state);
+    },
+
+    /**
+     * Cuántos OTROS contextos de esta máquina tienen referencias generales sin
+     * migrar: { contexts, refs }.
+     *
+     * Es el barrido de todo el localStorage, no del contexto activo. La
+     * migración corre por contexto y la dispara el bloque general al abrirse,
+     * así que alguien que guardó material contra seis clases y abre una deja las
+     * otras cinco esperando, sin ningún renglón que lo diga: no se pierde, pero
+     * se puede quedar ahí un mes.
+     *
+     * De QUÉ clase es cada una no se puede saber desde acá: el namespace es un
+     * hash de proyecto + secuencia y no se invierte. Así que esto cuenta y
+     * nombra el problema; el detalle aparece al abrir esa clase (y el chequeo
+     * previo de la cola frena si se intenta generar en una de ellas).
+     */
+    countUnmigratedGeneralRefs: function () {
+      var out = { contexts: 0, refs: 0 };
+      var ls;
+      try { ls = global.localStorage; } catch (e) { return out; }
+      if (!ls || typeof ls.length !== 'number') return out;
+      for (var i = 0; i < ls.length; i++) {
+        var k;
+        try { k = ls.key(i); } catch (e) { continue; }
+        if (!k || k.indexOf(STORAGE_PREFIX) !== 0 || k === activeKey) continue;
+        var st;
+        try { st = JSON.parse(ls.getItem(k)); } catch (e) { continue; }
+        var g = st && st.markers && st.markers[this.GENERAL_KEY];
+        if (!g) continue;
+        var n = (isArray(g.stills) ? g.stills.length : 0) +
+          (isArray(g.resources) ? g.resources.length : 0) +
+          (isArray(g.pendingRefs) ? g.pendingRefs.length : 0);
+        if (!n) continue;
+        out.contexts++;
+        out.refs += n;
+      }
+      return out;
     },
 
     /** Quita el recurso en `index` del marcador; ignora indices invalidos. */

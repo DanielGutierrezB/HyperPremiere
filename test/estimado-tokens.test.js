@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
-const { test, ok, eq } = require('./harness');
+const { test, ok, eq, has } = require('./harness');
 
 const engine = require('../bridge/engine.js');
 const CEP = path.join(__dirname, '..', 'cep', 'js');
@@ -82,6 +82,11 @@ function montarPanel(proyecto, seqName) {
       call: function (m, arg) {
         if (m === 'loadGeneralPrompt') return Promise.resolve(engine.loadGeneralPrompt(arg));
         if (m === 'saveGeneralPrompt') return Promise.resolve(engine.saveGeneralPrompt(arg));
+        // Las referencias de los dos niveles generales viven en archivos del
+        // proyecto, así que acá va el motor de verdad: si viajan como rutas, lo
+        // que el estimado cuenta tiene que ser lo que el motor va a leer.
+        if (m === 'loadReferences') return Promise.resolve(engine.loadReferences(arg));
+        if (m === 'addReference') return Promise.resolve(engine.addReference(arg));
         if (m === 'estimateTokens') {
           espia.estimados.push(arg);
           return Promise.resolve(engine.estimateTokens(arg));
@@ -102,7 +107,7 @@ function montarPanel(proyecto, seqName) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'queue.js']) {
+  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPStore.setContext(proyecto, seqName);
@@ -129,16 +134,25 @@ function montarPanel(proyecto, seqName) {
   return { ctx: ctx, espia: espia };
 }
 
-/** Un marcador con su instrucción, sus imágenes y las del prompt general. */
-function marcadorConTodo(ctx) {
+/**
+ * Un marcador con su instrucción, su imagen, y una referencia general de cada
+ * nivel: una del CURSO (al lado del .prproj) y una de ESTA CLASE (en la carpeta
+ * de la secuencia). Son tres imágenes, en tres alcances distintos, y las tres
+ * viajan en el mismo pedido.
+ */
+async function marcadorConTodo(ctx, proyecto) {
   ctx.HPStore.setObjective('Reconocer los tres componentes de la exposición.');
   ctx.HPStore.setTranscript([{ start: 10, end: 16, text: 'Los tres componentes.' }]);
   const marker = { name: 'M1', start: 10, duration: 6, guid: 'g-1', index: 0 };
   const clave = 'Marcador ' + ctx.HPStore.assignMarkerNumber('g-1');
   ctx.HPStore.setMarkerInstruction(clave, 'Un cartel con los tres componentes.');
   ctx.HPStore.addMarkerStill(clave, IMG);                       // del marcador
-  ctx.HPStore.addMarkerStill(ctx.HPStore.GENERAL_KEY, IMG);     // del prompt general
-  ctx.HPStore.addMarkerStill(ctx.HPStore.GENERAL_KEY, IMG);
+  engine.addReference({ projectPath: proyecto, scope: 'course', name: 'marca.png', dataUrl: IMG });
+  engine.addReference({
+    projectPath: proyecto, sequenceName: 'Clase 12', scope: 'sequence',
+    name: 'cuadro-clase.png', dataUrl: IMG,
+  });
+  await ctx.HPRefs.load(proyecto, 'Clase 12');
   return { marker: marker, clave: clave };
 }
 
@@ -158,7 +172,7 @@ test('la tarjeta estima EXACTAMENTE el cuerpo que se encola', async function () 
 
   const p = montarPanel(proyecto, 'Clase 12');
   await p.ctx.HPGeneral.load(proyecto, 'Clase 12');
-  const { marker } = marcadorConTodo(p.ctx);
+  const { marker } = await marcadorConTodo(p.ctx, proyecto);
 
   p.ctx.laTarjeta.verMarcador(marker);
   p.ctx.updateEstimate();
@@ -179,7 +193,7 @@ test('el estimado de la tarjeta cuenta los dos prompts generales y sus imágenes
 
   const p = montarPanel(proyecto, 'Clase 12');
   await p.ctx.HPGeneral.load(proyecto, 'Clase 12');
-  const { marker } = marcadorConTodo(p.ctx);
+  const { marker } = await marcadorConTodo(p.ctx, proyecto);
   p.ctx.laTarjeta.verMarcador(marker);
   p.ctx.updateEstimate();
   await dejarCorrer();
@@ -187,7 +201,7 @@ test('el estimado de la tarjeta cuenta los dos prompts generales y sus imágenes
   const est = engine.estimateTokens(p.espia.estimados[0]);
   ok(est.breakdown.promptChars > CURSO.length + SECUENCIA.length,
     'el texto de los dos niveles está adentro de lo que se cuenta');
-  eq(est.breakdown.images, 3, 'las 3 imágenes que viajan: 1 del marcador + 2 del prompt general');
+  eq(est.breakdown.images, 3, 'las 3 imágenes que viajan: 1 del marcador + 1 del curso + 1 de la clase');
 });
 
 test('el número se mueve con lo que de verdad va a viajar', async function () {
@@ -197,7 +211,7 @@ test('el número se mueve con lo que de verdad va a viajar', async function () {
   const proyecto = proyectoNuevo();
   const p = montarPanel(proyecto, 'Clase 12');
   await p.ctx.HPGeneral.load(proyecto, 'Clase 12');
-  const { marker } = marcadorConTodo(p.ctx);
+  const { marker } = await marcadorConTodo(p.ctx, proyecto);
   p.ctx.laTarjeta.verMarcador(marker);
 
   p.ctx.updateEstimate();
@@ -222,7 +236,7 @@ test('refinar se estima como refinar, que cuenta distinto', async function () {
   engine.saveGeneralPrompt({ projectPath: proyecto, text: CURSO, scope: 'project' });
   const p = montarPanel(proyecto, 'Clase 12');
   await p.ctx.HPGeneral.load(proyecto, 'Clase 12');
-  const { marker, clave } = marcadorConTodo(p.ctx);
+  const { marker, clave } = await marcadorConTodo(p.ctx, proyecto);
   p.ctx.laTarjeta.verMarcador(marker);
 
   p.ctx.updateEstimate();
@@ -250,7 +264,7 @@ test('lo que la Cola estima de un job en espera es lo que ese job va a mandar', 
   engine.saveGeneralPrompt({ projectPath: proyecto, sequenceName: 'Clase 12', text: SECUENCIA, scope: 'sequence' });
 
   const p = montarPanel(proyecto, 'Clase 12');
-  const { clave } = marcadorConTodo(p.ctx);
+  const { clave } = await marcadorConTodo(p.ctx, proyecto);
   p.ctx.HPQueue.addStaged({
     kind: 'feedback',
     payload: {
@@ -282,7 +296,7 @@ test('estimar no le deja nada escrito al job que sigue en cola', async function 
   const proyecto = proyectoNuevo();
   engine.saveGeneralPrompt({ projectPath: proyecto, text: CURSO, scope: 'project' });
   const p = montarPanel(proyecto, 'Clase 12');
-  const { clave } = marcadorConTodo(p.ctx);
+  const { clave } = await marcadorConTodo(p.ctx, proyecto);
   p.ctx.HPQueue.addStaged({
     kind: 'generate',
     payload: { projectPath: proyecto, sequenceName: 'Clase 12', mode: 'generate', markerSlug: clave },
@@ -366,6 +380,198 @@ test('la vista de la Cola le pide el cuerpo a la cola, no manda el payload crudo
   eq(visto.length, 1, 'se estimó el job pendiente');
   eq(visto[0].resuelto, true, 'con el cuerpo que contestó la cola');
   eq(visto[0].crudo, undefined, 'y no con el payload como está guardado en la cola');
+});
+
+// ── El estimado contra el prompt que DE VERDAD se manda ──────────────
+//
+// Los tests de arriba fijan que el cuerpo que se estima sea el que viaja. Estos
+// van un escalón más abajo, que es donde quedaban los dos agujeros: con el
+// cuerpo correcto, el motor multiplicaba el largo de dos arrays por un fijo
+// —1.200 por imagen y 1.500 por documento— sin mirar si esa imagen está en el
+// disco ni cómo viaja ese documento. Medido: con una referencia borrada cobraba
+// 3 imágenes y viajaban 2 (2.064 tokens de más), y con un `.md` de marca de
+// 26.600 caracteres decía 5.131 cuando se mandaban 8.679 (41% corto).
+//
+// Así que acá no se compara contra ningún número escrito a mano: se arma el
+// pedido, se corre el MOTOR de verdad, y se mide el prompt que el proveedor tuvo
+// en la mano.
+
+const COMPOSICION = '<!DOCTYPE html><html><body>' +
+  '<div id="stage" data-composition-id="marcador-1" data-start="0" data-width="1920" ' +
+  'data-height="1080" data-duration="6" data-fps="30"></div>' +
+  '<script>const tl = gsap.timeline({ paused: true }); window.__timelines["marcador-1"] = tl;</script>' +
+  '</body></html>';
+
+const PROVEEDORES = ['claude-cli', 'cursor-cli', 'claude-api', 'openai-compat', 'ollama'];
+
+/**
+ * Corre `fn` con el proveedor de este equipo reemplazado por uno que anota lo
+ * que le pasaron y no llama a nadie.
+ *
+ * Se cambian los CINCO y no el que dice la config a propósito: así el test mide
+ * lo mismo en cualquier máquina, sin tocarle la configuración al editor. Y lo
+ * que se afirma es una IGUALDAD entre el estimado y lo que viajó, que vale para
+ * el proveedor que sea —justamente porque el estimado ahora le pregunta al mismo
+ * lugar que la generación—.
+ */
+async function loQueViaja(body) {
+  const visto = {};
+  const previos = {};
+  PROVEEDORES.forEach(function (id) {
+    const ruta = require.resolve('../bridge/providers/' + id + '.js');
+    previos[ruta] = require.cache[ruta];
+    require.cache[ruta] = {
+      exports: {
+        generate: async function (arg) {
+          if (!visto.arg) visto.arg = arg;
+          return { text: COMPOSICION, usage: { inputTokens: 1, outputTokens: 1 } };
+        },
+      },
+      loaded: true, id: ruta, filename: ruta, paths: [], children: [],
+    };
+  });
+  try {
+    await engine.prepareGenerate(body, function () {});
+  } finally {
+    Object.keys(previos).forEach(function (ruta) {
+      if (previos[ruta]) require.cache[ruta] = previos[ruta];
+      else delete require.cache[ruta];
+    });
+  }
+  if (!visto.arg) throw new Error('el pedido nunca llegó al proveedor');
+  return visto.arg;
+}
+
+const SYSTEM_CHARS = fs.readFileSync(
+  path.join(__dirname, '..', 'bridge', 'prompt', 'system.md'), 'utf8').length;
+
+/** Los caracteres de prompt que de verdad recibió el proveedor. */
+function charsQueViajaron(arg) {
+  return SYSTEM_CHARS + String(arg.userPrompt || '').length;
+}
+
+/**
+ * El panel montado con su marcador, listo para pedir estimados. Se monta UNA vez
+ * por proyecto porque `marcadorConTodo` agrega referencias: llamarlo dos veces
+ * sobre el mismo proyecto las duplicaría.
+ */
+async function panelConMarcador(proyecto) {
+  const p = montarPanel(proyecto, 'Clase 12');
+  await p.ctx.HPGeneral.load(proyecto, 'Clase 12');
+  const { marker } = await marcadorConTodo(p.ctx, proyecto);
+  p.ctx.laTarjeta.verMarcador(marker);
+  return p;
+}
+
+/** El cuerpo que la tarjeta manda a estimar, con lo que el disco diga AHORA. */
+async function cuerpoDeLaTarjeta(p, proyecto) {
+  await p.ctx.HPRefs.load(proyecto, 'Clase 12');
+  p.ctx.updateEstimate();
+  await dejarCorrer();
+  return p.espia.estimados[p.espia.estimados.length - 1];
+}
+
+test('un documento de texto se cuenta por lo que se pega, no por un fijo', async function () {
+  // Un manual de marca en `.md` se pega ENTERO en el prompt (hasta 20.000
+  // caracteres, DOC_TEXTO_MAX). Cobrarle 1.500 fijos es decir el mismo número
+  // para eso que para un PDF, y es la misma forma del bug que la 1.5.1 mató en
+  // los prompts generales: un fijo donde había que mirar el contenido.
+  const proyecto = proyectoNuevo();
+  engine.saveGeneralPrompt({ projectPath: proyecto, text: CURSO, scope: 'project' });
+  const manual = 'Regla de marca número uno, dos y tres. '.repeat(700); // 26.600 chars
+  engine.addReference({
+    projectPath: proyecto, scope: 'course', name: 'manual-entero.md',
+    dataUrl: 'data:text/markdown;base64,' + Buffer.from(manual, 'utf8').toString('base64'),
+  });
+
+  const body = await cuerpoDeLaTarjeta(await panelConMarcador(proyecto), proyecto);
+  const est = engine.estimateTokens(body);
+  const viajo = await loQueViaja(body);
+
+  eq(est.breakdown.promptChars, charsQueViajaron(viajo),
+    'el estimado mide el prompt que se mandó, carácter por carácter');
+  has(viajo.userPrompt, 'manual-entero.md', 'y el .md se pegó de verdad');
+  eq(est.breakdown.docsPasted, 1, 'contado como documento pegado');
+  eq(est.breakdown.docsAsFiles, 0, 'y no como archivo para abrir');
+});
+
+test('una referencia que el disco no tiene no se cobra: no viaja', async function () {
+  // El manifiesto la sigue nombrando y el panel la dibuja desde su caché, así
+  // que el editor la ve; el modelo, no. Es el proyecto en un disco externo
+  // desmontado, y ya hay un WARN al lado diciendo exactamente eso: el semáforo
+  // cobraba 1.200 tokens por lo mismo que el aviso decía que falta.
+  const proyecto = proyectoNuevo();
+  const p = await panelConMarcador(proyecto);
+  eq(engine.estimateTokens(await cuerpoDeLaTarjeta(p, proyecto)).breakdown.images, 3,
+    'con todo en su lugar, las tres');
+
+  // Alguien la borró del Finder, o el disco del proyecto no está montado.
+  const enDisco = engine.loadReferences({ projectPath: proyecto, sequenceName: 'Clase 12' });
+  fs.unlinkSync(enDisco.course[0].file);
+
+  const cuerpo = await cuerpoDeLaTarjeta(p, proyecto);
+  const est = engine.estimateTokens(cuerpo);
+  const viajo = await loQueViaja(cuerpo);
+
+  eq(est.breakdown.images, (viajo.images || []).length,
+    'se cuentan las que viajaron, no las que el manifiesto nombra');
+  eq(est.breakdown.imagesMissing, 1, 'y queda dicho que una se quedó afuera');
+  eq(est.breakdown.promptChars, charsQueViajaron(viajo),
+    'el prompt tampoco la numera: "imagen 3" no existe en este pedido');
+});
+
+test('un PDF se cuenta por si le llega a ESTE proveedor', async function () {
+  // Con `claude-cli` o `cursor-cli` el PDF viaja (lo abre el agente) y cuesta;
+  // con las otras tres puertas no viaja de ninguna forma y cuesta cero. Cobrar
+  // 1.500 igual es cobrar por algo que el propio motor avisa que no llega.
+  const proyecto = proyectoNuevo();
+  engine.addReference({
+    projectPath: proyecto, scope: 'course', name: 'Guia.pdf', mediaType: 'application/pdf',
+    dataUrl: 'data:application/pdf;base64,' + Buffer.from('%PDF-1.4 falso').toString('base64'),
+  });
+  const body = await cuerpoDeLaTarjeta(await panelConMarcador(proyecto), proyecto);
+
+  const conCli = engine.estimateTokens(Object.assign({}, body, { provider: 'claude-cli' }));
+  const porHttp = engine.estimateTokens(Object.assign({}, body, { provider: 'ollama' }));
+
+  eq(conCli.breakdown.docsAsFiles, 1, 'el agente lo abre, así que cuesta');
+  eq(porHttp.breakdown.docsAsFiles, 0);
+  eq(porHttp.breakdown.docsNotTraveling, 1, 'por HTTP no viaja de ninguna forma');
+  ok(conCli.inputTokensEst > porHttp.inputTokensEst,
+    'y el número lo dice: ' + conCli.inputTokensEst + ' contra ' + porHttp.inputTokensEst);
+  eq(porHttp.breakdown.promptChars, conCli.breakdown.promptChars,
+    'el prompt es el mismo: la diferencia es lo que el modelo va a abrir, no lo que se escribe');
+});
+
+test('el bloque de las imágenes a INCRUSTAR también se cuenta', async function () {
+  // `prepareGeneration` le agrega al prompt una sección de ~710 caracteres
+  // nombrando los archivos de assets/ — y se la agrega DESPUÉS de armar el
+  // cuerpo, que es por donde se le escapaba al estimado.
+  const proyecto = proyectoNuevo();
+  engine.addReference({
+    projectPath: proyecto, scope: 'course', name: 'logo.png', dataUrl: IMG, use: true,
+  });
+  const body = await cuerpoDeLaTarjeta(await panelConMarcador(proyecto), proyecto);
+  const est = engine.estimateTokens(body);
+  const viajo = await loQueViaja(body);
+
+  has(viajo.userPrompt, '## Imágenes provistas disponibles como ARCHIVO',
+    'el bloque está en el prompt que se mandó');
+  const falta = charsQueViajaron(viajo) - est.breakdown.promptChars;
+  ok(falta >= 0 && falta < 60,
+    'y el estimado lo cuenta salvo las dimensiones en px, que no se leen (faltan ' + falta + ')');
+});
+
+test('un marcador CON FONDO cuesta más, y el estimado lo sabe', async function () {
+  const proyecto = proyectoNuevo();
+  const body = await cuerpoDeLaTarjeta(await panelConMarcador(proyecto), proyecto);
+  const sinFondo = engine.estimateTokens(Object.assign({}, body, { background: false }));
+  const conFondo = engine.estimateTokens(Object.assign({}, body, { background: true }));
+  ok(conFondo.breakdown.promptChars > sinFondo.breakdown.promptChars,
+    'el bloque del fondo son otros ~800 caracteres de pedido');
+
+  const viajo = await loQueViaja(Object.assign({}, body, { background: true }));
+  eq(conFondo.breakdown.promptChars, charsQueViajaron(viajo));
 });
 
 /** Un nodo de mentira, lo mínimo que queue-view le pide al DOM. */

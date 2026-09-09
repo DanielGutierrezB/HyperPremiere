@@ -32,6 +32,26 @@ const PROVIDERS = {
 };
 
 /**
+ * Cuáles de los cinco pueden ABRIR UN ARCHIVO del disco.
+ *
+ * Son dos, y no es un detalle de implementación: es lo que decide si el PDF que
+ * el editor arrastró le llega al modelo o no le llega. Los dos CLI de agente
+ * tienen herramienta de lectura —se les nombra la ruta, se les declara la
+ * carpeta, y abren el archivo—. Los otros tres hablan por HTTP con un modelo que
+ * no tiene disco: lo único que les entra son texto e imágenes, en el mensaje.
+ * Un PDF ahí no viaja de ninguna forma.
+ *
+ * Vive acá y no en el motor porque es una propiedad de los proveedores, y
+ * porque el día que uno de los tres aprenda a recibir documentos se agrega en la
+ * misma lista donde se lo cuenta.
+ */
+const LEEN_ARCHIVOS = ['claude-cli', 'cursor-cli'];
+
+function leeArchivos(provider) {
+  return LEEN_ARCHIVOS.indexOf(String(provider || '').trim().toLowerCase()) !== -1;
+}
+
+/**
  * Devuelve el modulo del proveedor pedido.
  * Carga perezosa (require dentro de la funcion) para evitar requires circulares:
  * los proveedores importan stripHtmlFence desde este mismo archivo.
@@ -154,6 +174,34 @@ function imagesAsFilesNote(refs) {
 }
 
 /**
+ * Texto que le dice al modelo dónde están los DOCUMENTOS que subió el editor
+ * (PDFs y demás binarios: la documentación de la marca, un brief, una ficha).
+ *
+ * Existe por el mismo motivo que `imagesAsFilesNote` y se separó por el mismo
+ * descubrimiento: la ruta que sirve depende de quién atienda. El motor escribía
+ * la ruta del proyecto en el prompt para los dos CLI por igual, y para
+ * `cursor-agent` eso era una ruta fuera de su `--workspace`: el PDF quedaba
+ * nombrado en el pedido y fuera de su alcance, y componía sin él sin que nada
+ * fallara. Ahora cada proveedor dice la ruta que él puede abrir.
+ *
+ * Los tres proveedores que hablan por HTTP (claude-api, openai-compat, ollama)
+ * no llaman a esto: a ellos el documento directamente no les llega, y eso se
+ * avisa antes de gastar la llamada (ver PROVEEDORES_QUE_LEEN en engine.js).
+ *
+ * @param {string[]} refs - rutas a los documentos, en orden
+ * @returns {string} '' si no hay ninguno
+ */
+function docsAsFilesNote(refs) {
+  const list = Array.isArray(refs) ? refs : [];
+  if (!list.length) return '';
+  return '\n\n## Documentación de referencia que subió el editor (leela del disco antes de componer)\n' +
+    'Son ' + (list.length === 1 ? 'un archivo' : list.length + ' archivos') +
+    ' en disco, no adjuntos de este mensaje. Abrilos con tu herramienta de lectura ANTES de ' +
+    'diseñar; es contexto para el diseño, no contenido para copiar tal cual a la pantalla:\n' +
+    list.map((r) => '- ' + r).join('\n');
+}
+
+/**
  * El andamiaje obligatorio, repetido corto y tajante al FINAL del mensaje.
  *
  * APAGADO POR DEFECTO. Se prende con `contractTail: true` en el proveedor de
@@ -272,5 +320,6 @@ function makeUsage(provider, model, raw) {
 
 module.exports = {
   getProvider, stripHtmlFence, parseImageDataUrl, makeUsage,
-  imageFileName, imagesAsFilesNote, contractReminder,
+  imageFileName, imagesAsFilesNote, docsAsFilesNote, contractReminder,
+  leeArchivos, LEEN_ARCHIVOS,
 };

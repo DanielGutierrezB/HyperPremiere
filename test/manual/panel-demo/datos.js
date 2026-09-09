@@ -15,6 +15,8 @@
  *   ?e=otra-secuencia  en Premiere hay OTRA secuencia activa (cartel amarillo)
  *   ?e=conflicto       el prompt general de esta máquina no coincide con el del proyecto
  *   ?e=sin-secuencia   Premiere sin secuencia al frente (el bloque de la clase no se ofrece)
+ *   ?e=refs-migran     las referencias de esta máquina suben solas a la carpeta de la secuencia
+ *   ?e=refs-conflicto  ídem pero el proyecto ya tiene otras: el panel pregunta en vez de pisar
  *   ?e=whisper,otra-secuencia   se pueden combinar con coma
  */
 (function (global) {
@@ -213,15 +215,34 @@
       }
     ],
 
-    // Referencias que aplican a TODOS los marcadores (bloque de los prompts
-    // generales). Son de esta secuencia y de esta máquina: no viajan con el
-    // .prproj como sí viaja el texto.
-    imagenesGenerales: [
-      { etiqueta: "manual-de-marca-nova.png", color: "#35e0d6", fondo: "#12161d" },
-      { etiqueta: "logo-canal-180x60.png", color: "#efeadf", fondo: "#0e1116", usar: true }
+    // ── Referencias de los dos niveles generales ────────────────────────
+    // Capturas, logos, manuales de marca, PDFs. Desde la 1.5.2 son ARCHIVOS de
+    // la carpeta del proyecto, así que viajan con el .prproj igual que los dos
+    // textos: las del CURSO en `_referencias/` al lado del .prproj —le llegan a
+    // todas las clases y a la otra máquina— y las de la clase en la carpeta de
+    // su secuencia. `usar: true` es la marca de "se incrusta en el render"; sin
+    // ella es referencia de estilo y nada más. `falta: true` finge un archivo
+    // que el manifiesto nombra y el disco no tiene (el disco externo
+    // desmontado), que es el renglón en ámbar de la lista.
+    referenciasCurso: [
+      { name: "manual-de-marca-nova.png", etiqueta: "manual-de-marca-nova", color: "#35e0d6", fondo: "#12161d", bytes: 412880 },
+      { name: "logo-canal-180x60.png", etiqueta: "logo-canal 180×60", color: "#efeadf", fondo: "#0e1116", usar: true, bytes: 24104 },
+      { name: "Guia_de_estilo_ACADEMIA_NOVA_v4.pdf", mediaType: "application/pdf", bytes: 2884512 },
+      { name: "tipografias-y-tamanos.md", mediaType: "text/markdown", bytes: 3180 }
     ],
-    recursosGenerales: [
-      { name: "Guia_de_estilo_ACADEMIA_NOVA_v4.pdf", mediaType: "application/pdf" }
+    referenciasSecuencia: [
+      { name: "captura-programa-00-03-41.png", etiqueta: "captura 00:03:41", color: "#f0b429", fondo: "#12161d", bytes: 386402 },
+      { name: "referencia-blanco-y-negro.jpg", etiqueta: "ref. blanco y negro", color: "#efeadf", fondo: "#191919", bytes: 298770 }
+    ],
+
+    // Lo que quedó en el localStorage de ESTA máquina, de antes de que las
+    // referencias viajaran. Es lo que migra al abrir el panel: con la carpeta de
+    // la secuencia vacía sube sola, y si el proyecto ya tiene otras (que es el
+    // caso de arriba) el panel pregunta en vez de pisar. Se ve con
+    // ?e=refs-conflicto.
+    referenciasLocales: [
+      { etiqueta: "paleta-modulo-3.png", color: "#8ab4f8", fondo: "#0e1116" },
+      { etiqueta: "captura-del-corte-anterior.png", color: "#f28b82", fondo: "#12161d" }
     ],
 
     // ── La cola ─────────────────────────────────────────────────────────

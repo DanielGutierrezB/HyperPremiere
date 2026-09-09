@@ -15,7 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { getProvider } = require('./providers');
+const { getProvider, leeArchivos } = require('./providers');
 // fetch respaldado por el https nativo de Node (no el Chromium del panel CEP).
 const { hpFetch } = require('./providers/http');
 // Spawn de procesos externos (git, claude, npm, unzip): nunca lanza.
@@ -67,9 +67,20 @@ const {
   // registran como handlers; el I/O vive con el resto del de esa carpeta.
   loadGeneralPrompt,
   saveGeneralPrompt,
+  // Las referencias de esos dos niveles, también en archivos del proyecto: el
+  // bloque del curso promete "viaja con el .prproj" y eso incluye lo que se le
+  // arrastra adentro.
+  referencesDirPath,
+  loadReferences,
+  addReference,
+  removeReference,
+  setReferenceUse,
   lastCompositionHtml,
   saveStills,
   saveResources,
+  // Con qué nombre queda un adjunto en el disco. Lo necesita el estimado, que
+  // tiene que clasificarlo por su extensión sin escribirlo.
+  resourceFileName,
 } = require('./store/project-fs');
 // Nomenclatura versionada ("<slug> vN [modelo].ext"): parse/format canónicos.
 const { versionFile, nextVersion, listVersions, groupBySlug } = require('./store/versions');
@@ -613,6 +624,30 @@ async function listOllamaModels(baseUrl) {
 // Etapa 1 (MODELO): arma el prompt, llama al modelo y escribe el HTML.
 // NO renderiza. Devuelve un "prepared" que renderPrepared() consume después.
 // Separar modelo/render permite solapar (generar el siguiente mientras renderiza el actual).
+/**
+ * ¿Esta imagen VA A VIAJAR?
+ *
+ * Una still puede venir como data URL (arrastrada al panel) o como RUTA —una
+ * captura del programa, una referencia del proyecto—, y una ruta que en el disco
+ * no está no viaja: el panel la sigue dibujando desde su propia caché y el
+ * modelo diseña sin ella. Es el caso del proyecto en un disco externo
+ * desmontado, y por eso al lado hay un WARN.
+ *
+ * La pregunta la contesta UNA función porque hay dos que tienen que dar la misma
+ * respuesta: el que arma la llamada (que además la convierte, abajo) y el que la
+ * ESTIMA, que solo necesita contarlas. Contarlas por el largo del array era
+ * cobrar 1.200 tokens por una imagen que el WARN de al lado ya decía que no
+ * está: medido con una referencia borrada, el semáforo decía 3 imágenes,
+ * viajaban 2, y sobraban 2.064 tokens.
+ */
+function imagenViaja(s) {
+  const v = String(s || '');
+  if (/^data:/i.test(v)) return true;
+  const p = v.replace(/^file:\/\//, '');
+  if (!p) return false;
+  try { return fs.existsSync(p); } catch (e) { return false; }
+}
+
 // Convierte un still (data URL o ruta a archivo) a data URL. Devuelve null si no
 // se puede leer. Permite guardar capturas como ruta en el panel (sin base64 en
 // localStorage) y aun así mandarlas al modelo como imagen.
@@ -621,13 +656,103 @@ function stillToDataUrl(s) {
   if (/^data:/i.test(s)) return s;
   const p = s.replace(/^file:\/\//, '');
   try {
-    if (fs.existsSync(p)) {
+    if (imagenViaja(s)) {
       const ext = (path.extname(p).slice(1) || 'png').toLowerCase();
       const mt = ext === 'jpg' ? 'jpeg' : ext;
       return 'data:image/' + mt + ';base64,' + fs.readFileSync(p).toString('base64');
     }
   } catch (e) {}
   return null;
+}
+
+// Cuánto de un documento de texto se pega en el prompt. Es contexto de estilo,
+// no la clase: un manual de marca entero son unos pocos kB y entra; una
+// transcripción de doscientas páginas pegada acá se lleva el presupuesto de
+// entrada de la generación sin mejorar el diseño.
+const DOC_TEXTO_MAX = 20000;
+const DOC_TEXTO_EXT = /\.(txt|md|markdown|csv|json|ya?ml|html?|xml|log|rtf)$/i;
+
+/**
+ * El contenido de un documento si es TEXTO, o null si es binario. `nombre` es de
+ * donde sale la extensión y `buf` son los bytes, que pueden venir de un archivo
+ * del proyecto o del data URL que el editor arrastró a una tarjeta.
+ *
+ * Los que son texto (.md, .txt, .csv, .json) se pegan en el prompt y así llegan
+ * por CUALQUIER proveedor, incluidos los tres que no pueden abrir archivos. Es
+ * la mitad de "o se resuelve o se deja de prometer" que sí se puede resolver.
+ *
+ * Se mira la extensión Y el contenido: un archivo sin extensión conocida puede
+ * ser texto igual, y uno con extensión .txt puede haber quedado binario. El byte
+ * cero es el corte de siempre para eso.
+ */
+function textoDeDocumento(nombre, buf) {
+  if (!DOC_TEXTO_EXT.test(String(nombre || ''))) return null;
+  if (!buf) return null;
+  if (buf.indexOf(0) !== -1) return null; // binario disfrazado
+  const texto = buf.toString('utf8').trim();
+  if (!texto) return null;
+  return texto.length > DOC_TEXTO_MAX
+    ? texto.slice(0, DOC_TEXTO_MAX) + '\n…(recortado: el documento sigue)'
+    : texto;
+}
+
+/** De dónde salen el nombre y los bytes de un adjunto: una ruta o un data URL. */
+function fuenteDeDocumento(r, i) {
+  if (typeof r === 'string') {
+    const p = r.replace(/^file:\/\//, '');
+    return { nombre: path.basename(p), file: p, dataUrl: '' };
+  }
+  const p = r && typeof r.path === 'string' ? r.path.replace(/^file:\/\//, '') : '';
+  if (p) return { nombre: path.basename(p), file: p, dataUrl: '' };
+  // Con el nombre que va a tener EN EL DISCO, que es el que decide su
+  // extensión y con eso cómo viaja (ver resourceFileName en project-fs).
+  return { nombre: resourceFileName(r, i), file: '', dataUrl: String((r && r.dataUrl) || '') };
+}
+
+/** Los bytes de un adjunto, esté en el disco o en un data URL. null si no se pueden leer. */
+function bytesDeDocumento(f) {
+  try {
+    if (f.file) return fs.readFileSync(f.file);
+    const m = /^data:[^;,]*;base64,([\s\S]+)$/.exec(f.dataUrl);
+    if (m) return Buffer.from(m[1].replace(/\s+/g, ''), 'base64');
+  } catch (e) {}
+  return null;
+}
+
+/**
+ * CÓMO va a viajar cada documento adjunto, que son tres cosas distintas y no
+ * una: los de TEXTO se pegan en el prompt (y llegan por los cinco proveedores),
+ * los BINARIOS solo llegan por un agente que abra archivos, y con las otras tres
+ * puertas no llegan de ninguna forma.
+ *
+ * La contesta UNA función porque hay dos que tienen que decir lo mismo: el que
+ * arma el pedido y el que lo ESTIMA. Multiplicar por 1.500 fijos era decir el
+ * mismo número para un `.md` de marca de 26.600 caracteres —que se pega entero
+ * hasta DOC_TEXTO_MAX, o sea 5.000 tokens— que para un PDF que con `ollama` no
+ * viaja y no cuesta nada. Medido: el semáforo decía 5.131 y se mandaban 8.679,
+ * un 41% corto. Es la misma forma del bug que la 1.5.1 mató en los prompts
+ * generales, entrando por la otra puerta: un fijo donde había que mirar el
+ * contenido.
+ */
+function repartirDocumentos(lista, provider) {
+  const textuales = [];
+  const binarios = [];
+  const sinLlegar = [];
+  (Array.isArray(lista) ? lista : []).forEach((r, i) => {
+    const f = fuenteDeDocumento(r, i);
+    const texto = textoDeDocumento(f.nombre, bytesDeDocumento(f));
+    if (texto !== null) { textuales.push({ nombre: f.nombre, texto: texto }); return; }
+    if (leeArchivos(provider)) binarios.push(f); else sinLlegar.push(f.nombre);
+  });
+  return { textuales, binarios, sinLlegar };
+}
+
+/** La sección de los documentos de texto, tal cual se le pega al prompt. */
+function bloqueDeDocumentos(textuales) {
+  if (!textuales.length) return '';
+  return '\n\n## Documentación de referencia que subió el editor\n' +
+    'Es contexto para diseñar, no contenido para copiar tal cual a la pantalla:\n' +
+    textuales.map((d) => '\n### ' + d.nombre + '\n```\n' + d.texto + '\n```').join('\n');
 }
 
 // Lee ancho×alto de un buffer PNG o JPEG sin dependencias (parseo de cabecera).
@@ -656,6 +781,63 @@ function imageDims(buf) {
   return null;
 }
 
+/**
+ * Con qué nombre queda en assets/ la imagen número i. Lo comparten el que las
+ * escribe y el que estima el pedido: el nombre entra en el prompt, así que es
+ * parte de lo que se cuenta.
+ */
+function nombreDeAsset(mime, i) {
+  const ext = mime === 'jpeg' ? 'jpg' : String(mime || '').replace(/[^a-z0-9]/gi, '') || 'png';
+  return 'asset-' + String(i + 1).padStart(2, '0') + '.' + ext;
+}
+
+/**
+ * Con qué media type se va a guardar una imagen, venga como data URL o como
+ * ruta. Es la misma cuenta que hace stillToDataUrl al convertirla.
+ */
+function mimeDeImagen(s) {
+  const v = String(s || '');
+  const m = /^data:image\/([a-z0-9.+-]+);base64,/i.exec(v);
+  if (m) return m[1].toLowerCase();
+  const ext = (path.extname(v.replace(/^file:\/\//, '')).slice(1) || 'png').toLowerCase();
+  return ext === 'jpg' ? 'jpeg' : ext;
+}
+
+/**
+ * El bloque que le dice al modelo que las imágenes a incrustar también están
+ * como ARCHIVO en assets/.
+ *
+ * Se arma acá y no adentro de prepareGeneration porque el estimado tiene que
+ * contarlo: son ~710 caracteres que se agregan DESPUÉS de buildUserPrompt, y el
+ * semáforo quedaba 177 tokens corto justo cuando hay un logo para incrustar.
+ *
+ * Las dimensiones van solo si quien llama las tiene. El que arma el pedido ya
+ * decodificó la imagen para escribirla, así que las sabe; el que estima no las
+ * lee a propósito —abrir los píxeles de una captura de 3,5 MB para acertarle a
+ * diecisiete caracteres es pagar mucho más de lo que informa—.
+ */
+function bloqueDeAssets(infos) {
+  if (!infos.length) return '';
+  return '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
+    'Las imágenes de referencia también están disponibles como archivos en la carpeta assets/ del proyecto ' +
+    '(con sus dimensiones reales en px — respetá el aspect ratio al usarlas):\n' +
+    infos.map((a) => '- assets/' + a.name + (a.w && a.h ? ' (' + a.w + '×' + a.h + ' px)' : '')).join('\n') +
+    '\nSi la instrucción pide USAR o incluir una imagen provista (un logo, icono, foto o marca), ' +
+    'INCRUSTALA tal cual con <img src="assets/NOMBRE"> (ruta relativa exacta) — NO la recrees ni dibujes una aproximación. ' +
+    'Escalala manteniendo su proporción (usá las dimensiones de arriba) y ubicala según la instrucción. ' +
+    'Si son solo referencia visual (por ej. un frame del video para leer composición/paleta), usalas como contexto y NO las incrustes.';
+}
+
+/** El bloque del marcador "con fondo": otro pedazo del pedido que el estimado tiene que ver. */
+function bloqueDeFondo() {
+  return '\n\n## Fondo (esta composición LLEVA FONDO — NO es transparente)\n' +
+    '- Cubrí TODO el #stage (1920×1080) con un fondo OPACO de pantalla completa; sin zonas transparentes.\n' +
+    '- Estilo MINIMALISTA con algo de TEXTURA sutil (grano fino, gradiente suave, patrón geométrico tenue o ruido leve). Nada recargado.\n' +
+    '- La temática del fondo debe relacionarse con el OBJETIVO de la clase y el tema de este tramo del transcript (evocá el concepto, no lo hagas literal).\n' +
+    '- CONTRASTE: lo que va al frente (texto/gráficos) debe leerse con claridad sobre el fondo. Asegurá suficiente diferencia de luminosidad; si hace falta, poné un velo/oscurecido detrás del texto.\n' +
+    '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
+}
+
 // Guarda las imágenes provistas como ARCHIVOS embebibles (asset-01.png, …) en
 // `dir`; se copian al workDir/assets del render para que el HTML pueda
 // referenciarlas con <img src="assets/asset-01.png">. Devuelve [{name, w, h}]
@@ -671,8 +853,7 @@ function saveAssets(dir, dataUrls) {
   list.forEach((du, i) => {
     const m = /^data:image\/([a-z0-9.+-]+);base64,(.+)$/i.exec(String(du || ''));
     if (!m) return;
-    const ext = m[1] === 'jpeg' ? 'jpg' : m[1].replace(/[^a-z0-9]/gi, '') || 'png';
-    const name = 'asset-' + String(i + 1).padStart(2, '0') + '.' + ext;
+    const name = nombreDeAsset(m[1], i);
     try {
       const buf = Buffer.from(m[2], 'base64');
       fs.writeFileSync(path.join(dir, name), buf);
@@ -776,47 +957,66 @@ async function prepareGeneration(body, mode, onProgress) {
   const assetList = (Array.isArray(body.assets) ? body.assets : []).map(stillToDataUrl).filter(Boolean);
   const assetsDir = path.join(baseDir, '_assets', markerSlug);
   const assetInfos = saveAssets(assetsDir, assetList);
-  if (assetInfos.length) {
-    userPrompt += '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
-      'Las imágenes de referencia también están disponibles como archivos en la carpeta assets/ del proyecto ' +
-      '(con sus dimensiones reales en px — respetá el aspect ratio al usarlas):\n' +
-      assetInfos.map((a) => '- assets/' + a.name + (a.w && a.h ? ' (' + a.w + '×' + a.h + ' px)' : '')).join('\n') +
-      '\nSi la instrucción pide USAR o incluir una imagen provista (un logo, icono, foto o marca), ' +
-      'INCRUSTALA tal cual con <img src="assets/NOMBRE"> (ruta relativa exacta) — NO la recrees ni dibujes una aproximación. ' +
-      'Escalala manteniendo su proporción (usá las dimensiones de arriba) y ubicala según la instrucción. ' +
-      'Si son solo referencia visual (por ej. un frame del video para leer composición/paleta), usalas como contexto y NO las incrustes.';
-  }
+  userPrompt += bloqueDeAssets(assetInfos);
 
-  // Recursos de referencia (PDFs, imágenes, docs) subidos por el editor: se
-  // guardan al lado de la render y se referencian por ruta en el prompt para
-  // que el agente (claude-cli) los lea con sus herramientas antes de componer.
+  // Recursos de referencia (PDFs, docs) subidos por el editor: se guardan al
+  // lado de la render y se le pasan al modelo por el camino que su proveedor
+  // sepa leer, que NO es el mismo para los cinco.
   //
-  // Nombrar la ruta no alcanza para que el modelo pueda abrirla: los CLI solo
-  // leen sin preguntar dentro de las carpetas que tienen declaradas, y esta
-  // vive en el disco del proyecto (que en Windows puede ser otra unidad
-  // entera). Por eso la carpeta viaja aparte, en `readDirs`, y el proveedor se
-  // la declara al CLI. Sin eso el modelo compone sin los recursos y no avisa.
+  // Los que son TEXTO se pegan en el prompt. Eso vale para todos: un .md o un
+  // .txt es lo mismo que escribir su contenido en el campo, y así llega igual
+  // por una API que por un CLI. Los BINARIOS (un PDF) solo pueden llegar por un
+  // agente que abra archivos, y nombrar la ruta no alcanza: los CLI leen sin
+  // preguntar únicamente dentro de las carpetas que tienen declaradas, y ésta
+  // vive en el disco del proyecto (que en Windows puede ser otra unidad entera).
+  // Por eso la carpeta viaja aparte, en `readDirs`, y el proveedor se la declara.
+  //
+  // Y cuando el proveedor no puede abrir archivos —la API de Claude, una API
+  // compatible con OpenAI, Ollama— el PDF NO LLEGA. Eso antes pasaba en
+  // silencio: el panel aceptaba el archivo, el prompt escribía su ruta y el
+  // modelo, que no tiene disco, componía sin él. Ahora se dice antes de gastar
+  // la llamada. Ver `leeArchivos` en providers/index.js.
   const readDirs = [];
+  const docFiles = [];
+  const docsSinLlegar = [];
   if (resourcesList.length) {
-    const savedResPaths = saveResources(outPaths.resourcesDir, resourcesList);
-    if (savedResPaths.length) {
-      userPrompt += '\n\n## Recursos de referencia adjuntos (leelos desde disco antes de componer)\n' +
-        'El editor subió estos archivos como referencia. Abrilos/leelos antes de diseñar la composición:\n' +
-        savedResPaths.map((p) => '- ' + p).join('\n');
-      readDirs.push(outPaths.resourcesDir);
-    }
+    // Los del MARCADOR vienen en base64 y hay que escribirlos a disco para poder
+    // nombrarlos; los de los dos niveles generales YA son archivos del proyecto
+    // y se usan donde están. Esa diferencia no es cosmética: los generales
+    // entran en TODOS los marcadores de la clase, y copiar un PDF de 8 MB al
+    // lado de cada versión de cada uno son cientos de MB de la misma cosa —
+    // veinte marcadores por tres versiones ya son 480 MB de un archivo.
+    const docPaths = [];
+    const enBase64 = [];
+    resourcesList.forEach((r) => {
+      const suyo = r && typeof r.path === 'string' ? r.path.replace(/^file:\/\//, '') : '';
+      if (suyo) docPaths.push(suyo); else enBase64.push(r);
+    });
+    if (enBase64.length) saveResources(outPaths.resourcesDir, enBase64).forEach((p) => docPaths.push(p));
+
+    // Quién se pega en el prompt, quién viaja como archivo y quién no llega: lo
+    // reparte la misma función que usa el estimado, así el semáforo no puede
+    // cobrar un documento que no viaja ni un fijo por uno que se pega entero.
+    const reparto = repartirDocumentos(docPaths, config.provider);
+    userPrompt += bloqueDeDocumentos(reparto.textuales);
+    // El renglón que le dice al modelo DÓNDE abrirlos lo escribe el proveedor,
+    // igual que el de las imágenes: la ruta que sirve depende de dónde corra el
+    // agente. claude-cli lee la carpeta del proyecto con --add-dir;
+    // cursor-agent trabaja encerrado en un workspace temporal y necesita una
+    // copia adentro. Escribir una ruta acá, sin saber cuál de los dos atiende,
+    // es lo que hacía que con Cursor el PDF quedara nombrado en el prompt y
+    // fuera de su alcance.
+    reparto.binarios.forEach((f) => {
+      docFiles.push(f.file);
+      const dir = path.dirname(f.file);
+      if (readDirs.indexOf(dir) === -1) readDirs.push(dir);
+    });
+    reparto.sinLlegar.forEach((n) => docsSinLlegar.push(n));
   }
 
   // Fondo: si el marcador se genera CON fondo, instruir un fondo opaco de
   // pantalla completa (minimalista, con textura, temático y con buen contraste).
-  if (withBackground) {
-    userPrompt += '\n\n## Fondo (esta composición LLEVA FONDO — NO es transparente)\n' +
-      '- Cubrí TODO el #stage (1920×1080) con un fondo OPACO de pantalla completa; sin zonas transparentes.\n' +
-      '- Estilo MINIMALISTA con algo de TEXTURA sutil (grano fino, gradiente suave, patrón geométrico tenue o ruido leve). Nada recargado.\n' +
-      '- La temática del fondo debe relacionarse con el OBJETIVO de la clase y el tema de este tramo del transcript (evocá el concepto, no lo hagas literal).\n' +
-      '- CONTRASTE: lo que va al frente (texto/gráficos) debe leerse con claridad sobre el fondo. Asegurá suficiente diferencia de luminosidad; si hace falta, poné un velo/oscurecido detrás del texto.\n' +
-      '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
-  }
+  if (withBackground) userPrompt += bloqueDeFondo();
 
   // Continuidad: SOLO inyectar el HTML de otros marcadores si la instrucción
   // realmente pide continuar/retomar/mantener estilo (ahorra tokens y latencia;
@@ -892,6 +1092,21 @@ async function prepareGeneration(body, mode, onProgress) {
         'modelo va a diseñar sin ellas. Si el proyecto vive en un disco externo, revisá que esté montado.',
     });
   }
+  // Un documento adjunto que no le llega al proveedor elegido. La interfaz
+  // acepta PDFs y hasta acá se los tragaba en silencio con las tres puertas que
+  // no pueden abrir archivos: el editor adjuntaba el manual de marca, el modelo
+  // componía sin verlo, y el resultado se veía presentable.
+  if (docsSinLlegar.length) {
+    report({
+      level: 'WARN',
+      note: 'OJO: ' + docsSinLlegar.length + ' documento(s) NO le llegan a ' + config.provider +
+        ' (' + docsSinLlegar.join(', ') + '): esta puerta habla con el modelo por HTTP y solo le ' +
+        'entran texto e imágenes, así que un PDF no viaja de ninguna forma. Qué hacer: pasá a ' +
+        'Claude o Cursor por CLI en Configuración (esos SÍ abren el archivo), exportá el documento ' +
+        'a .md o .txt (eso se pega en el pedido y llega con cualquier proveedor), o pegá una ' +
+        'captura de la página que importa como imagen de referencia.',
+    });
+  }
 
   // Hasta tres llamadas al modelo con la regla "nunca empeorar", más el andamiaje
   // completado en código. La política vive en compose.js; acá solo se orquesta.
@@ -904,7 +1119,7 @@ async function prepareGeneration(body, mode, onProgress) {
   let html, usage;
   try {
     ({ html, usage } = await composeAnimation({
-      provider, config: Object.assign({}, config, { readDirs }),
+      provider, config: Object.assign({}, config, { readDirs, docFiles }),
       systemPrompt, userPrompt, images: stillsList,
       durationSec, markerSlug, report,
     }));
@@ -1084,9 +1299,29 @@ async function renderPrepared(prepared, onProgress) {
   return { ok: true, movPath: prepared.outMovPath, htmlPath: prepared.htmlPath, version: prepared.version, markerSlug: prepared.markerSlug, usage: prepared.usage, background: prepared.background, renderMs: renderMs };
 }
 
-// Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al
-// modelo. Sirve como semáforo previo a generar. Heurística: ~4 chars/token +
-// costo fijo por imagen/recurso (los stills y PDFs pesan más que su texto).
+/**
+ * Estimación aproximada de tokens de ENTRADA para un marcador, sin llamar al
+ * modelo ni escribir nada. Es el semáforo de antes de gastar: el `≈ N tokens de
+ * entrada` de la tarjeta y el del pie de la Cola.
+ *
+ * La cuenta es ~4 chars/token del prompt que se va a mandar, más un fijo por
+ * imagen. Lo que NO es un fijo es CUÁNTAS imágenes y CUÁNTOS documentos: eso se
+ * le pregunta a las mismas funciones que arman la llamada (`imagenViaja`,
+ * `repartirDocumentos`, `bloqueDeDocumentos`, `bloqueDeAssets`, `bloqueDeFondo`)
+ * en vez de multiplicar el largo de un array por un número. Multiplicar era
+ * cobrar imágenes que el disco no tiene —3 contadas, 2 viajando, 2.064 tokens de
+ * más— y cobrar 1.500 fijos por un `.md` que se pega entero, que con un manual
+ * de marca de 26.600 caracteres dejaba el semáforo 41% corto.
+ *
+ * Lo único que sigue siendo un fijo es el documento BINARIO que sí viaja: lo
+ * abre el agente y cuánto lea de un PDF no se puede saber de antemano. El que no
+ * viaja cuesta cero, que es lo que cuesta.
+ *
+ * Sigue siendo un estimado y hay dos pedazos que no se pueden prever: el HTML de
+ * la versión previa que se le suma al refinado (el panel no lo tiene en el
+ * payload de la tarjeta) y el de los marcadores que entran por continuidad, que
+ * salen del disco recién al generar.
+ */
 function estimateTokens(body) {
   try {
     body = body || {};
@@ -1095,6 +1330,16 @@ function estimateTokens(body) {
     const markerTranscript = Array.isArray(body.markerTranscript) ? body.markerTranscript : [];
     const stills = Array.isArray(body.stills) ? body.stills : [];
     const resources = Array.isArray(body.resources) ? body.resources : [];
+    const assets = Array.isArray(body.assets) ? body.assets : [];
+
+    // Lo que de verdad va a viajar de este pedido, contestado por quien lo arma.
+    const imagenes = stills.filter(imagenViaja);
+    const assetInfos = assets.filter(imagenViaja)
+      .map((s, i) => ({ name: nombreDeAsset(mimeDeImagen(s), i), w: null, h: null }));
+    // El proveedor decide si un PDF viaja o no, así que decide cuánto cuesta.
+    // Sale de la config, que es la puerta que va a atender la llamada; el cuerpo
+    // lo puede traer para preguntar por OTRA (¿y si mandara esto por Claude?).
+    const docs = repartirDocumentos(resources, body.provider || loadConfig().provider);
 
     let systemPrompt = '';
     try { systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8'); } catch (e) {}
@@ -1111,23 +1356,49 @@ function estimateTokens(body) {
         // acá: el semáforo de tokens que los omitía quedaba corto justo en los
         // proyectos que más contexto mandan.
         generalInstruction: body.generalInstruction || '',
-        sequenceInstruction: body.sequenceInstruction || '',
+        // Tal cual vinieron, sin coercionar: que el nivel de la secuencia FALTE
+        // —y no que esté vacío— es lo que delata a un job anterior a la 1.5.0, y
+        // el prompt de ésos sale distinto (ver promptLevels en build-context).
+        // Rellenarlo con "" acá era estimar un pedido que no es el que viaja.
+        sequenceInstruction: body.sequenceInstruction,
+        generalSource: body.generalSource,
         // Un ajuste local cambia el tamaño del pedido, así que también cambia el
         // semáforo: el estimado tiene que contar el prompt que se va a mandar.
         promptOverride: body.promptOverride,
-        stillsCount: stills.length,
+        // Las que VIAJAN: el prompt numera "imagen 1, imagen 2…" y numerar una
+        // que no está sería nombrarle al modelo algo que no va a recibir.
+        stillsCount: imagenes.length,
         lean: body.mode === 'adjust',
       });
     } catch (e) {
       userPrompt = String(body.objective || '') + ' ' + String(body.instruction || '');
     }
+    // Los tres bloques que prepareGeneration le agrega DESPUÉS de armar el
+    // cuerpo, con las mismas funciones que los escriben.
+    userPrompt += bloqueDeAssets(assetInfos) +
+      bloqueDeDocumentos(docs.textuales) +
+      (body.background === true ? bloqueDeFondo() : '');
 
     const promptChars = systemPrompt.length + userPrompt.length;
-    const inputTokensEst = Math.ceil(promptChars / 4) + stills.length * 1200 + resources.length * 1500;
+    const inputTokensEst = Math.ceil(promptChars / 4) +
+      imagenes.length * 1200 +
+      // Un binario que sí viaja: lo abre el agente y cuánto lea no se sabe.
+      docs.binarios.length * 1500;
     return {
       ok: true,
       inputTokensEst,
-      breakdown: { promptChars, images: stills.length, resources: resources.length },
+      breakdown: {
+        promptChars,
+        images: imagenes.length,
+        // Los documentos que viajan de alguna forma: pegados o como archivo.
+        resources: docs.textuales.length + docs.binarios.length,
+        // Y lo que se quedó afuera, para que el que muestre el número pueda
+        // decir por qué es más chico de lo que el editor adjuntó.
+        imagesMissing: stills.length - imagenes.length,
+        docsPasted: docs.textuales.length,
+        docsAsFiles: docs.binarios.length,
+        docsNotTraveling: docs.sinLlegar.length,
+      },
     };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e), inputTokensEst: 0 };
@@ -2393,6 +2664,11 @@ module.exports = {
   // El estilo del curso, que ahora viaja con el .prproj en vez de con la máquina.
   loadGeneralPrompt,
   saveGeneralPrompt,
+  // Y sus referencias (capturas, logos, PDFs), por el mismo camino.
+  loadReferences,
+  addReference,
+  removeReference,
+  setReferenceUse,
   newTempAudioPath,
   mediaHasAudio,
   loginClaudeStart,

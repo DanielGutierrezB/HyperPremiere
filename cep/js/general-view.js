@@ -19,9 +19,13 @@
  * Que se diga qué viaja no es decoración: el bug entero fue no poder saberlo. El
  * segundo editor generaba con el campo vacío y el panel se callaba.
  *
- * Las IMÁGENES de referencia siguen siendo por secuencia y en esta máquina (ver
- * el README): son base64 y no entran en un archivo de texto al lado del
- * proyecto sin cambiarles el almacenamiento.
+ * Las REFERENCIAS —capturas, logos, PDFs— viajan igual que los textos y por el
+ * mismo camino: cada bloque tiene la suya y cada una vive en archivos, la del
+ * curso al lado del .prproj y la de la clase en la carpeta de su secuencia (ver
+ * HPRefs). Hasta la 1.5.1 eran base64 en el localStorage de una máquina y solo
+ * existían del lado de la secuencia, así que el renglón de arriba prometía
+ * "viaja con el .prproj" mientras el manual de marca se quedaba en la máquina
+ * que lo arrastró.
  *
  * La regla que sostiene todo esto: cada campo muestra y guarda SU archivo, y
  * nada más. Antes había un solo campo y un botón para cambiarle el destino
@@ -58,12 +62,21 @@
   // combinado sería, en cada uno, decir algo que no es sobre el bloque que se
   // está mirando.
   var mount = null;
+  var courseMount = null;
   var summary = null;
   var seqSummary = null;
   var sourceEl = null;
   var seqSourceEl = null;
   var conflict = null;
+  var refsConflict = null;
   var seqSection = null;
+
+  // Las dos cajas de referencias, ya montadas: una por bloque. Se guardan para
+  // poder repintarlas sin volver a crearlas, que es lo que deja que una escritura
+  // asincrónica que vuelve del disco actualice la caja que el editor tiene
+  // adelante en vez de una copia vieja.
+  var courseRefs = null;
+  var seqRefs = null;
 
   // Los dos niveles, cada uno con su campo y su archivo. `scope` es el que
   // entiende HPGeneral.save: cuál de los dos se está guardando.
@@ -93,19 +106,25 @@
     return HPGeneral.describe(c.projectPath, c.sequenceName);
   }
 
-  /** El badge de cada encabezado plegado: qué hay en ESE nivel. */
+  /**
+   * El badge de cada encabezado plegado: qué hay en ESE nivel.
+   *
+   * Los adjuntos se cuentan en el badge del bloque DONDE ESTÁN, cada uno con los
+   * suyos. Antes había un solo contador —el de la secuencia— porque las
+   * referencias eran una sola bolsa; con dos niveles, sumarlos en un badge sería
+   * decir en el bloque del curso que hay material que en realidad es de una clase.
+   */
   function refreshSummary() {
     var v = vista();
+    var c = ctx();
     if (summary) {
-      summary.textContent = v.courseBadge;
+      var nCurso = HPRefs.count(c.projectPath, c.sequenceName, "course");
+      var adjCurso = nCurso && v.courseBadgeState !== "warn" ? " · " + nCurso + " adj." : "";
+      summary.textContent = v.courseBadge + adjCurso;
       summary.className = "cfg-summary section-state is-" + v.courseBadgeState;
     }
     if (seqSummary) {
-      var g = HPStore.getMarkerData(HPStore.GENERAL_KEY);
-      var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
-      // Los adjuntos se cuentan en el badge de la secuencia y no en el del curso
-      // porque es donde están, y porque su alcance es el de este bloque: son de
-      // esta secuencia y de esta máquina, y no viajan con el .prproj.
+      var n = HPRefs.count(c.projectPath, c.sequenceName, "sequence");
       var adj = n && v.sequenceBadgeState !== "warn" ? " · " + n + " adj." : "";
       seqSummary.textContent = v.sequenceBadge + adj;
       seqSummary.className = "cfg-summary section-state is-" + v.sequenceBadgeState;
@@ -203,8 +222,16 @@
       if (n.input && puede(n.scope)) n.input.value = v[n.texto];
     });
     pintarConflicto();
+    pintarReferencias();
     pintarOrigen();
     refreshSummary();
+  }
+
+  /** Las dos cajas de referencias y el cartel de las que quedaron en el limbo. */
+  function pintarReferencias() {
+    if (courseRefs) HPRefsView.refresh(courseRefs);
+    if (seqRefs) HPRefsView.refresh(seqRefs);
+    HPRefsView.renderConflict(refsConflict);
   }
 
   function fallo(e) {
@@ -226,9 +253,11 @@
       deps = d || {};
 
       mount = document.getElementById("general-stills-mount");
+      courseMount = document.getElementById("general-course-refs");
       summary = document.getElementById("general-summary");
       sourceEl = document.getElementById("general-source");
       conflict = document.getElementById("general-conflict");
+      refsConflict = document.getElementById("general-refs-conflict");
       seqSection = document.getElementById("general-sequence-section");
       seqSummary = document.getElementById("general-sequence-summary");
       seqSourceEl = document.getElementById("general-sequence-source");
@@ -259,9 +288,17 @@
      */
     hydrate: function () {
       var c = ctx();
+      // Las cajas se recrean por contexto: cada una queda atada al nivel que
+      // dibuja, y lo que muestran sale de la caché de ESE nivel.
+      if (courseMount) {
+        courseMount.innerHTML = "";
+        courseRefs = HPRefsView.createControl("course");
+        courseMount.appendChild(courseRefs);
+      }
       if (mount) {
         mount.innerHTML = "";
-        mount.appendChild(HPStills.createControl(HPStore.GENERAL_KEY));
+        seqRefs = HPRefsView.createControl("sequence");
+        mount.appendChild(seqRefs);
       }
       var turno = ++hidratacion;
       tecleado = {};
@@ -273,7 +310,14 @@
       };
       // El disco manda, pero tarda: se pinta lo cacheado y se repinta al volver.
       // También si falló: el renglón tiene que decir que no se pudo leer.
+      //
+      // Las dos migraciones —la del texto y la de las referencias— salen SOLO de
+      // acá y por el mismo motivo: subir al proyecto algo que estaba en una
+      // máquina es una decisión de la interfaz, no un efecto de que alguien haya
+      // leído. Desde la cola, encolar una corrección de otro corte le habría
+      // subido a los dos editores material que nadie pidió mover.
       HPGeneral.migrate(c.projectPath, c.sequenceName).then(repintar, repintar);
+      HPRefs.migrate(c.projectPath, c.sequenceName).then(repintar, repintar);
     },
 
     /**

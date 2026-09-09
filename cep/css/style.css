@@ -775,6 +775,17 @@ textarea:focus {
 }
 .still-status { flex-basis: 100%; font-size: 11px; color: #8b97a8; margin-top: 4px; }
 .still-status.is-error { color: #f87171; }
+/* Una referencia que el proyecto nombra y en el disco no está (disco externo
+   desmontado, alguien la borró del Finder). Se dibuja el hueco en vez de una
+   lista más corta: sin esto, el editor no se entera y el modelo diseña sin ella. */
+.still-thumb.is-missing { border-color: var(--warn); border-style: dashed; }
+.still-missing {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  color: var(--warn); font-size: 15px; font-weight: 700;
+}
+.resource-chip.is-missing { border-color: var(--warn); color: var(--warn); }
+/* Sin secuencia abierta no hay dónde dejar un cuadro capturado. */
+.btn-add-still[data-hidden="true"] { display: none; }
 
 /* ── v0.1.3: tarjetas de marcador colapsables (compactas/responsive) ── */
 .marker-card {

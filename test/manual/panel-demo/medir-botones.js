@@ -89,6 +89,11 @@ const VISTAS = [
   { nombre: 'preparar', escenario: '?e=preparar', abrir: 'todoAbierto', esperar: '#btn-prepare-engine' },
   { nombre: 'whisper', escenario: '?e=whisper', abrir: 'todoAbierto', esperar: '#btn-install-whisper' },
   { nombre: 'conflicto', escenario: '?e=conflicto', abrir: 'todoAbierto', esperar: '.general-conflict-actions button' },
+  // El cartel de la migración de las REFERENCIAS. Va aparte del de arriba —que
+  // es el del texto— porque sus tres botones viven adentro del bloque de la
+  // secuencia, debajo del renglón más largo del panel, y son tres en un renglón:
+  // es el candidato obvio a desbordar a 320 px.
+  { nombre: 'refs-conflicto', escenario: '?e=refs-conflicto', abrir: 'promptsGenerales', esperar: '#general-refs-conflict .general-conflict-actions button' },
   { nombre: 'mic-perdido', escenario: '?e=mic-perdido', abrir: 'config', esperar: '#btn-save-config' },
   { nombre: 'mic-mudo', escenario: '?e=mic-mudo', abrir: 'micMedidor', esperar: '#mic-status' },
   { nombre: 'sin-medir', escenario: '?e=sin-medir', abrir: 'config', esperar: '#btn-save-config' },

@@ -202,7 +202,7 @@ function montarPanel(proyecto, notas) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'queue.js', 'corrections-contexto.js', 'corrections.js']) {
+  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPStore.setContext(proyecto, 'Clase 12 · Fotografía');

@@ -257,7 +257,7 @@ function montarCola(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  ['util.js', 'general-prompt.js', 'queue.js'].forEach(function (f) {
+  ['util.js', 'general-prompt.js', 'refs.js', 'queue.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, 'js', f), 'utf8'), ctx, { filename: f });
   });
   return { ctx: ctx, espia: espia };

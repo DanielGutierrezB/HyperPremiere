@@ -41,9 +41,6 @@
    */
   var micOpcional = HPUtil.micOpcional;
 
-  // Clave del "Prompt general" (instrucción + stills + recursos que aplican a
-  // TODOS los marcadores). Ver HPStore.GENERAL_KEY.
-  var GEN_KEY = HPStore.GENERAL_KEY;
   var focusMarkerAfterRender = null; // markerKey a enfocar tras renderizar (desde "Ver")
   var focusOpenEditor = false;       // además abrir el editor HTML de esa tarjeta
 
@@ -94,6 +91,14 @@
 
   // ── Cableado de las vistas ───────────────────────────────────────────
   HPStills.init({ onGeneralChanged: function () { HPGeneralView.refreshSummary(); } });
+  // Las referencias de los dos bloques generales. `onChanged` repinta el bloque
+  // entero y no solo el badge: agregar una del curso cambia también el cartel de
+  // la migración y el estado de la otra caja, y dos caminos de repintado para el
+  // mismo cambio es cómo se llega a que uno de los dos quede viejo.
+  HPRefsView.init({
+    context: function () { return { projectPath: currentProjectPath, sequenceName: currentSequenceName }; },
+    onChanged: function () { HPGeneralView.refresh(); }
+  });
   HPQueueView.init({
     goToJobMarker: function (job, openEditor) { goToJobMarker(job, openEditor); },
     showJobInTimeline: showJobInTimeline,
@@ -1122,12 +1127,113 @@
       });
   }
 
+  // En qué quedó el material sin migrar de cada contexto: "frenado" (se paró la
+  // cola y se explicó) o "sin ellas" (el editor volvió a arrancar, así que se
+  // genera igual). Es el mismo trato que con el transcript, y por lo mismo: la
+  // decisión vale para TODA la cola de esa clase, no job por job.
+  var refsDecidido = {};
+
+  /**
+   * ¿Hay material de referencia de ESTA MÁQUINA que todavía no viaja?
+   *
+   * Las referencias de los dos niveles generales viven en archivos del proyecto,
+   * y lo que quedó del localStorage se sube al abrir el panel (HPRefs.migrate,
+   * que llama la vista del bloque general y nadie más). Hasta que esa promesa
+   * resuelve —o si quedó en CONFLICTO, esperando que el editor conteste de quién
+   * es el material— `HPRefs.forModel` devuelve solamente lo que hay en el
+   * proyecto. Generar en esa ventana sale sin la marca, se ve presentable y no
+   * tiene ninguna señal: el motor no puede avisar porque no sabe que hay
+   * material en el limbo, y el único que lo sabe es el panel. Es la tercera vez
+   * que esta familia de bug se paga acá (el prompt general que no viajaba, las
+   * imágenes que no se reenviaban al refinar, el PDF que no llegaba), y las tres
+   * veces el daño fue el mismo: contexto que no llega y el panel callado.
+   *
+   * Así que se frena antes de gastar tokens, con las mismas tres respuestas que
+   * el transcript:
+   *
+   *  - La migración está EN VUELO → se espera. Es el caso normal del día de la
+   *    actualización, dura lo que tarda el disco y se resuelve sola: nadie ve
+   *    ningún cartel y el material viaja.
+   *  - Quedó material que necesita una decisión (el conflicto) o de una clase
+   *    que esta máquina nunca abrió → la cola se pausa y se dice qué falta, con
+   *    cuántas referencias y de qué clase.
+   *  - El editor vuelve a apretar ▶ Iniciar cola → se genera igual, y queda
+   *    escrito en el ⬇ Log qué salió sin qué. Lo que no puede pasar es que salga
+   *    callado.
+   *
+   * Con el localStorage vacío —o sea, todos los días menos uno— esto devuelve
+   * true en la primera línea: ni se espera nada ni aparece ningún cartel.
+   *
+   * Devuelve true / false / Promise<bool>, igual que el chequeo del transcript.
+   *
+   * `yaEspere` es de uso interno: se espera UNA vez y se vuelve a mirar. Sin ese
+   * tope, un `settled` que contestara antes de tiempo dejaría al chequeo mirando
+   * y esperando para siempre, y la cola colgada sin decir nada. Si al volver
+   * quedó otra migración en vuelo se cae al cartel, que es la salida segura.
+   */
+  function refsListasPara(job, dryRun, yaEspere) {
+    // De qué secuencia sale el material: al corregir algo generado en otro corte
+    // es la de ORIGEN, la misma que lee la cola para armar el pedido.
+    var seqName = (job && (job.storeSeqName || job.seqName)) || currentSequenceName;
+    var projectPath = (job && job.projectPath) || currentProjectPath;
+    var st = HPRefs.unmigrated(projectPath, seqName);
+    if (!st.total) return true;
+    var clave = String(projectPath) + "::" + String(seqName);
+    // Ya se frenó una vez por esto y el editor arrancó la cola de nuevo: está
+    // decidido, se genera sin ese material y ya quedó escrito en el log.
+    if (refsDecidido[clave] === "sin ellas") return true;
+
+    if (st.migrating && !yaEspere) {
+      if (dryRun) return false; // que la cola siga con los jobs que sí pueden
+      hpLog("Referencias: “" + seqName + "” tiene " + st.total + " guardada(s) en esta máquina " +
+        "pasando al proyecto. Espero a que terminen antes de generar.");
+      return HPRefs.settled(projectPath, seqName).then(function () {
+        return refsListasPara(job, false, true);
+      });
+    }
+    if (dryRun) return false;
+
+    var queEs = st.pending
+      ? st.pending + " referencia(s) de “" + seqName + "” que tenías en esta máquina y que el panel " +
+        "te está preguntando de quién son (el proyecto ya tenía otras y no se pisó ninguna)"
+      : st.local + " referencia(s) de “" + seqName + "” guardadas en esta máquina que todavía no " +
+        "pasaron a la carpeta del proyecto";
+    if (refsDecidido[clave] !== "frenado") {
+      refsDecidido[clave] = "frenado";
+      setOutput("No generé nada todavía: hay " + queEs + ".\nSi genero así, el modelo diseña sin ese " +
+        "material y el gráfico sale sin la marca.\n\nQué hacer: " + (st.pending
+          ? "contestá el cartel de “Referencias de esta secuencia” en el bloque Estilo de esta secuencia" +
+            (seqName === currentSequenceName ? "" : " (abrí “" + seqName + "” en Premiere para verlo)")
+          : "abrí “" + seqName + "” en Premiere una vez, que ahí se suben solas") +
+        ", o pulsá ▶ Iniciar cola otra vez para generar igual sin ellas.", true);
+      hpLog("Cola FRENADA antes de gastar tokens: " + queEs + ".", "WARN");
+      return false;
+    }
+    // El editor insistió. Se genera, y queda escrito una vez para toda la cola
+    // de esa clase: un lote de veinte que salió sin el manual de marca tiene que
+    // poder leerse en el ⬇ Log.
+    refsDecidido[clave] = "sin ellas";
+    hpLog("Generando “" + seqName + "” SIN " + st.total + " referencia(s) que siguen en esta máquina, " +
+      "por decisión del editor: el modelo diseña sin ese material.", "WARN");
+    return true;
+  }
+
   // La cola consulta esto antes de arrancar CUALQUIER job de IA. Con dryRun=true
   // solo contesta si el contexto está listo, sin ponerse a prepararlo: así la
   // cola puede saltear los jobs que esperan y arrancar los que ya pueden.
-  HPQueue.setModelPreflight(function (job, dryRun) {
+  function modelPreflight(job, dryRun) {
     var seqName = (job && job.seqName) || currentSequenceName;
     var projectPath = (job && job.projectPath) || currentProjectPath;
+    // Las referencias se chequean para TODOS los jobs de IA, correcciones
+    // incluidas: los dos niveles generales viajan también al corregir, y una
+    // corrección es justo el pedido caro (la clase ya salió).
+    var refs = refsListasPara(job, dryRun);
+    if (refs === false) return false;
+    if (refs !== true) {
+      // Hay una migración en vuelo: se espera y, resuelta ésa, sigue el chequeo
+      // del contexto por su camino normal (lo que puede faltar es el transcript).
+      return refs.then(function (ok) { return ok ? modelPreflight(job, false) : false; });
+    }
     // Una corrección no fabrica contexto: lo recupera. Su guion es el del corte
     // donde NACIÓ el recurso (de ahí sale el fragmento del marcador, con los
     // tiempos), que puede ser otro que el abierto y hasta ya no existir en el
@@ -1153,7 +1259,9 @@
       return true;
     }
     return prepareContextFor(projectPath, seqName);
-  });
+  }
+
+  HPQueue.setModelPreflight(modelPreflight);
 
   /**
    * Lo que se le manda al modelo por este marcador: TODO el pedido, armado en un
@@ -1171,9 +1279,11 @@
   function buildMarkerPayload(marker, mode) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
-    // Las imágenes del prompt general siguen siendo de esta secuencia; los dos
-    // textos salen del proyecto (HPGeneral), que es lo que viaja con el .prproj.
-    var gen = HPStore.getMarkerData(GEN_KEY);
+    // Los dos niveles generales salen enteros del proyecto: los textos de
+    // HPGeneral y las referencias de HPRefs, las del curso primero y las de esta
+    // clase después. Las del marcador siguen en esta máquina, que es donde tiene
+    // sentido: son de un marcador de una clase.
+    var gen = HPRefs.forModel(currentProjectPath, currentSequenceName);
     var genTxt = HPGeneral.state(currentProjectPath, currentSequenceName);
     var segments = HPStore.getTranscript() || [];
     var markerTranscript = HPTranscript.sliceForMarker(segments, marker.start, marker.start + marker.duration, HPStore.getTranscriptOffset());
@@ -1191,10 +1301,13 @@
       // entraron y no solo que había estilo.
       generalInstruction: genTxt.projectText, sequenceInstruction: genTxt.sequenceText,
       // stills = TODAS las imágenes (marcador + generales) para que el modelo las VEA (contexto).
-      stills: (data.stills || []).concat(gen.stills || []),
+      // Las generales viajan como RUTA y no como base64: el motor las lee del
+      // disco al armar la llamada (stillToDataUrl), así que un cuadro de 1,5 MB
+      // no cruza el panel en cada pedido ni queda escrito en la cola.
+      stills: (data.stills || []).concat(gen.images),
       // assets = solo las marcadas "usar" → se INCRUSTAN en el gráfico (logo/icono/foto).
-      assets: HPStore.getMarkerAssets(markerKey).concat(HPStore.getMarkerAssets(GEN_KEY)),
-      resources: (data.resources || []).concat(gen.resources || []),
+      assets: HPStore.getMarkerAssets(markerKey).concat(gen.assets),
+      resources: (data.resources || []).concat(gen.docs),
       background: !!data.background,
       markerSlug: markerKey, mode: mode
     };
@@ -1982,7 +2095,29 @@
     hydrateOffset();
     updateTranscriptStatus();
     hydrateTranscriptFromDisk();
+    avisarRefsDeOtrasClases();
   });
+
+  /**
+   * Un renglón, al abrir el panel, por el material de OTRAS clases que sigue en
+   * esta máquina.
+   *
+   * La migración corre por contexto y la dispara el bloque general al abrirse:
+   * quien guardó referencias contra seis clases y abre una deja las otras cinco
+   * esperando. El chequeo previo de la cola las agarra si se intenta generar en
+   * una de ellas, pero nada las nombraba antes de eso y se pueden quedar
+   * ahí un mes. De qué clase es cada una no se sabe desde acá (el namespace del
+   * localStorage es un hash y no se invierte), así que se dice cuántas hay y
+   * qué las suelta: abrir esa clase una vez.
+   */
+  function avisarRefsDeOtrasClases() {
+    var otras;
+    try { otras = HPStore.countUnmigratedGeneralRefs(); } catch (e) { return; }
+    if (!otras || !otras.contexts) return;
+    hpLog("Referencias: hay " + otras.refs + " guardada(s) en esta máquina de " + otras.contexts +
+      " otra(s) secuencia(s), que todavía no pasaron a la carpeta del proyecto. Se suben solas al abrir " +
+      "cada una de esas secuencias en Premiere; hasta entonces no viajan con el .prproj.", "WARN");
+  }
 
   // Si el motor no cargó, avisar de una (sin esperar a que corra la cola) con la
   // causa REAL, para no andar adivinando "Motor no disponible".

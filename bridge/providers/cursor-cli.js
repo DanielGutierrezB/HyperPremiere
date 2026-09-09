@@ -52,7 +52,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { stripHtmlFence, parseImageDataUrl, makeUsage,
-  imageFileName, imagesAsFilesNote, contractReminder } = require('./index');
+  imageFileName, imagesAsFilesNote, docsAsFilesNote, contractReminder } = require('./index');
 const { run } = require('../exec');
 const agentStream = require('./agent-stream');
 const cliErrors = require('./cli-errors');
@@ -96,14 +96,25 @@ const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 4000;
 
 /**
- * Crea el directorio de trabajo temporal y deja ahí las imágenes de referencia.
- * Ese directorio es también el --workspace del agente: así lo que puede leer
- * queda acotado a lo que nosotros pusimos.
- * Devuelve { dir, names, cleanup } — cleanup borra todo y nunca lanza.
+ * Crea el directorio de trabajo temporal y deja ahí el material que el agente
+ * tiene que poder abrir: las imágenes de referencia y los documentos que subió
+ * el editor. Ese directorio es también el --workspace y el cwd del agente, así
+ * que lo que puede leer queda acotado a lo que nosotros pusimos.
+ *
+ * Los DOCUMENTOS se COPIAN acá adentro, y es un arreglo, no una simetría
+ * decorativa. El motor los deja al lado de la render, en el disco del proyecto,
+ * y hasta ahora escribía esa ruta en el prompt para los dos CLI por igual — pero
+ * este agente vive encerrado en el temporal, así que esa ruta le queda afuera.
+ * El PDF aparecía nombrado en el pedido, el modelo no lo podía abrir, y componía
+ * igual: la clase de falla muda que se ve presentable. Con la copia adentro, la
+ * ruta que se le nombra es una que puede abrir.
+ *
+ * Devuelve { dir, names, docPaths, cleanup } — cleanup borra todo y nunca lanza.
  */
-function makeWorkspace(images) {
+function makeWorkspace(images, docFiles) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyperpremiere-cursor-'));
   const names = [];
+  const docPaths = [];
 
   (Array.isArray(images) ? images : [])
     .map(parseImageDataUrl)
@@ -114,6 +125,18 @@ function makeWorkspace(images) {
       names.push(name);
     });
 
+  (Array.isArray(docFiles) ? docFiles : []).forEach((src) => {
+    try {
+      const destino = path.join(dir, path.basename(String(src)));
+      fs.copyFileSync(String(src), destino);
+      docPaths.push(destino);
+    } catch (_) {
+      // El documento no se pudo copiar (disco desmontado, permisos). No se
+      // nombra en el prompt: mandar al agente a abrir un archivo que no está
+      // es peor que no mencionarlo.
+    }
+  });
+
   function cleanup() {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -122,7 +145,7 @@ function makeWorkspace(images) {
     }
   }
 
-  return { dir, names, cleanup };
+  return { dir, names, docPaths, cleanup };
 }
 
 /** ¿El fallo es del tipo que conviene reintentar (capacidad momentánea)? */
@@ -178,7 +201,7 @@ async function complete({ systemPrompt, userPrompt, images, model, config, onAct
   const bin = await cursorSession.binDe(cfg);
   const useModel = model || DEFAULT_MODEL;
 
-  const ws = makeWorkspace(images);
+  const ws = makeWorkspace(images, cfg.docFiles);
 
   // Cómo se arma el mensaje, que acá es TODO lo que hay.
   //
@@ -216,6 +239,9 @@ async function complete({ systemPrompt, userPrompt, images, model, config, onAct
       : '') +
     userPrompt +
     imagesAsFilesNote(ws.names.map((n) => path.join(ws.dir, n))) +
+    // Los documentos, por su ruta DENTRO del workspace: la del proyecto le queda
+    // afuera y no la puede abrir (ver makeWorkspace).
+    docsAsFilesNote(ws.docPaths) +
     // Apagado salvo que se pida: no mejora nada y cuesta. Se prende con
     // `contractTail: true` para volver a medirlo cuando cambie el modelo por
     // defecto o cuando engine.js empiece a agregar secciones mucho más largas
