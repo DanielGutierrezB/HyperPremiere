@@ -31,7 +31,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.5.0</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.5.1</span>
       </button>
     </div>
   </header>
@@ -134,6 +134,30 @@
       <span class="placeholder">Pulsá "Cargar marcadores" para leer la secuencia activa.</span>
     </div>
 
+    <!-- El estilo del CURSO entero, arriba de todo y AFUERA del área de
+         marcadores: no es de ninguna clase ni de ningún marcador, es la marca, y
+         se queda al cambiar de secuencia. Lo propio de esta clase está abajo, en
+         "Estilo de esta secuencia", adentro de Marcadores. Los dos viajan al
+         modelo y el de abajo manda donde se contradigan; eso lo dice el renglón
+         de cada bloque (ver describe() en js/general-prompt.js). Viene
+         pre-replegado: el badge cuenta qué hay adentro sin abrirlo. -->
+    <details id="general-section" class="context-section general-section">
+      <summary><span class="section-title">Estilo del curso</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
+      <div class="context-body">
+        <!-- Dos editores, un mismo .prproj: el que abre el proyecto tiene que
+             ver QUÉ contexto va a viajar con el que genera. El cartel de
+             conflicto va acá y no abajo porque este bloque se dibuja siempre
+             —sin secuencia abierta el otro no existe— y de sus tres respuestas
+             la cara reemplaza justo este archivo, el que comparten los dos. -->
+        <div id="general-conflict" class="general-conflict" data-hidden="true"></div>
+        <div class="general-level">
+          <label class="field-label" for="general-instruction">Prompt general · TODO el curso</label>
+          <textarea id="general-instruction" rows="3" placeholder="Marca, paleta, tipografía, tono… lo que vale para todas las clases del curso. Se queda al cambiar de secuencia."></textarea>
+        </div>
+        <span id="general-source" class="general-source"></span>
+      </div>
+    </details>
+
     <details id="context-section" class="context-section" open>
       <summary><span class="section-title">Contexto de la clase</span><span class="section-state" id="context-summary"></span></summary>
       <div class="context-body">
@@ -158,26 +182,25 @@
 
     <div class="section-label">Marcadores</div>
 
-    <!-- Prompts generales: encabezado PERSISTENTE que aplica a TODOS los
-         marcadores de abajo. Son dos niveles, y los dos viajan al modelo: el del
-         CURSO entero (se queda al cambiar de secuencia) y el de ESTA clase, que
-         manda donde se contradigan. Viene pre-replegado y sugiere desplegarlo. -->
-    <details id="general-section" class="context-section general-section">
-      <summary><span class="section-title">Prompts generales</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
+    <!-- Encabezado PERSISTENTE de los marcadores de abajo: lo que vale para
+         TODOS los de esta clase y para ninguno de otra. Va acá adentro, y el del
+         curso arriba y afuera, porque son dos alcances distintos y mezclarlos en
+         una sola caja hacía parecer que el del curso también era de acá.
+         Sin secuencia abierta el bloque entero no se ofrece: no hay carpeta
+         donde guardar ni el texto ni las referencias. -->
+    <details id="general-sequence-section" class="context-section general-section">
+      <summary><span class="section-title">Estilo de esta secuencia</span><span class="cfg-summary section-state" id="general-sequence-summary"></span></summary>
       <div class="context-body">
-        <!-- Dos editores, un mismo .prproj: el que abre el proyecto tiene que
-             ver QUÉ contexto va a viajar con el que genera. -->
-        <div id="general-conflict" class="general-conflict" data-hidden="true"></div>
-        <div class="general-level">
-          <label class="field-label" for="general-instruction">Prompt general · TODO el curso</label>
-          <textarea id="general-instruction" rows="3" placeholder="Marca, paleta, tipografía, tono… lo que vale para todas las clases del curso. Se queda al cambiar de secuencia."></textarea>
-        </div>
         <div class="general-level is-sequence" id="general-sequence-row">
           <label class="field-label" for="general-sequence-instruction" id="general-sequence-label">Prompt de secuencia</label>
           <textarea id="general-sequence-instruction" rows="2" placeholder="Lo que cambia SOLO en esta clase (“esta va en blanco y negro”). Se suma al del curso y manda donde se contradigan."></textarea>
         </div>
-        <span id="general-source" class="general-source"></span>
-        <label class="field-label">Referencias generales (capturas, logos, PDFs)</label>
+        <span id="general-sequence-source" class="general-source"></span>
+        <!-- Las referencias se quedan de este lado: se guardan por secuencia y
+             en esta máquina (ver el README), que es el alcance de este bloque y
+             no el del curso. Arriba harían creer que viajan con el .prproj, que
+             es la clase de promesa falsa que costó el bug del prompt general. -->
+        <label class="field-label" title="Se guardan en esta máquina y para esta secuencia: a diferencia de los dos textos, NO viajan con el .prproj.">Referencias de esta secuencia (capturas, logos, PDFs)</label>
         <div id="general-stills-mount"></div>
       </div>
     </details>
@@ -344,6 +367,7 @@
   <script src="js/stills.js"></script>
   <script src="js/queue.js"></script>
   <script src="js/queue-view.js"></script>
+  <script src="js/corrections-contexto.js"></script>
   <script src="js/corrections.js"></script>
   <script src="js/general-view.js"></script>
   <script src="js/mic-medidor.js"></script>

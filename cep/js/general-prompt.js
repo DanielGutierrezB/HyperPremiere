@@ -16,12 +16,12 @@
  * le suma, y donde se contradigan manda el de la clase (eso se le dice al modelo
  * con todas las letras en bridge/prompt/build-context.js).
  *
- * Este módulo es el único que sabe eso: mantiene una caché sincrónica por
- * proyecto+secuencia —porque la cola, la pestaña de correcciones y las tarjetas
- * leen sin poder esperar—, hace la migración de lo que ya estaba en localStorage
- * y sostiene el conflicto cuando las dos cosas existen y no dicen lo mismo.
+ * Este módulo es el único que sabe eso: mantiene una caché sincrónica —porque la
+ * cola, la pestaña de correcciones y las tarjetas leen sin poder esperar—, hace
+ * la migración de lo que ya estaba en localStorage y sostiene el conflicto
+ * cuando las dos cosas existen y no dicen lo mismo.
  *
- * Tres cosas que conviene tener claras antes de tocar nada acá:
+ * Cuatro cosas que conviene tener claras antes de tocar nada acá:
  *
  *  1. `load()` LEE Y NADA MÁS. La migración (subir lo local al proyecto,
  *     limpiarlo, apartar el pendiente) es `migrate()`, y la llama una sola
@@ -35,6 +35,9 @@
  *     archivo. Ver save().
  *  3. `save()` no relee: actualiza la caché con lo que contestó el motor. Cada
  *     tecleo de los campos pasa por acá, y releer costaba una llamada de más.
+ *  4. La caché está PARTIDA POR ALCANCE, una por nivel, y `estado()` las
+ *     compone. Es lo que hace que guardar un nivel no pueda afirmar nada del
+ *     otro — ver el comentario de cursoCache/seqCache, que cuenta el bug.
  *
  * Vanilla JS, sin ES modules: se expone como window.HPGeneral.
  */
@@ -43,35 +46,63 @@
 
   var hpLog = HPLog.log;
 
-  // clave "proyecto::secuencia" → estado leído del disco (ver estadoVacio).
-  var cache = {};
+  /**
+   * DOS cachés, una por alcance, porque son dos valores de alcance distinto.
+   *
+   * El prompt del CURSO es uno solo para todo el proyecto; el de la clase es de
+   * su secuencia y de ninguna otra. Mientras los dos vivieron en un solo
+   * registro por "proyecto::secuencia", guardar uno tenía que afirmar algo sobre
+   * el otro: `save()` mezclaba la respuesta del motor con lo que hubiera
+   * cacheado y marcaba la entrada entera como leída. Si esa clave no existía —lo
+   * normal desde que una fila de Corrections guarda contra la secuencia de
+   * ORIGEN del recurso, que puede no estar abierta— la entrada terminaba
+   * diciendo `loaded: true` y `sequenceText: ""` sin haber tocado el disco. La
+   * cola le creía (ensureGeneralPrompt saltea la lectura cuando `loaded`) y la
+   * generación siguiente de esa clase salía sin su prompt de secuencia. Con
+   * `scope: "sequence"` era peor: salía sin el del curso, que es textualmente el
+   * bug que la 1.5.0 vino a matar.
+   *
+   * Partidas, eso no se puede escribir: guardar el del curso no toca `seqCache`,
+   * así que `loaded` compone en false, la cola lee el disco y el nivel de la
+   * clase entra bien. Y no hay nada que propagar cuando el valor vive en un
+   * solo lugar.
+   */
+  var cursoCache = {};  // proyecto            → { text, hasFile, path, loaded, failed }
+  var seqCache = {};    // proyecto::secuencia → { text, legacy, path, legacyPath, pending, loaded, failed }
 
   function claveDe(projectPath, sequenceName) {
     return String(projectPath || "") + "::" + String(sequenceName || "");
   }
 
-  function rutasVacias() {
-    return { project: "", sequence: "", sequenceLegacy: "" };
-  }
-
-  function estadoVacio() {
+  function cursoVacio() {
     return {
-      // Los dos niveles, por separado: los dos viajan al modelo.
-      projectText: "", sequenceText: "",
-      // Que el archivo del curso EXISTA aunque esté vacío es un dato: el
-      // proyecto decidió que no hay estilo, y entonces no hay nada que migrar.
-      hasProjectFile: false,
-      // El de esta clase se leyó del nombre que tenía antes de la 1.5.0.
-      sequenceLegacy: false,
-      // El texto local que quedó en el limbo esperando que el editor decida.
-      pending: "",
-      paths: rutasVacias(),
-      // false = todavía no se leyó el disco de este contexto. Los lectores
+      text: "",
+      // Que el archivo del curso EXISTA es lo que la migración mira para no
+      // subir lo de esta máquina encima de un proyecto que ya usa estos
+      // archivos. Vaciar el campo lo BORRA (igual que el de la secuencia: un
+      // archivo de cero bytes en la raíz del proyecto viaja al lado del .prproj
+      // a las otras máquinas), así que hoy solo es distinto de `text` cuando
+      // alguien dejó el archivo vacío a mano.
+      hasFile: false,
+      path: "",
+      // false = todavía no se leyó el disco de este proyecto. Los lectores
       // sincrónicos lo miran para no confundir "no hay" con "no sé".
       loaded: false,
       // true = se intentó leer y el motor no pudo. Es la tercera cosa: ni "no
       // hay" ni "no sé todavía", sino "no se sabe y no se va a saber".
       failed: false
+    };
+  }
+
+  function seqVacia() {
+    return {
+      text: "",
+      // El de esta clase se leyó del nombre que tenía antes de la 1.5.0.
+      legacy: false,
+      path: "", legacyPath: "",
+      // El texto local que quedó en el limbo esperando que el editor decida.
+      pending: "",
+      loaded: false, failed: false
     };
   }
 
@@ -108,23 +139,31 @@
     } catch (e) {}
   }
 
-  /** El estado cacheado de este contexto, o uno vacío si nunca se leyó. */
+  /**
+   * Los dos niveles de este contexto, compuestos: uno sale de la caché del
+   * proyecto y el otro de la de la secuencia.
+   *
+   * La forma es la de siempre, para que nadie afuera tenga que saber que son
+   * dos. Lo único que cambia de significado es `loaded`, que ahora es una Y: se
+   * sabe de este contexto cuando se leyeron LOS DOS niveles. Eso es lo que hace
+   * que guardar uno no pueda hacer pasar al otro por leído.
+   *
+   * No cuesta una lectura de más: el motor contesta los dos niveles en la misma
+   * llamada, así que un solo `load()` deja los dos en verde.
+   */
   function estado(projectPath, sequenceName) {
-    var st = cache[claveDe(projectPath, sequenceName)];
-    return st ? st : estadoVacio();
-  }
-
-  /** Arma el estado que se cachea a partir de lo que contestó el motor. */
-  function estadoDe(r, previo, pending) {
+    var curso = cursoCache[String(projectPath || "")] || cursoVacio();
+    var seq = seqCache[claveDe(projectPath, sequenceName)] || seqVacia();
     return {
-      projectText: String((r && r.projectText) || ""),
-      sequenceText: String((r && r.sequenceText) || ""),
-      hasProjectFile: !!(r && r.hasProjectFile),
-      sequenceLegacy: !!(r && r.sequenceLegacy),
-      pending: String(pending || ""),
-      paths: (r && r.paths) ? r.paths : ((previo && previo.paths) || rutasVacias()),
-      loaded: true,
-      failed: false
+      // Los dos niveles, por separado: los dos viajan al modelo.
+      projectText: curso.text,
+      sequenceText: seq.text,
+      hasProjectFile: curso.hasFile,
+      sequenceLegacy: seq.legacy,
+      pending: seq.pending,
+      paths: { project: curso.path, sequence: seq.path, sequenceLegacy: seq.legacyPath },
+      loaded: curso.loaded && seq.loaded,
+      failed: curso.failed || seq.failed
     };
   }
 
@@ -137,14 +176,32 @@
    * es la interfaz no puede escribirle nada a nadie.
    */
   function load(projectPath, sequenceName) {
-    var clave = claveDe(projectPath, sequenceName);
+    var pKey = String(projectPath || "");
+    var sKey = claveDe(projectPath, sequenceName);
     return HPEngine.call("loadGeneralPrompt", {
       projectPath: projectPath, sequenceName: sequenceName
     }).then(function (r) {
       if (!r || !r.ok) throw new Error((r && r.error) || "el motor no pudo leer el prompt general");
-      var st = estadoDe(r, cache[clave], pendingDe(projectPath, sequenceName));
-      cache[clave] = st;
-      return st;
+      // Una sola llamada, los dos niveles: el motor los lee juntos y cada uno va
+      // a la caché de su alcance.
+      var rutas = r.paths || {};
+      var previoCurso = cursoCache[pKey] || cursoVacio();
+      var previaSeq = seqCache[sKey] || seqVacia();
+      cursoCache[pKey] = {
+        text: String(r.projectText || ""),
+        hasFile: !!r.hasProjectFile,
+        path: rutas.project || previoCurso.path,
+        loaded: true, failed: false
+      };
+      seqCache[sKey] = {
+        text: String(r.sequenceText || ""),
+        legacy: !!r.sequenceLegacy,
+        path: rutas.sequence || previaSeq.path,
+        legacyPath: rutas.sequenceLegacy || previaSeq.legacyPath,
+        pending: pendingDe(projectPath, sequenceName),
+        loaded: true, failed: false
+      };
+      return estado(projectPath, sequenceName);
     }).catch(function (e) {
       // Sin motor (o con el proyecto en un disco que no está), lo peor que se
       // puede hacer es dar por sentado que no hay estilo: quedaría generando en
@@ -152,14 +209,24 @@
       // —que era el estilo del curso— y se dice, en vez de callar y que se
       // descubra viendo el video.
       var local = localDe(projectPath, sequenceName);
-      var st = estadoVacio();
-      st.projectText = local;
-      st.pending = pendingDe(projectPath, sequenceName);
-      st.failed = true;
-      cache[clave] = st;
+      // Una lectura que falla no puede deshacer una que salió bien: si ese nivel
+      // ya se había leído (otra clase del mismo proyecto hace un rato, o este
+      // mismo contexto en el job anterior), ése es el mejor dato que hay y se
+      // conserva. Vale para los dos, y desde que la cola relee por cada job pasó
+      // a importar de verdad: un parpadeo del disco en medio de un lote de veinte
+      // marcadores no puede dejar a los que faltan generando sin estilo.
+      if (!cursoCache[pKey] || !cursoCache[pKey].loaded) {
+        cursoCache[pKey] = { text: local, hasFile: false, path: "", loaded: false, failed: true };
+      }
+      if (!seqCache[sKey] || !seqCache[sKey].loaded) {
+        var seq = seqVacia();
+        seq.pending = pendingDe(projectPath, sequenceName);
+        seq.failed = true;
+        seqCache[sKey] = seq;
+      }
       hpLog("Prompt general: no pude leerlo del proyecto (" + ((e && e.message) || e) + "). " +
         (local ? "Sigo con el que tenés guardado en esta máquina." : "Se genera sin él."), "WARN");
-      return st;
+      return estado(projectPath, sequenceName);
     });
   }
 
@@ -230,10 +297,12 @@
       // campos mostrar lo que DE VERDAD viaja sin que escribir encima lo borre.
       setPending(projectPath, sequenceName, local);
       borrarLocal(projectPath, sequenceName);
-      st.pending = local;
+      // El limbo es de ESTA clase (la clave del localStorage lleva su nombre),
+      // así que vive con el nivel de la secuencia.
+      seqCache[claveDe(projectPath, sequenceName)].pending = local;
       hpLog("Prompt general: “" + sequenceName + "” tiene uno guardado en esta máquina que NO coincide " +
         "con el del proyecto. No se pisó ninguno; el panel te pregunta cuál vale.", "WARN");
-      return st;
+      return estado(projectPath, sequenceName);
     });
   }
 
@@ -251,39 +320,189 @@
    * NO relee: la caché se actualiza con lo que contestó el motor. Por acá pasa
    * cada tecleo (con debounce), y releer era una segunda llamada por tecla para
    * enterarse de algo que ya sabíamos.
+   *
+   * Toca UNA de las dos cachés, la del alcance que se guardó, y no dice nada del
+   * otro nivel. Ésa es la forma de la regla, hacia adentro: guardar el del curso
+   * no puede afirmar que el de esta clase está vacío —no se leyó— y guardar el
+   * de la clase no puede afirmar que el del curso lo está. Al no tocarla, la
+   * caché del otro nivel sigue diciendo "no sé", que es la verdad, y el que
+   * necesite ese nivel va a leer el disco.
    */
   function save(projectPath, sequenceName, text, scope) {
     scope = scope === "sequence" ? "sequence" : "project";
-    var clave = claveDe(projectPath, sequenceName);
     return HPEngine.call("saveGeneralPrompt", {
       projectPath: projectPath, sequenceName: sequenceName, text: text, scope: scope
     }).then(function (w) {
       if (!w || !w.ok) throw new Error((w && w.error) || "no pude guardarlo");
-      var previo = cache[clave] || estadoVacio();
       // El motor recorta los espacios de los bordes antes de escribir: la caché
       // guarda lo mismo que devolvería releer el archivo, no lo que se tipeó.
       var t = String(text == null ? "" : text).trim();
-      var st = {
-        projectText: scope === "project" ? t : previo.projectText,
-        sequenceText: scope === "sequence" ? (w.removed ? "" : t) : previo.sequenceText,
-        // `created: false` = era vacío y el archivo no existía, así que no se
-        // escribió nada y el proyecto sigue sin haber decidido.
-        hasProjectFile: scope === "project" ? (w.created !== false) : previo.hasProjectFile,
-        // Guardar el de la secuencia consolida el nombre nuevo (lo hace el
-        // motor), así que deja de haber nada del formato viejo.
-        sequenceLegacy: scope === "sequence" ? false : previo.sequenceLegacy,
-        pending: previo.pending,
-        paths: {
-          project: (scope === "project" && w.path) ? w.path : previo.paths.project,
-          sequence: (scope === "sequence" && w.path) ? w.path : previo.paths.sequence,
-          sequenceLegacy: previo.paths.sequenceLegacy || ""
-        },
-        loaded: true,
-        failed: false
-      };
-      cache[clave] = st;
-      return st;
+      if (scope === "project") {
+        var pKey = String(projectPath || "");
+        var previo = cursoCache[pKey] || cursoVacio();
+        // El del curso es uno solo para todo el proyecto, así que guardarlo acá
+        // ya lo deja al día para TODAS las secuencias: no hay nada que propagar
+        // porque no hay copias.
+        cursoCache[pKey] = {
+          text: t,
+          // `created: false` = no quedó archivo: o era vacío y no había ninguno,
+          // o se vació y el motor lo borró.
+          hasFile: w.created !== false,
+          path: w.path || previo.path,
+          loaded: true, failed: false
+        };
+      } else {
+        var sKey = claveDe(projectPath, sequenceName);
+        var previa = seqCache[sKey] || seqVacia();
+        seqCache[sKey] = {
+          text: w.removed ? "" : t,
+          // Guardar el de la secuencia consolida el nombre nuevo (lo hace el
+          // motor), así que deja de haber nada del formato viejo.
+          legacy: false,
+          path: w.path || previa.path,
+          legacyPath: previa.legacyPath,
+          pending: previa.pending,
+          loaded: true, failed: false
+        };
+      }
+      return estado(projectPath, sequenceName);
     });
+  }
+
+  // Cómo se llaman en la pantalla los dos bloques. Están acá, y no sueltos en el
+  // HTML, porque desde que se separaron —el del curso arriba, con el Contexto de
+  // la clase; el de la secuencia adentro del área de marcadores— cada renglón
+  // NOMBRA al otro bloque para mandar al editor a donde se escribe la otra
+  // mitad. Un rótulo que cambie de un lado y no del otro lo deja buscando una
+  // sección que no existe; hay un test que compara estas dos cadenas con el HTML.
+  var TITULO_CURSO = "Estilo del curso";
+  var TITULO_SECUENCIA = "Estilo de esta secuencia";
+
+  /**
+   * El bloque de arriba: el prompt del CURSO entero, pegado al Contexto de la
+   * clase. Su estado sale solo de su archivo; lo único que dice del otro nivel
+   * es DÓNDE está, que es lo que dejó de verse solo al separarlos.
+   */
+  function describirCurso(st, d) {
+    if (st.pending) {
+      // El cartel de conflicto vive en ESTE bloque, y por eso el renglón habla
+      // de él: es el único de los dos que se dibuja siempre (el otro no existe
+      // sin secuencia abierta), y de sus tres salidas la cara es la que
+      // reemplaza el archivo que comparten los dos editores.
+      d.courseBadge = "⚠ dos versiones distintas — decidí cuál vale";
+      d.courseBadgeState = "warn";
+      d.courseLine = "Hay uno guardado en esta máquina que no coincide con el del proyecto.";
+      d.courseLineState = "warn";
+      return;
+    }
+    if (st.failed) {
+      // El motor no pudo leer el proyecto (disco de red caído, permisos). Antes
+      // esto se dibujaba como "el proyecto no lleva el estilo del curso", que es
+      // culpar al proyecto de un error de lectura.
+      d.courseBadge = "⚠ no pude leer el del proyecto";
+      d.courseBadgeState = "warn";
+      d.courseLine = st.projectText
+        ? "No pude leerlo del proyecto: va el que tiene esta máquina y no viaja a la otra"
+        : "No pude leerlo del proyecto: se genera sin el estilo del curso";
+      d.courseLineState = "warn";
+      return;
+    }
+    if (!st.loaded) {
+      // El disco todavía no contestó. Decir "no hay estilo" acá sería el mismo
+      // error que este módulo vino a arreglar, un segundo más temprano: el panel
+      // afirmando algo que no sabe. `loaded` existe justo para esto.
+      d.courseBadge = "leyendo el proyecto…";
+      d.courseBadgeState = "hint";
+      d.courseLine = "Buscando el prompt del curso al lado del proyecto…";
+      d.courseLineState = "";
+      return;
+    }
+    if (st.projectText) {
+      d.courseBadge = "✓ del curso";
+      d.courseBadgeState = "ok";
+      d.courseLine = "El mismo en todas las clases del curso. Viaja con el .prproj";
+    } else {
+      // Lo que importa no es que falte una preferencia de este panel: es que el
+      // proyecto no lleva el estilo del curso, así que quien lo abra en otra
+      // máquina va a generar igual de a ciegas.
+      d.courseBadge = "sin estilo del curso — no viaja con el proyecto";
+      d.courseBadgeState = "hint";
+      d.courseLine = "Vacío. Lo que escribas acá queda en el proyecto y le llega a quien lo abra";
+    }
+    d.courseLineState = "";
+    // El puntero al otro bloque: una sola frase, siempre la misma. Es la mitad
+    // de "ninguno de los dos queda mudo sobre el otro" que le toca a éste; la
+    // otra mitad —quién manda— la dice el de la secuencia, que es el que gana.
+    // En los estados de arriba no va: mandar al editor a otra parte del panel
+    // mientras tiene algo que decidir acá le tapa lo que le está pasando.
+    if (d.sequenceEnabled) {
+      d.courseLine += ". Lo de esta clase va abajo, en “" + TITULO_SECUENCIA + "”";
+    }
+  }
+
+  /**
+   * El bloque de abajo, adentro del área de marcadores: el de ESTA secuencia.
+   * Acá se dice la precedencia, y en un solo lugar: es el nivel que gana, así
+   * que es el único donde saberla cambia lo que el editor escribe.
+   */
+  function describirSecuencia(st, d) {
+    if (!d.sequenceEnabled) {
+      // El bloque no se dibuja, pero se contesta igual: que la vista no tenga
+      // que inventar qué poner en un renglón que no está.
+      d.sequenceBadge = "sin secuencia abierta";
+      d.sequenceBadgeState = "hint";
+      d.sequenceLine = "Sin secuencia abierta no hay dónde guardar el de esta clase";
+      d.sequenceLineState = "";
+      return;
+    }
+    if (st.pending) {
+      d.sequenceBadge = "⚠ hay un prompt sin decidir";
+      d.sequenceBadgeState = "warn";
+      d.sequenceLine = "Ese texto puede ser el de esta clase: se decide arriba, en “" + TITULO_CURSO + "”";
+      d.sequenceLineState = "warn";
+      return;
+    }
+    if (st.failed) {
+      d.sequenceBadge = "⚠ no pude leer el del proyecto";
+      d.sequenceBadgeState = "warn";
+      d.sequenceLine = "No pude leer el proyecto: tampoco sé si esta secuencia tiene el suyo";
+      d.sequenceLineState = "warn";
+      return;
+    }
+    if (!st.loaded) {
+      d.sequenceBadge = "leyendo el proyecto…";
+      d.sequenceBadgeState = "hint";
+      d.sequenceLine = "Buscando el de esta secuencia al lado del proyecto…";
+      d.sequenceLineState = "";
+      return;
+    }
+    if (st.sequenceText && st.projectText) {
+      d.sequenceBadge = "✓ MANDA sobre el del curso";
+      d.sequenceBadgeState = "ok";
+      d.sequenceLine = "Al modelo van los DOS: el del curso (arriba) como base y éste encima, " +
+        "que MANDA donde se contradigan";
+      d.sequenceLineState = "override";
+      return;
+    }
+    if (st.sequenceText) {
+      d.sequenceBadge = "✓ solo de esta secuencia";
+      d.sequenceBadgeState = "ok";
+      d.sequenceLine = "Al modelo va solo éste: el curso (arriba) todavía no tiene prompt general";
+      d.sequenceLineState = "";
+      return;
+    }
+    if (st.projectText) {
+      d.sequenceBadge = "sin nada propio: va el del curso";
+      d.sequenceBadgeState = "hint";
+      d.sequenceLine = "Vacío: esta clase usa el del curso (arriba) y nada más. " +
+        "Lo que escribas acá se suma y MANDA donde se contradigan";
+      d.sequenceLineState = "";
+      return;
+    }
+    d.sequenceBadge = "sin nada propio";
+    d.sequenceBadgeState = "hint";
+    d.sequenceLine = "Vacío, y el del curso (arriba) también: se genera sin estilo";
+    d.sequenceLineState = "";
   }
 
   /**
@@ -291,6 +510,12 @@
    * ES la corrección: el bug fue que el panel no decía de dónde salía el
    * contexto, así que las palabras que lo dicen se prueban como cualquier otra
    * decisión, sin tener que levantar el panel entero.
+   *
+   * Devuelve DOS juegos de palabras, uno por bloque, porque los dos niveles ya
+   * no se ven juntos. Pegados, que los dos viajaran y que el de abajo mandara se
+   * leía de un vistazo: dos campos y un renglón entre medio. Separados hay que
+   * decirlo, y no dos veces el mismo párrafo — ver describirCurso() y
+   * describirSecuencia(), que es donde está el reparto.
    */
   function describe(st, sequenceName) {
     var seq = String(sequenceName || "");
@@ -313,69 +538,20 @@
         ? "Prompt de secuencia · solo “" + HPUtil.shortenMiddle(seq, 22) + "”"
         : "Prompt de secuencia"
     };
-
-    if (st.pending) {
-      d.badge = "⚠ dos versiones distintas — decidí cuál vale";
-      d.badgeState = "warn";
-      d.line = "Hay uno guardado en esta máquina que no coincide con el del proyecto.";
-      d.lineState = "warn";
-      return d;
-    }
-    if (st.failed) {
-      // El motor no pudo leer el proyecto (disco de red caído, permisos). Antes
-      // esto se dibujaba como "el proyecto no lleva el estilo del curso", que es
-      // culpar al proyecto de un error de lectura.
-      d.badge = "⚠ no pude leer el del proyecto";
-      d.badgeState = "warn";
-      d.line = st.projectText
-        ? "No pude leerlo del proyecto: va el que tiene esta máquina y no viaja a la otra"
-        : "No pude leerlo del proyecto: se genera sin el estilo del curso";
-      d.lineState = "warn";
-      return d;
-    }
-    if (!st.loaded) {
-      // El disco todavía no contestó. Decir "no hay estilo" acá sería el mismo
-      // error que este módulo vino a arreglar, un segundo más temprano: el panel
-      // afirmando algo que no sabe. `loaded` existe justo para esto.
-      d.badge = "leyendo el proyecto…";
-      d.badgeState = "hint";
-      d.line = "Buscando los prompts generales al lado del proyecto…";
-      d.lineState = "";
-      return d;
-    }
-    if (st.projectText && st.sequenceText) {
-      d.badge = "✓ curso + esta secuencia";
-      d.badgeState = "ok";
-      d.line = "Al modelo van los DOS: el del curso como base y el de esta secuencia encima, " +
-        "que MANDA donde se contradigan";
-      d.lineState = "override";
-      return d;
-    }
-    if (st.sequenceText) {
-      d.badge = "✓ solo de esta secuencia";
-      d.badgeState = "ok";
-      d.line = "Al modelo va solo el de esta secuencia: el curso todavía no tiene prompt general";
-      d.lineState = "";
-      return d;
-    }
-    if (st.projectText) {
-      d.badge = "✓ del curso";
-      d.badgeState = "ok";
-      d.line = "Al modelo va el del curso, el mismo para todas las secuencias. Viaja con el .prproj";
-      d.lineState = "";
-      return d;
-    }
-    // Sin nada. Lo que importa no es que falte una preferencia de este panel:
-    // es que el proyecto no lleva el estilo del curso, así que quien lo abra en
-    // otra máquina va a generar igual de a ciegas.
-    d.badge = "sin estilo del curso — no viaja con el proyecto";
-    d.badgeState = "hint";
-    d.line = "Vacío. Lo que escribas acá queda en el proyecto y le llega a quien lo abra";
-    d.lineState = "";
+    describirCurso(st, d);
+    describirSecuencia(st, d);
     return d;
   }
 
   global.HPGeneral = {
+    /**
+     * Los títulos de los dos bloques del panel. Se exponen porque los renglones
+     * de cada uno nombran al otro, y un test los compara con el index.html: si
+     * un rótulo cambia de un lado nada más, el renglón manda al editor a una
+     * sección que no existe.
+     */
+    TITULOS: { curso: TITULO_CURSO, secuencia: TITULO_SECUENCIA },
+
     /** Relee del disco, sin efectos. Ver load(). */
     load: load,
     /** Lee Y migra lo que quedó en esta máquina. Solo la vista, una vez. Ver migrate(). */
@@ -404,20 +580,23 @@
     resolvePending: function (projectPath, sequenceName, choice) {
       var texto = pendingDe(projectPath, sequenceName);
       setPending(projectPath, sequenceName, "");
+      var sKey = claveDe(projectPath, sequenceName);
+      function vaciarLimbo() {
+        if (seqCache[sKey]) seqCache[sKey].pending = "";
+      }
       if (!texto || choice === "discard") {
         if (texto) hpLog("Prompt general: descartaste el que tenías guardado en esta máquina para “" + sequenceName + "”.");
-        var st = cache[claveDe(projectPath, sequenceName)];
-        if (!st) return load(projectPath, sequenceName);
-        st.pending = "";
-        return Promise.resolve(st);
+        if (!seqCache[sKey]) return load(projectPath, sequenceName);
+        vaciarLimbo();
+        return Promise.resolve(estado(projectPath, sequenceName));
       }
       var scope = choice === "sequence" ? "sequence" : "project";
       hpLog("Prompt general: el que tenías en esta máquina para “" + sequenceName + "” pasó a ser " +
         (scope === "sequence" ? "el prompt de esa secuencia (se suma al del curso y manda si se contradicen)."
           : "el prompt general del curso."));
-      return save(projectPath, sequenceName, texto, scope).then(function (nuevo) {
-        nuevo.pending = "";
-        return nuevo;
+      return save(projectPath, sequenceName, texto, scope).then(function () {
+        vaciarLimbo();
+        return estado(projectPath, sequenceName);
       });
     }
   };

@@ -290,7 +290,14 @@
     if (!aiJobs.length) { line2.textContent = "Sin llamadas a la IA pendientes (solo render)."; return; }
     Promise.all(aiJobs.map(function (j) {
       if (typeof j._tokEst === "number") return Promise.resolve(j._tokEst);
-      return HPEngine.call("estimateTokens", j.payload).then(function (r) {
+      // NO se estima `j.payload` a secas: mientras el job está en cola, ese
+      // objeto todavía no tiene el material ni los niveles del estilo (los
+      // resuelve la cola justo antes de llamar al modelo). Una corrección recién
+      // encolada se estimaba así sin ningún nivel de contexto y sin sus
+      // imágenes, y el número se corregía solo recién cuando el job arrancaba.
+      return HPQueue.payloadForEstimate(j).then(function (body) {
+        return HPEngine.call("estimateTokens", body);
+      }).then(function (r) {
         j._tokEst = (r && r.ok) ? (r.inputTokensEst || 0) : 0; return j._tokEst;
       }).catch(function () { return 0; });
     })).then(function (vals) {
@@ -312,6 +319,11 @@
   // control de imágenes con selección de reenvío.
   function buildFeedbackBox(j) {
     var fb = document.createElement("div"); fb.className = "qj-feedback-wrap";
+    // La fila del campo. Antes era de tres columnas —campo + los dos botones al
+    // costado— y el campo se quedaba con lo que sobraba: medido en la maqueta,
+    // 137 px con el panel en 400 y 57 px en 320, o sea un cuadro de feedback de
+    // cinco caracteres de ancho justo cuando el editor lo alarga a ocho
+    // renglones para escribir. Los botones se fueron abajo (ver qj-fb-actions).
     var inRow = document.createElement("div"); inRow.className = "qj-feedback";
     var ta = document.createElement("textarea"); ta.className = "qj-fb-input"; ta.rows = 2;
     ta.placeholder = "Qué ajustar… (se regenera manteniendo el puesto en la cola)";
@@ -319,6 +331,15 @@
     ta.addEventListener("input", function (e) { feedbackDraft[j.id] = e.target.value; });
     ta.addEventListener("click", function (e) { e.stopPropagation(); });
     inRow.appendChild(ta);
+    fb.appendChild(inRow);
+    // El micrófono va pegado al campo, que es de lo que es la barra: dicta ahí
+    // adentro. Debajo y no encima, porque en la esquina se superpone con el
+    // agarre de redimensionar (ver el comentario de `.mic-bar` en el CSS).
+    var mic = micOpcional(ta, {
+      id: "cola:" + j.id,
+      onChange: function (texto) { feedbackDraft[j.id] = texto; },
+    });
+    if (mic) fb.appendChild(mic);
     // Sobre qué secuencia trabaja el material de este marcador. Es la del job,
     // NO la que el editor tenga abierta: con la cola de varias clases, o
     // corrigiendo algo generado en el corte anterior, no coinciden.
@@ -330,7 +351,20 @@
     // del marcador: refinar sobre lo que hay, o tirarlo y rediseñar. Antes acá
     // había un solo botón que hacía una cosa o la otra según si el cuadro tenía
     // texto, y para rediseñar desde cero había que irse a la pestaña Marcadores.
-    var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Refinar";
+    //
+    // Van en su propia fila debajo del campo, uno por renglón y a lo ancho, con
+    // el ajuste arriba y destacado: es la salida de todos los días, y la de abajo
+    // descarta trabajo hecho. El tamaño y el color están en el CSS.
+    //
+    // Dice "Aplicar el ajuste" y no "Refinar" por dos razones. La primera es que
+    // el ✨ Refinar del dictado queda a 6 px de acá y hace otra cosa —reescribe
+    // el TEXTO del pedido, no la animación—, así que dos botones con la misma
+    // palabra pegados eran una trampa. La segunda es que "aplicar el ajuste" se
+    // lee como lo contrario de "regenerar desde cero", que es lo que son; con
+    // "refinar" eran dos palabras parecidas para dos acciones opuestas, y de ahí
+    // salía el error de puntería que la confirmación de abajo tiene que atajar.
+    var acciones = document.createElement("div"); acciones.className = "qj-fb-actions";
+    var go = document.createElement("button"); go.type = "button"; go.className = "qbtn qbtn-react"; go.textContent = "↻ Aplicar el ajuste";
     go.title = "Ajusta sobre la última versión con tu feedback (mantiene lo que funciona y retoma el mismo puesto en la cola)";
     go.addEventListener("click", function (e) {
       e.stopPropagation();
@@ -338,7 +372,7 @@
       // Sin texto no hay refinamiento posible: antes esto salía como una
       // regeneración total y el editor se enteraba al ver el resultado.
       if (!t) {
-        deps.setOutput("Escribí qué ajustar para refinar, o usá “Regenerar desde cero”.", true);
+        deps.setOutput("Escribí qué ajustar, o usá “Regenerar desde cero”.", true);
         return;
       }
       // Índices de las imágenes que el usuario dejó activas (📤) para reenviar.
@@ -346,13 +380,15 @@
       closeFeedback(j.id);
       HPQueue.regenerate(j.id, t, sendIdx);
     });
-    inRow.appendChild(go);
+    acciones.appendChild(go);
     var fresh = document.createElement("button"); fresh.type = "button"; fresh.className = "qbtn qbtn-fresh"; fresh.textContent = "⟲ Regenerar desde cero";
     fresh.title = "Descarta el diseño anterior y vuelve a diseñar con la instrucción y el material de hoy. " +
       "No usa el texto de este cuadro. Pregunta antes.";
-    // SIEMPRE pregunta. Está pegado a Refinar y las dos palabras se parecen, así
-    // que el error de puntería es esperable: sin confirmación, un clic de más
-    // tira una animación que estaba bien y arranca una generación entera.
+    // SIEMPRE pregunta. Está justo debajo del ajuste, así que el error de
+    // puntería es esperable: sin confirmación, un
+    // clic de más tira una animación que estaba bien y arranca una generación
+    // entera. Que se vea apagado ayuda a no elegirlo por error, pero no protege
+    // de nada: lo que protege es la pregunta.
     fresh.addEventListener("click", function (e) {
       e.stopPropagation();
       var t = (feedbackDraft[j.id] || "").trim();
@@ -365,22 +401,13 @@
         if (t) {
           var q = document.createElement("p");
           q.textContent = "El feedback que escribiste NO se usa: desde cero no parte de la versión previa. " +
-            "Si lo que querés es aplicarlo, cerrá esto y dale “↻ Refinar”.";
+            "Si lo que querés es aplicarlo, cerrá esto y dale “↻ Aplicar el ajuste”.";
           body.appendChild(q);
         }
       }, "Regenerar desde cero", function () { closeFeedback(j.id); HPQueue.regenerateFresh(j.id); });
     });
-    inRow.appendChild(fresh);
-    fb.appendChild(inRow);
-    // El micrófono va DEBAJO de la fila, no adentro: `.qj-feedback` es un flex
-    // de tres columnas (caja + Refinar + Regenerar) calibrado para que los dos
-    // botones se estiren al alto de la caja, y meterle un cuarto hijo lo
-    // rompería. Abajo entra sin tocar una línea de ese CSS.
-    var mic = micOpcional(ta, {
-      id: "cola:" + j.id,
-      onChange: function (texto) { feedbackDraft[j.id] = texto; },
-    });
-    if (mic) fb.appendChild(mic);
+    acciones.appendChild(fresh);
+    fb.appendChild(acciones);
     // Imágenes/elementos para el feedback — mismo control que la tarjeta
     // (drag&drop + 📸 captura + etiqueta referencia/usar). Se agregan al
     // marcador y la regeneración los toma.

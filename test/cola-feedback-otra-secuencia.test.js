@@ -97,6 +97,7 @@ function dibujar(job) {
       hasQueued: function () { return false; },
       needsPlacing: function () { return false; },
       regenerate: function (id, texto, idx) { espia.regenerados.push({ id: id, texto: texto, idx: idx }); },
+      payloadForEstimate: function (j) { return Promise.resolve(j.payload || {}); },
       timing: { calibrated: function () { return true; }, estimateSec: function () { return 0; } },
     },
     document: {
@@ -169,7 +170,7 @@ test('regenerar manda los índices de las imágenes que quedaron activas', funct
   const ta = d.panel.buscar('qj-fb-input');
   ok(ta, 'hay dónde escribir el ajuste');
   ta.listeners.input[0]({ target: { value: 'subí el título' } });
-  d.panel.porTexto('↻ Refinar').click();
+  d.panel.porTexto('↻ Aplicar el ajuste').click();
 
   eq(d.espia.regenerados.length, 1);
   eq(d.espia.regenerados[0].texto, 'subí el título');

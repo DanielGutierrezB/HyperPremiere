@@ -121,6 +121,9 @@ function dibujar(jobs, opts) {
       needsPlacing: function () { return false; },
       regenerate: function (id, texto, idx) { espia.regenerados.push({ id: id, texto: texto, idx: idx }); },
       regenerateFresh: function (id) { espia.desdeCero.push(id); },
+      // El estimado del pie no se arma con `j.payload`: la cola contesta cómo va
+      // a viajar ese payload (con el material y los niveles del estilo puestos).
+      payloadForEstimate: function (j) { return Promise.resolve(j.payload || {}); },
       timing: { calibrated: function () { return true; }, estimateSec: function () { return 0; } },
     },
     document: {
@@ -192,7 +195,7 @@ test('a Marcadores se sigue llegando por “Editar HTML”, que sí lo necesita'
 test('la caja de feedback ofrece las dos salidas', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  ok(d.panel.porTexto('↻ Refinar'), 'refinar sobre lo que hay');
+  ok(d.panel.porTexto('↻ Aplicar el ajuste'), 'refinar sobre lo que hay');
   ok(d.panel.porTexto('⟲ Regenerar desde cero'), 'o tirarlo y rediseñar');
 });
 
@@ -200,7 +203,7 @@ test('refinar manda el texto y las imágenes que quedaron activas', function () 
   const d = dibujar([terminado()]);
   abrirFeedback(d);
   d.panel.buscar('qj-fb-input').listeners.input[0]({ target: { value: 'subí el título' } });
-  d.panel.porTexto('↻ Refinar').click();
+  d.panel.porTexto('↻ Aplicar el ajuste').click();
 
   eq(d.espia.regenerados.length, 1);
   eq(d.espia.regenerados[0].texto, 'subí el título');
@@ -213,7 +216,7 @@ test('refinar sin escribir nada avisa, en vez de rediseñar por su cuenta', func
   // regeneración total. El editor se enteraba al ver el resultado.
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  d.panel.porTexto('↻ Refinar').click();
+  d.panel.porTexto('↻ Aplicar el ajuste').click();
 
   eq(d.espia.regenerados.length, 0, 'no se encoló nada');
   eq(d.espia.desdeCero.length, 0);
@@ -243,13 +246,44 @@ test('con feedback escrito, la confirmación avisa que ese texto no se usa', fun
   d.panel.porTexto('⟲ Regenerar desde cero').click();
 
   has(d.espia.confirmaciones[0].cuerpo, 'NO se usa');
-  has(d.espia.confirmaciones[0].cuerpo, 'Refinar', 'y dice cuál es el botón que sí lo usa');
+  has(d.espia.confirmaciones[0].cuerpo, 'Aplicar el ajuste', 'y dice cuál es el botón que sí lo usa');
 });
 
-test('los dos botones se ven como hermanos, no como acción y control menor', function () {
+// Los dos botones estaban AL COSTADO del campo, en dos columnas altas y
+// angostas, y el campo se quedaba con lo que sobraba: 137 px con el panel en 400
+// y 57 px en 320, medido en la maqueta. Ahora van debajo, cada uno a lo ancho.
+// Lo que se puede fijar acá es la ESTRUCTURA (qué nodo cuelga de cuál y en qué
+// orden); el tamaño y el color se fijan leyendo el CSS, en
+// panel-caja-feedback.test.js, porque este DOM de mentira no tiene layout.
+
+test('la fila del campo es solo el campo: los botones se fueron abajo', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  eq(d.panel.porTexto('↻ Refinar').className, 'qbtn qbtn-react');
+  const fila = d.panel.buscar('qj-feedback');
+  ok(fila, 'la fila del campo sigue ahí');
+  eq(fila.children.length, 1, 'y no comparte el renglón con nada');
+  eq(fila.children[0].className, 'qj-fb-input', 'lo único adentro es el cuadro de texto');
+});
+
+test('las dos salidas van juntas en su propia fila, y el ajuste primero', function () {
+  const d = dibujar([terminado()]);
+  abrirFeedback(d);
+  const acciones = d.panel.buscar('qj-fb-actions');
+  ok(acciones, 'las dos salidas tienen fila propia debajo del campo');
+  // El rótulo se fija acá a propósito: NO puede volver a decir "Refinar". El
+  // ✨ Refinar del dictado queda a seis píxeles y reescribe el texto del pedido,
+  // no la animación; dos botones con la misma palabra pegados era una trampa.
+  eq(acciones.children.map(function (b) { return b.textContent; }).join(' | '),
+    '↻ Aplicar el ajuste | ⟲ Regenerar desde cero',
+    'en ese orden: arriba la de todos los días, abajo la que descarta trabajo');
+});
+
+test('el ajuste es de la familia “rehacer” y desde cero es la apagada', function () {
+  // Las clases son el puente con el CSS: si cambian sin cambiar la hoja, los dos
+  // botones vuelven a ser dos `.qbtn` cualquiera y se pierde la jerarquía.
+  const d = dibujar([terminado()]);
+  abrirFeedback(d);
+  eq(d.panel.porTexto('↻ Aplicar el ajuste').className, 'qbtn qbtn-react');
   eq(d.panel.porTexto('⟲ Regenerar desde cero').className, 'qbtn qbtn-fresh');
 });
 

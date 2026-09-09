@@ -17,6 +17,7 @@ const path = require('path');
 const { test, ok, eq, deepEq } = require('./harness');
 
 const engine = require('../bridge/engine');
+const { writeVersionMeta, mergeVersionMeta, readMeta } = require('../bridge/store/project-fs');
 
 function slugify(nombre) {
   return String(nombre).toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -72,6 +73,16 @@ function armarProyecto(nombreSecuencia) {
     },
     cola: function (jobs) {
       fs.writeFileSync(path.join(hp, 'queue.json'), JSON.stringify({ version: 1, jobs }));
+    },
+    /** El prompt general del curso, tal como vive al lado del .prproj. */
+    promptDelCurso: function (texto) {
+      fs.writeFileSync(path.join(hp, 'prompt-general.md'), texto);
+    },
+    /** El prompt de una secuencia, en su carpeta. */
+    promptDeSecuencia: function (nombre, texto) {
+      const d = path.join(hp, slugify(nombre));
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, 'prompt-secuencia.md'), texto);
     },
     listar: function (folderSlug) {
       return engine.listCorrections({
@@ -217,6 +228,309 @@ test('el encargo del recurso sobrevive a un render manual', function () {
   p.version('Marcador 1', 2, { marker: { name: 'x', start: 1, duration: 3 }, instruction: '(edición manual)' });
 
   eq(p.listar().markers[0].instruction, 'un gráfico de barras');
+});
+
+// ── Con qué contexto se generó cada recurso ──────────────────────────
+// El prompt del curso, el de la secuencia y el objetivo viajan en cada llamada
+// al modelo, pero hasta acá la ficha guardaba solo la instrucción. O sea: al mes
+// no se podía saber con qué estilo se había generado un recurso, y la pestaña de
+// correcciones lo más cerca que llegaba era leer los archivos de HOY, que pueden
+// haber cambiado veinte veces. Ahora la ficha lo anota, y lo que el listado tiene
+// que dejar clarísimo es CUÁL de las dos cosas está entregando.
+
+test('lo que se anota en la ficha es lo que VIAJÓ, ajustes incluidos', function () {
+  // Se prueba `promptRecord` directamente porque llegar hasta el `saveMeta` por el
+  // camino largo pide un proveedor de verdad (eso está en
+  // test/manual/prompt-tres-niveles.js, que lo corre de punta a punta y vuelca la
+  // ficha). Lo que se fija acá es la decisión: la ficha anota el texto que entró
+  // en la llamada, no el que decía el archivo, y dice que hubo ajuste.
+  const r = engine._promptRecord({
+    generalInstruction: 'paleta azul institucional',
+    sequenceInstruction: 'blanco y negro',
+    objective: 'enseñar deep research',
+    promptOverride: { course: 'paleta azul institucional, y NADA de degradés' },
+  });
+  eq(r.course, 'paleta azul institucional, y NADA de degradés', 'lo que se mandó, no lo que decía el archivo');
+  eq(r.sequence, 'blanco y negro');
+  eq(r.objective, 'enseñar deep research');
+  deepEq(r.adjusted, { course: true, sequence: false, objective: false },
+    'y CUÁL de los tres se ajustó a mano: es lo único con lo que el panel puede decir ' +
+    'por qué esto no coincide con el archivo de hoy');
+});
+
+test('el objetivo ajustado a mano también queda anotado como ajuste', function () {
+  // Se editaba en la fila igual que los otros dos y la ficha no lo registraba, así
+  // que la diferencia con lo que el panel muestra hoy quedaba sin explicación.
+  const r = engine._promptRecord({
+    generalInstruction: 'paleta azul institucional', sequenceInstruction: '',
+    objective: 'enseñar deep research',
+    promptOverride: { objective: 'enseñar deep research, foco en el buscador' },
+  });
+  eq(r.objective, 'enseñar deep research, foco en el buscador', 'viajó el ajustado');
+  deepEq(r.adjusted, { course: false, sequence: false, objective: true });
+});
+
+test('sin ajuste la ficha no habla de ajustes, y anota lo que dicen los archivos', function () {
+  const r = engine._promptRecord({
+    generalInstruction: 'paleta azul institucional', sequenceInstruction: '', objective: '',
+  });
+  eq(r.course, 'paleta azul institucional');
+  eq(r.sequence, '');
+  eq(r.adjusted, undefined, 'una clave que aparece solo cuando hay algo que contar');
+  eq(r.unknownLevel, undefined);
+});
+
+test('un job de antes de que hubiera dos niveles se anota como "no se sabe"', function () {
+  // Mandaba un solo texto ya resuelto y sin decir de qué nivel era. Ponerlo en
+  // `course` sería inventar el único dato por el que se mira esta ficha.
+  const r = engine._promptRecord({ generalInstruction: 'un texto de antes' });
+  eq(r.unknownLevel, true);
+});
+
+test('anotar el tramo a mano no borra el contexto que la ficha ya tenía', function () {
+  // Escribir dónde iba el recurso reescribe su ficha. Si se llevara puestos los
+  // tres niveles, la fila pasaría de "esto es lo que se mandó" a "esto es una
+  // reconstrucción" por haber contestado una pregunta que no tiene nada que ver.
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, {
+    marker: null,
+    metaExtra: { prompts: { course: 'todo en Inter', sequence: '', objective: 'deep research' } },
+  });
+
+  engine.saveCorrectionPosition({
+    projectPath: p.projectPath, sequenceName: 'Clase 14', markerSlug: 'Marcador 1',
+    start: 55, duration: 9,
+  });
+
+  const m = p.listar().markers[0];
+  eq(m.start, 55, 'el tramo quedó anotado');
+  eq(m.prompts.course, 'todo en Inter', 'y el contexto sigue estando');
+});
+
+// ── La ficha, contra archivos de verdad ──────────────────────────────
+//
+// Estos tres tests mirvaban el TEXTO FUENTE de engine.js —el orden de las
+// propiedades de un objeto literal, el espaciado alrededor de una coma y la
+// redacción de un comentario— porque la ficha no tenía dónde probarse: cuatro
+// call sites armaban su registro a mano y no había ninguna función que escribir
+// significara. Ahora la forma vive en project-fs.js y se prueba como se prueba
+// la lectura acá abajo: escribiendo en una carpeta descartable y leyendo qué
+// quedó.
+
+/** Un `.meta.json` en una carpeta descartable, y su ruta. */
+function fichaDescartable() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-ficha-'));
+  return path.join(dir, 'marcador-1 v1 [gemini].meta.json');
+}
+
+test('escribir la ficha de una generación anota los tres niveles y el tramo', function () {
+  // Es la ficha que se anota ANTES de gastar la llamada al modelo: si la
+  // generación se cae a mitad, es lo único que sabe a qué tramo de qué secuencia
+  // pertenece ese HTML, y con qué contexto se pidió.
+  const metaPath = fichaDescartable();
+  writeVersionMeta(metaPath, {
+    sequenceName: 'Clase 14', markerSlug: 'marcador-1',
+    marker: { name: 'Marcador 1', guid: 'abc', start: 12, duration: 4 },
+    version: 1, model: 'gemini', provider: 'google', mode: 'generate',
+    instruction: 'un gráfico con los tres pasos',
+    prompts: { course: 'todo en Inter', sequence: 'blanco y negro', objective: 'deep research' },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    pending: true,
+  });
+
+  const f = readMeta(metaPath);
+  eq(f.sequenceName, 'Clase 14');
+  eq(f.marker.start, 12, 'el tramo, que es lo que no se puede reconstruir del disco');
+  eq(f.markerName, 'Marcador 1', 'el nombre sale del marcador sin que nadie lo copie a mano');
+  eq(f.markerGuid, 'abc');
+  eq(f.prompts.course, 'todo en Inter');
+  eq(f.prompts.sequence, 'blanco y negro');
+  eq(f.prompts.objective, 'deep research');
+  eq(f.pending, true, 'y que todavía no llegó al final');
+});
+
+test('reescribir la ficha al final NO deja el pending de la escritura anterior', function () {
+  // La ausencia de `pending` es lo que significa "llegó al final", así que la
+  // escritura del final tiene que ser COMPLETA: un campo que sobreviviera de la
+  // anterior estaría hablando de un intento que ya no existe.
+  const metaPath = fichaDescartable();
+  writeVersionMeta(metaPath, { sequenceName: 'Clase 14', markerSlug: 'marcador-1', version: 1, pending: true });
+  writeVersionMeta(metaPath, {
+    sequenceName: 'Clase 14', markerSlug: 'marcador-1', version: 1,
+    prompts: { course: 'todo en Inter', sequence: '', objective: '' },
+    timings: { modelMs: 900, renderMs: 300 },
+  });
+
+  const f = readMeta(metaPath);
+  eq(f.pending, undefined, 'la generación llegó al final');
+  eq(f.prompts.course, 'todo en Inter', 'y los tres niveles volvieron a pasar');
+  eq(f.timings.renderMs, 300);
+});
+
+test('la ficha de un render manual NO se atribuye prompts: no llamó a ningún modelo', function () {
+  // Heredarlos como se hereda el encargo sería anotar como "lo que se le mandó"
+  // algo que no se mandó nunca. Quien lea la ficha los sigue encontrando: la
+  // búsqueda baja por las versiones anteriores y dice de cuál los sacó. Decirlo
+  // con `prompts: undefined` es lo que deja que el pedido lo diga en una línea,
+  // en vez de que la omisión haya que notarla leyendo qué campos no están.
+  const metaPath = fichaDescartable();
+  writeVersionMeta(metaPath, {
+    sequenceName: 'Clase 14', markerSlug: 'marcador-1', version: 2,
+    model: 'manual', provider: 'manual', mode: 'manual-edit',
+    instruction: 'un gráfico con los tres pasos',
+    prompts: undefined,
+  });
+
+  const f = readMeta(metaPath);
+  ok(!('prompts' in f), 'la clave no está: no hay ningún prompt que esta versión haya recibido');
+  eq(f.instruction, 'un gráfico con los tres pasos', 'pero el ENCARGO sí, que es lo que se vuelve a mandar');
+});
+
+test('las dos fichas de una generación anotan los tres niveles', function () {
+  // La primera es la que hace que sobrevivan a una generación que se cae; la
+  // segunda, la que no los borra al terminar. Las dos salen de la MISMA función,
+  // que es lo que hace imposible que una anote algo que la otra pierda: mientras
+  // cada write listaba sus campos a mano, esto se vigilaba grepeando el fuente de
+  // engine.js —el orden de las propiedades y el espaciado de una coma—, porque la
+  // ficha no tenía dónde probarse.
+  const pedido = {
+    sequenceName: 'Clase 14', markerSlug: 'marcador-1',
+    marker: { name: 'Marcador 1', start: 12, duration: 4 },
+    version: 3, model: 'gemini', provider: 'google', mode: 'generate',
+    instruction: 'un gráfico con los tres pasos',
+    prompts: { course: 'todo en Inter', sequence: 'blanco y negro', objective: 'deep research' },
+  };
+
+  const antes = engine._fichaDeGeneracion(Object.assign({ pending: true }, pedido));
+  const alFinal = engine._fichaDeGeneracion(Object.assign({ videoExt: 'mov' }, pedido), {
+    timings: { modelMs: 900, renderMs: 300 },
+  });
+
+  deepEq(antes.prompts, pedido.prompts, 'antes de gastar la llamada al modelo');
+  deepEq(alFinal.prompts, pedido.prompts, 'y al terminar el render, que reescribe la ficha entera');
+  eq(antes.pending, true, 'la primera dice que todavía no llegó al final');
+  eq(alFinal.pending, undefined, 'y la del final, que sí: la ausencia es lo que lo significa');
+  eq(alFinal.timings.renderMs, 300);
+  eq(alFinal.instruction, 'un gráfico con los tres pasos', 'el encargo está en las dos');
+});
+
+test('el ajuste solo se anota en la ficha si esa versión fue un refinamiento', function () {
+  // `adjustment` es lo que se pidió en ESTA ronda; en una generación de cero no
+  // hay ronda anterior y anotar el campo sería inventar una.
+  const g = { mode: 'generate', adjustment: 'subí el título', videoExt: 'mov' };
+  eq(engine._fichaDeGeneracion(g).adjustment, undefined);
+  eq(engine._fichaDeGeneracion(Object.assign({}, g, { mode: 'adjust' })).adjustment, 'subí el título');
+});
+
+test('el merge de la ficha conserva lo que el pedido no nombra', function () {
+  // Anotar a mano dónde iba un recurso viejo no puede llevarse puesto con qué
+  // contexto se generó: la fila pasaría de "esto es lo que se mandó" a "esto es
+  // una reconstrucción" por haber contestado una pregunta que no tiene que ver.
+  const metaPath = fichaDescartable();
+  writeVersionMeta(metaPath, {
+    sequenceName: 'Clase 14', markerSlug: 'marcador-1', version: 1,
+    prompts: { course: 'todo en Inter', sequence: '', objective: 'deep research' },
+    timings: { modelMs: 900, renderMs: 300 },
+  });
+  mergeVersionMeta(metaPath, {
+    sequenceName: 'Clase 14', markerSlug: 'marcador-1',
+    marker: { name: 'Marcador 1', start: 55, duration: 9 },
+  });
+
+  const f = readMeta(metaPath);
+  eq(f.marker.start, 55, 'el tramo quedó anotado');
+  eq(f.prompts.course, 'todo en Inter', 'y el contexto sigue estando');
+  eq(f.timings.modelMs, 900);
+  eq(f.version, 1);
+});
+
+test('la ficha guarda con qué contexto se generó, y el listado lo devuelve', function () {
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, {
+    marker: { name: 'x', start: 1, duration: 3 },
+    metaExtra: { prompts: { course: 'todo en Inter', sequence: 'los gráficos entran de abajo', objective: 'enseñar deep research' } },
+  });
+
+  const m = p.listar().markers[0];
+  eq(m.prompts.course, 'todo en Inter');
+  eq(m.prompts.sequence, 'los gráficos entran de abajo');
+  eq(m.prompts.objective, 'enseñar deep research');
+  eq(m.promptsVersion, 1, 'y de qué versión salió, que es lo que el panel muestra');
+});
+
+test('una versión anterior a esto no trae contexto, y eso NO se rellena', function () {
+  // El caso honesto: de un recurso viejo no se puede saber qué se le mandó. El
+  // listado tiene que devolver `null` para que el panel lo diga; si acá se
+  // completara con los archivos de hoy, el panel no tendría forma de distinguir
+  // un dato de una suposición, y se rediseña mirando esto.
+  const p = armarProyecto('Clase 14');
+  p.promptDelCurso('el estilo de hoy, que puede no ser el de entonces');
+  p.version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 }, instruction: 'un gráfico' });
+
+  const m = p.listar().markers[0];
+  eq(m.prompts, null, 'de esta versión no se sabe, y se dice que no se sabe');
+  eq(m.promptsVersion, 0);
+});
+
+test('los archivos de hoy viajan aparte, para poder reconstruir lo que no se guardó', function () {
+  // Es lo único que se le puede ofrecer a un recurso viejo, y va en otra clave
+  // justamente para que no se confunda con lo que recibió.
+  const p = armarProyecto('Clase 14');
+  p.promptDelCurso('todo en Inter, acento verde');
+  p.promptDeSecuencia('Clase 14', 'esta clase habla de deep research');
+  p.version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+
+  const r = p.listar();
+  eq(r.promptsNow.course, 'todo en Inter, acento verde');
+  eq(r.promptsNow.sequence, 'esta clase habla de deep research');
+  eq(r.promptsNow.failed, false);
+});
+
+test('los archivos de hoy se leen de la secuencia de ORIGEN, no de la abierta', function () {
+  // La clase volvió re-cortada: el recurso nació en "Clase 14" y su prompt de
+  // secuencia está en esa carpeta. Leyendo el de la abierta —vacía— la
+  // reconstrucción diría que esa clase no agrega nada al estilo del curso, que
+  // es exactamente lo contrario de lo que pasa.
+  const p = armarProyecto('Clase 14_02');
+  p.promptDelCurso('todo en Inter');
+  p.promptDeSecuencia('Clase 14', 'esta clase habla de deep research');
+  p.otraSecuencia('Clase 14').transcript()
+    .version('Marcador 1', 1, { marker: { name: 'x', start: 1, duration: 3 } });
+
+  eq(p.listar().promptsNow.sequence, 'esta clase habla de deep research');
+});
+
+test('un render manual no se atribuye un contexto: lo hereda de quien lo tenga', function () {
+  // Un render de HTML editado a mano no llamó a ningún modelo, así que no recibió
+  // ningún prompt. Su ficha no lo anota, y la búsqueda sigue bajando: el contexto
+  // que se muestra es el de la última versión que SÍ lo guardó, y se dice cuál.
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, {
+    marker: { name: 'x', start: 1, duration: 3 },
+    metaExtra: { prompts: { course: 'todo en Inter', sequence: '', objective: 'deep research' } },
+  });
+  p.version('Marcador 1', 2, { marker: { name: 'x', start: 1, duration: 3 }, metaExtra: { mode: 'manual-edit' } });
+
+  const m = p.listar().markers[0];
+  eq(m.latestVersion, 2);
+  eq(m.prompts.course, 'todo en Inter');
+  eq(m.promptsVersion, 1, 'y se dice que salió de la v1, no de la que se está corrigiendo');
+});
+
+test('el contexto que gana es el de la versión más nueva que lo anotó', function () {
+  const p = armarProyecto('Clase 14');
+  p.version('Marcador 1', 1, {
+    marker: { name: 'x', start: 1, duration: 3 },
+    metaExtra: { prompts: { course: 'el estilo viejo', sequence: '', objective: '' } },
+  });
+  p.version('Marcador 1', 2, {
+    marker: { name: 'x', start: 1, duration: 3 },
+    metaExtra: { prompts: { course: 'el estilo con el que se generó la v2', sequence: '', objective: '' } },
+  });
+
+  const m = p.listar().markers[0];
+  eq(m.prompts.course, 'el estilo con el que se generó la v2');
+  eq(m.promptsVersion, 2);
 });
 
 // ── La clase volvió re-cortada, con otro nombre ──────────────────────

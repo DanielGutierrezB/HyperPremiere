@@ -21,6 +21,13 @@
  * El HTML de cada versión se lee del disco y se puede retocar y renderizar sin
  * gastar IA: la pestaña ya encontró los archivos, no tiene sentido pedirlos.
  *
+ * Cada fila muestra además EL CONTEXTO con el que se generó el recurso —los dos
+ * prompts generales, el objetivo y el encargo— y deja ajustarlo para esa
+ * corrección sin escribir los archivos del proyecto. Eso es una vista aparte
+ * (HPCorrectionsContexto, en corrections-contexto.js): ahí está la diferencia
+ * entre "esto es lo que se mandó" y "esto es una reconstrucción de los archivos
+ * de hoy".
+ *
  * Deps de main vía init(deps):
  *   context()        → { projectPath, sequenceName } del panel
  *   refreshContext(cb) → relee proyecto/secuencia de Premiere y llama cb
@@ -59,6 +66,12 @@
   // referencia están en la vieja, y el clip corregido va a la que está abierta.
   var origen = { slug: "", sequenceName: "" };
   var destino = "";
+
+  // Los dos prompts generales COMO ESTÁN HOY en el proyecto (los lee el motor al
+  // listar). NO son "lo que recibió" ningún recurso: son los archivos de este
+  // momento, y son lo único que se puede ofrecer para las versiones cuya ficha
+  // no guardó nada. Que la diferencia esté a la vista es la mitad de esto.
+  var promptsNow = { course: "", sequence: "", failed: false };
 
   /** Los recursos salieron de otro corte de esta clase. */
   function otroCorte() {
@@ -164,7 +177,7 @@
    * juntar las correcciones de toda la clase: se revisan todos los recursos, se
    * escribe qué está mal en cada uno y después se larga la cola de una vez.
    */
-  function enqueueCorrection(m, version, text, state, staged) {
+  function enqueueCorrection(m, version, text, state, staged, prompts) {
     var ctx = deps.context();
     var opts = stillsOpts(m);
     state.className = "corr-state";
@@ -179,6 +192,7 @@
       var job = jobBase(m);
       job.kind = "feedback";
       job.label = m.slug + " (corrección)";
+      var encargo = prompts.instruction();
       job.payload = {
         projectPath: ctx.projectPath, sequenceName: origen.sequenceName,
         marker: markerFromMeta(m),
@@ -189,7 +203,17 @@
         // dos lados, el modelo rediseñaba sin saber qué era ese gráfico —"subí el
         // título" como TODO el encargo— y encima la ficha nueva se quedaba con
         // eso, así que el encargo se perdía para siempre.
-        instruction: m.instruction || text,
+        // El encargo puede venir editado del panel de "lo que recibió": es de
+        // este recurso y de ningún otro, así que cambiarlo no le toca nada a
+        // nadie — y como la ficha nueva se escribe con esto, queda como su
+        // encargo de acá en adelante. Eso lo dice el campo.
+        //
+        // `null` = no lo tocó, y ahí manda la ficha (o, si esa versión no anotó
+        // ninguno, la corrección de ahora: es preferible a que el modelo no sepa
+        // qué era ese gráfico). VACÍO no es lo mismo que no tocado: es el ajuste
+        // de un editor que borró el campo, y viaja vacío como en los otros tres
+        // niveles.
+        instruction: encargo === null ? (m.instruction || text) : encargo,
         adjustment: text,
         objective: objetivoDeLaClase(),
         previousHtml: r.html,
@@ -200,11 +224,25 @@
         // corrección convertiría un clip opaco en uno transparente.
         background: !!m.background
       };
+      // El ajuste local de los prompts, si el editor tocó alguno. Viaja en el
+      // payload y lo aplica el motor al armar el pedido (bridge/prompt/
+      // build-context.js), que es el único lugar donde el contexto se combina.
+      // NO se resuelve acá: la cola relee los archivos del proyecto justo antes
+      // de generar —para que arreglar el estilo y reintentar salga con el
+      // arreglado— y si esta pestaña mandara el texto ya resuelto, esa relectura
+      // lo pisaría y el ajuste sería decorativo.
+      var ajuste = prompts.override();
+      if (ajuste) job.payload.promptOverride = ajuste;
       if (staged) HPQueue.addStaged(job); else HPQueue.add(job);
       HPStills.fbClear(opts.fbJobId); // la próxima ronda arranca con todas activas
       hpLog("Corrección encolada [" + m.slug + "] sobre la v" + version + " · de “" +
         origen.sequenceName + "” a “" + destino + "” en " + formatTime(m.start) +
-        " por " + fmtDuration(m.duration) + (staged ? " · en espera (no arranca sola)" : ""));
+        " por " + fmtDuration(m.duration) + (staged ? " · en espera (no arranca sola)" : "") +
+        (ajuste ? " · con los prompts ajustados a mano para esta corrección (" +
+          Object.keys(ajuste).join(" + ") + "); los archivos del proyecto no se tocaron" : "") +
+        // Un encargo vaciado a mano es una decisión que no se ve en ninguna
+        // parte del resultado: el recurso sale distinto y nada dice por qué.
+        (encargo === "" ? " · sin encargo: el editor vació ese campo para esta versión" : ""));
       state.className = "corr-state is-ok";
       state.textContent = staged
         ? "En espera sobre la v" + version + ". Arranca cuando toques “Iniciar cola”."
@@ -235,6 +273,24 @@
   }
 
   // ── Dibujar una fila ───────────────────────────────────────────────
+
+  /**
+   * Lo que este marcador recibió, en su propia vista (corrections-contexto.js).
+   *
+   * Lo que necesita de acá son cuatro cosas que cambian con cada carga de la
+   * pestaña, así que se le pasan como funciones y no como valores: la secuencia
+   * de ORIGEN del recurso (que no siempre es la abierta), el objetivo de la
+   * clase, y el objeto VIVO con los prompts del proyecto —guardar un nivel desde
+   * una fila lo pone al día para todas—.
+   */
+  function contextoDe(m, state) {
+    return HPCorrectionsContexto.build(m, state, {
+      projectPath: function () { return deps.context().projectPath; },
+      sequenceName: function () { return origen.sequenceName; },
+      promptsNow: function () { return promptsNow; },
+      objetivo: objetivoDeLaClase
+    });
+  }
 
   function buildRow(m) {
     var row = document.createElement("div");
@@ -322,7 +378,16 @@
       return row;
     }
 
+    // Lo que el marcador recibió, plegado. Va acá —antes del campo de
+    // corrección— porque es contexto: es lo que se consulta ANTES de escribir
+    // qué está mal, igual que el "Se pidió:" de arriba, del que es la versión
+    // completa. En la fila sin tramo no se dibuja: esa fila hace una sola
+    // pregunta (dónde iba) y no puede mandar nada a ninguna parte.
+    var prompts = contextoDe(m, state);
+    row.appendChild(prompts.el);
+
     var box = document.createElement("textarea");
+    box.className = "corr-input";
     box.rows = 2;
     box.placeholder = "Qué hay que corregir. Ej: “el título tapa la cara, subilo”, “falta la fuente del dato”.";
     row.appendChild(box);
@@ -390,7 +455,7 @@
         state.textContent = "Escribí qué hay que corregir.";
         return;
       }
-      enqueueCorrection(m, chosenVersion(), text, state, staged);
+      enqueueCorrection(m, chosenVersion(), text, state, staged, prompts);
     }
     stageBtn.addEventListener("click", function () { mandar(true); });
     fixBtn.addEventListener("click", function () { mandar(false); });
@@ -550,6 +615,9 @@
   function render(res) {
     listEl.innerHTML = "";
     rowsBySlug = {};
+    // Las filas de la carga anterior ya no están en pantalla: que no se enteren
+    // de lo que guarde una de las nuevas.
+    HPCorrectionsContexto.reset();
     if (!res.markers.length) {
       var empty = document.createElement("div");
       empty.className = "corr-empty";
@@ -586,14 +654,22 @@
         res.sources = res.sources || [];
         destino = ctx.sequenceName;
         origen = { slug: res.folderSlug, sequenceName: res.sourceSequenceName || ctx.sequenceName };
+        // Se lee una vez para toda la lista: es la reconstrucción que se le ofrece
+        // a los recursos cuya ficha no guardó los prompts.
+        promptsNow = res.promptsNow || { course: "", sequence: "", failed: false };
         renderPicker(res);
         render(res);
         var sinFicha = res.markers.filter(function (m) { return m.start == null; }).length;
+        // Cuántos son de antes de que la ficha guardara el contexto. Se dice acá
+        // arriba porque cambia lo que se puede saber de esas filas, y no hay que
+        // abrirlas de a una para enterarse.
+        var sinPrompts = res.markers.filter(function (m) { return !m.prompts; }).length;
         // El nombre entero está en el aviso y en el desplegable: acá alcanza con
         // el conteo, que es lo que se mira después de apretar el botón.
         setStatus(res.markers.length + " recurso(s) generados en “" +
           HPUtil.shortenMiddle(origen.sequenceName, 30) + "”" +
-          (sinFicha ? " · " + sinFicha + " sin el tramo anotado" : ""));
+          (sinFicha ? " · " + sinFicha + " sin el tramo anotado" : "") +
+          (sinPrompts ? " · " + sinPrompts + " sin el contexto guardado (se reconstruye)" : ""));
         hpLog("Corrections: " + res.markers.length + " recursos leídos de " + res.baseDir +
           (otroCorte() ? " (secuencia abierta: “" + destino + "”)" : ""));
       }).catch(function (e) {

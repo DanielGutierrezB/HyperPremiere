@@ -14,6 +14,7 @@
  *   ?e=whisper         falta el Whisper local (cartel de instalar + badge)
  *   ?e=otra-secuencia  en Premiere hay OTRA secuencia activa (cartel amarillo)
  *   ?e=conflicto       el prompt general de esta máquina no coincide con el del proyecto
+ *   ?e=sin-secuencia   Premiere sin secuencia al frente (el bloque de la clase no se ofrece)
  *   ?e=whisper,otra-secuencia   se pueden combinar con coma
  */
 (function (global) {
@@ -337,43 +338,95 @@
       // recorte por diferencia de nombres.
       leidoDe: SEQ_ORIGEN,
       elegidoPorNosotros: true,
+      // `contexto` es lo que la FICHA de la versión guardó: con qué prompts se
+      // generó ese recurso. Cuando está, la fila dice "esto es lo que se mandó" y
+      // de qué versión salió. Cuando NO está (`contexto: null`), la fila lo dice y
+      // ofrece los archivos de HOY como reconstrucción — es el caso de todo lo
+      // generado antes de que la ficha lo anotara, y hay dos filas así a propósito
+      // para poder mirar las dos cosas una al lado de la otra.
+      //
+      // `contextoDeVersion` = de qué versión salió ese registro. Distinto de
+      // `ultima` cuando la última versión fue un render manual (no llamó a ningún
+      // modelo, así que no recibió ningún prompt): ahí la búsqueda baja y lo dice.
       recursos: [
         {
           slug: "Marcador 1", nombre: "Intro / placa de título", start: 12.4, duration: 6.5,
           ultima: 3, modelo: "claude-sonnet-5", versiones: [1, 2, 3], fuenteTramo: "ficha",
           encargo: "Placa de entrada con el título de la clase y abajo, chiquito, “Módulo 3 · Clase 12”. Sin fondo.",
-          conFondo: false
+          conFondo: false,
+          // El estilo del curso era otro cuando se generó: el acento cian todavía
+          // no estaba y el logo se pedía abajo a la derecha. Es el caso que hace
+          // valer la pena guardarlo: "por qué esta placa no se parece al resto".
+          contexto: {
+            curso:
+              "Marca ACADEMIA NOVA. Tipografía: Söhne para títulos, Inter para cuerpo.\n" +
+              "Paleta: fondo carbón #12161d, acento AZUL #2f6fd0, texto hueso #efeadf.\n" +
+              "El logo del canal va abajo a la derecha (180×60 px). Nunca tapar la cara del profe.",
+            secuencia: "",
+            objetivo:
+              "Que el estudiante pueda armar su primera automatización de punta a punta: " +
+              "reconocer los tres componentes, elegir la herramienta y dejar un flujo corriendo."
+          },
+          // Y el de la clase salió vacío A PROPÓSITO: en aquella corrección se lo
+          // vació a mano para esa placa. Por eso la fila no dice "el archivo dice
+          // otra cosa hoy" en ese nivel (el archivo no se tocó nunca), sino que ese
+          // texto no salió del archivo. Es el caso que hace ver los DOS motivos
+          // opuestos de una diferencia, uno arriba del otro en la misma fila.
+          ajustadoEntonces: { secuencia: true },
+          contextoDeVersion: 3
         },
         {
           slug: "Marcador 3", nombre: "Dato 68%", start: 444.0, duration: 8.0,
           ultima: 4, modelo: "claude-opus-5", versiones: [1, 2, 3, 4], fuenteTramo: "ficha",
           encargo: "El 68% enorme contando hacia arriba, con la fuente Baymard 2025 abajo.",
-          conFondo: false
+          conFondo: false,
+          // Este se generó con el estilo de hoy, los dos niveles puestos: la fila
+          // no tiene nada que avisar y el pie de cada campo queda en su versión
+          // corta.
+          contexto: {
+            curso: null,     // null = "el mismo que dice el archivo hoy" (lo copia doble.js)
+            secuencia: null,
+            objetivo: null
+          },
+          contextoDeVersion: 4
         },
         {
           slug: "Marcador 5", nombre: "Diagrama del embudo", start: 774.5, duration: 14.0,
           ultima: 2, modelo: "claude-opus-5", versiones: [1, 2], fuenteTramo: "ficha",
           encargo: "El embudo en cuatro escalones con el porcentaje que sobrevive en cada uno. Con fondo.",
-          conFondo: true
+          conFondo: true,
+          // La v2 fue un render de HTML editado a mano: no llamó a ningún modelo,
+          // así que no recibió ningún prompt. Lo que se muestra es el de la v1, y
+          // la fila dice de cuál lo sacó.
+          contexto: { curso: null, secuencia: null, objetivo: null },
+          contextoDeVersion: 1
         },
         {
           slug: "Marcador 6", nombre: "Herramientas por volumen", start: 968.0, duration: 9.0,
           ultima: 1, modelo: "claude-sonnet-5", versiones: [1], fuenteTramo: "cola",
           encargo: "Tres logos con el rango de contactos de cada herramienta debajo.",
-          conFondo: false
+          conFondo: false,
+          // Generado antes de que la ficha anotara el contexto: de este NO se
+          // puede saber qué se le mandó, y la fila lo dice en vez de mostrar los
+          // archivos de hoy como si fueran lo que recibió.
+          contexto: null
         },
         {
           slug: "Marcador 9", nombre: "Espera de 24 h", start: 1544.0, duration: 6.0,
           ultima: 2, modelo: "claude-sonnet-5", versiones: [1, 2], fuenteTramo: "html",
           encargo: "Un reloj que avanza 24 horas en dos segundos y se congela.",
-          conFondo: false
+          conFondo: false,
+          contexto: null
         },
         {
           // Sin ficha: la fila pregunta el tramo una sola vez y lo deja anotado.
+          // Tampoco muestra el contexto: esa fila hace una sola pregunta y no
+          // puede mandar nada a ninguna parte hasta que se conteste.
           slug: "Marcador 10", nombre: "", start: null, duration: 0,
           ultima: 1, modelo: "claude-sonnet-4-5", versiones: [1], fuenteTramo: "",
           encargo: "Cita de Male sobre el resultado del flujo.",
-          conFondo: false
+          conFondo: false,
+          contexto: null
         }
       ],
       // De qué carpetas se puede leer (aparece el desplegable "Leer de").

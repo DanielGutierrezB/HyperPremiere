@@ -43,7 +43,9 @@ const cursorSession = require('./cursor-session');
 // rechazada): el semáforo de ⚙ no puede seguir en verde después de eso.
 const providerSalud = require('./provider-salud');
 const cliErrors = require('./providers/cli-errors');
-const { buildUserPrompt, generalPromptLabel } = require('./prompt/build-context');
+const {
+  buildUserPrompt, generalPromptLabel, promptLevels, objectiveLabel,
+} = require('./prompt/build-context');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition, renderLanes } = require('./render/hyperframes');
 // Conseguir una composición renderizable (escalera de llamadas al modelo) y el
@@ -56,8 +58,11 @@ const {
   outputDirPath,
   projectRootPath,
   paths,
-  saveMeta,
   readMeta,
+  // La ficha de cada versión (.meta.json). Su forma la declara project-fs una
+  // sola vez: acá se dice QUÉ va en cada caso, no cómo se escribe.
+  writeVersionMeta,
+  mergeVersionMeta,
   // El estilo del curso: dos archivos de texto al lado del .prproj. Acá solo se
   // registran como handlers; el I/O vive con el resto del de esa carpeta.
   loadGeneralPrompt,
@@ -709,6 +714,13 @@ async function prepareGeneration(body, mode, onProgress) {
     generalInstruction: body.generalInstruction,
     sequenceInstruction: body.sequenceInstruction,
     generalSource: body.generalSource,
+    // El ajuste que el editor escribió en la fila de correcciones para ESTE
+    // pedido. Se aplica adentro de build-context, que es el único lugar donde el
+    // contexto se combina: así el ajuste no puede quedar decorativo (llega al
+    // texto que se manda, al conteo de tokens y a la ficha) ni pisar la
+    // relectura del disco de la cola, que sigue siendo la fuente de lo que el
+    // editor no tocó.
+    promptOverride: body.promptOverride,
     lean: leanPrompt,
   });
 
@@ -727,16 +739,18 @@ async function prepareGeneration(body, mode, onProgress) {
   // no existir cuando vuelvas de la revisión. Si la generación se cae a mitad,
   // el HTML igual queda guardado y sin esta ficha nadie sabría a qué tramo de
   // qué secuencia pertenece. Al terminar se reescribe completa.
-  saveMeta(outPaths.meta, Object.assign(
-    positionRecord({ sequenceName, markerSlug, marker }),
-    {
-      version, model: config.model, provider: config.provider, mode,
-      instruction, createdAt: new Date(Date.now()).toISOString(),
-      // Se termina de escribir cuando el render sale bien; si esto queda en
-      // true, la generación no llegó al final.
-      pending: true,
-    }
-  ));
+  // Los tres niveles del contexto se anotan acá por el mismo motivo que el
+  // tramo: es lo que se le está por mandar al modelo, y escribirlo antes de
+  // gastar la llamada es lo que hace que sobreviva a una generación que se cae.
+  const prompts = promptRecord(body);
+  writeVersionMeta(outPaths.meta, fichaDeGeneracion({
+    sequenceName, markerSlug, marker,
+    version, model: config.model, provider: config.provider, mode,
+    instruction, prompts,
+    // Se termina de escribir cuando el render sale bien; si esto queda en
+    // true, la generación no llegó al final.
+    pending: true,
+  }));
 
   // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
   // Si el panel no mandó el HTML previo, lo leemos del disco.
@@ -849,7 +863,7 @@ async function prepareGeneration(body, mode, onProgress) {
     assetInfos.length + ' img a incrustar',
     (Array.isArray(transcript) ? transcript.length : 0) + ' segmentos de clase' + (leanPrompt ? ' (no se reenvían)' : ''),
     (Array.isArray(markerTranscript) ? markerTranscript.length : 0) + ' del marcador',
-    'objetivo ' + ((objective || '').trim() ? 'sí' : 'NO'),
+    'objetivo ' + objectiveLabel(body),
     'instrucción ' + ((instruction || '').trim() ? 'sí' : 'NO'),
     // Qué niveles del estilo viajaron. "prompt general no" fue la línea que dejó
     // ver que el segundo editor generaba sin nada; decir SÍ y callar cuáles
@@ -928,29 +942,88 @@ async function prepareGeneration(body, mode, onProgress) {
   return {
     ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
     durationSec, videoExt, version, markerSlug, baseDir,
-    usage, background: withBackground, instruction, marker, assetsDir, sequenceName,
+    usage, background: withBackground, instruction, prompts, marker, assetsDir, sequenceName,
     model: config.model, provider: config.provider, mode, adjustment, modelMs,
   };
 }
 
 /**
- * Dónde iba este recurso en el timeline: la ficha que permite corregirlo dentro
- * de un mes, cuando el marcador ya no exista en la secuencia.
+ * Los TRES NIVELES que este pedido le mandó al modelo, guardados tal como
+ * salieron: el prompt del curso, el de la secuencia y el objetivo de la clase.
+ * (El cuarto —la instrucción del marcador— ya vive en `instruction`.)
  *
- * `marker.start` y `marker.duration` son lo importante. `sequenceName` va
- * aparte porque la carpeta que contiene el archivo es el slug del nombre (sin
- * acentos ni mayúsculas) y no alcanza para volver a encontrar la secuencia en
- * Premiere. El `guid` viaja por si el marcador todavía existe.
+ * Existe para poder contestar, dentro de un mes, con qué contexto se generó
+ * este recurso. Hasta acá la ficha guardaba solo la instrucción, así que la
+ * pestaña de correcciones no tenía manera de mostrar lo que el marcador recibió:
+ * lo más cerca que podía llegar era leer los archivos de HOY, que pueden haber
+ * cambiado veinte veces desde entonces. Con esto guardado, "esto es lo que se
+ * mandó" pasa a ser un dato y no una reconstrucción, y el panel puede decir cuál
+ * de las dos cosas está mostrando.
+ *
+ * Se escribe con lo que devuelve `promptLevels`, o sea DESPUÉS del ajuste local
+ * de una corrección: lo que se anota es lo que viajó, no lo que decía el
+ * archivo. Que hubo ajuste queda dicho aparte, en `adjusted`, y eso NO es
+ * decoración: es lo único con lo que el panel puede distinguir por qué lo que se
+ * mandó no coincide con el archivo de hoy. Sin ese dato la fila le echaba la
+ * culpa al archivo ("dice otra cosa hoy") de una diferencia que había puesto el
+ * editor a mano, sobre un archivo que nunca se tocó.
  */
-function positionRecord(src) {
-  const marker = (src && src.marker) || {};
-  return {
-    sequenceName: (src && src.sequenceName) || '',
-    markerSlug: (src && src.markerSlug) || '',
-    markerName: marker.name || '',
-    markerGuid: marker.guid || '',
-    marker: marker,
+function promptRecord(body) {
+  body = body || {};
+  const levels = promptLevels(body);
+  const rec = {
+    course: levels.course,
+    sequence: levels.sequence,
+    objective: levels.objective,
   };
+  // Un job encolado por un panel anterior a la 1.5.0 mandaba un solo texto ya
+  // resuelto y sin decir de qué nivel era. Queda anotado como lo que es: no se
+  // sabe. Ponerlo en `course` a secas sería inventar el único dato por el que se
+  // mira esta ficha.
+  if (levels.unknown) rec.unknownLevel = true;
+  const a = levels.adjusted;
+  // El objetivo entra en la cuenta igual que los otros dos: también se ajusta en
+  // la fila y también termina no coincidiendo con lo que el panel dice hoy.
+  if (a.course || a.sequence || a.objective) {
+    rec.adjusted = { course: a.course, sequence: a.sequence, objective: a.objective };
+  }
+  return rec;
+}
+
+/**
+ * La ficha de una generación, con los campos que salen de ELLA y no del render.
+ *
+ * La escriben los dos momentos de una generación: antes de gastar la llamada al
+ * modelo (con `pending: true`, para que sobreviva a que se caiga a mitad) y
+ * cuando el render salió bien (que la reemplaza entera). Los dos escriben lo
+ * mismo, porque es la misma versión; lo que cambia es lo que recién se sabe al
+ * final, y eso entra por `extra`.
+ *
+ * Está en una función y no repetida en los dos lugares porque los tres niveles
+ * del contexto tienen que estar en las DOS: mientras cada write listaba sus
+ * campos a mano, olvidarse de repetir uno al final lo borraba al terminar, y de
+ * una generación exitosa dejaba de saberse con qué se hizo. Nada falla cuando
+ * eso pasa: se descubre un mes después, abriendo la fila que iba a decirlo.
+ *
+ * `g` habla el vocabulario de la generación (lo que devuelve `prepareGenerate`);
+ * la forma del archivo la pone `writeVersionMeta`, que es su dueña.
+ */
+function fichaDeGeneracion(g, extra) {
+  g = g || {};
+  return Object.assign({
+    sequenceName: g.sequenceName, markerSlug: g.markerSlug, marker: g.marker,
+    version: g.version,
+    model: g.model, provider: g.provider, mode: g.mode,
+    instruction: g.instruction,
+    adjustment: g.mode === 'adjust' ? g.adjustment : undefined,
+    prompts: g.prompts,
+    background: g.background,
+    // Antes de renderizar todavía no hay archivo de video: el formato lo pone el
+    // que ya lo escribió.
+    format: g.format || g.videoExt,
+    createdAt: new Date(Date.now()).toISOString(),
+    pending: g.pending,
+  }, extra || {});
 }
 
 /**
@@ -993,12 +1066,13 @@ async function renderPrepared(prepared, onProgress) {
   });
   const renderMs = Date.now() - renderStartedAt;
 
-  saveMeta(prepared.metaPath, Object.assign(positionRecord(prepared), {
-    instruction: prepared.instruction, version: prepared.version,
-    model: prepared.model, provider: prepared.provider, mode: prepared.mode,
-    adjustment: prepared.mode === 'adjust' ? prepared.adjustment : undefined,
-    background: prepared.background, format: prepared.videoExt,
-    createdAt: new Date(Date.now()).toISOString(),
+  // La ficha se reescribe COMPLETA acá, así que se arma del mismo `prepared` que
+  // se anotó antes de llamar al modelo: lo único que se le suma es lo que recién
+  // ahora se sabe (que llegó al final, cuánto tardó, y qué había antes). Mientras
+  // los dos registros se escribían campo por campo cada uno, olvidarse de repetir
+  // uno acá lo borraba al terminar, y solo las generaciones que se caían quedaban
+  // auditables — que es exactamente al revés.
+  writeVersionMeta(prepared.metaPath, fichaDeGeneracion(prepared, {
     // Cuánto costó hacer ESTA versión, por etapa y en ms. Vive en la meta y no
     // solo en la cola porque acá sobrevive a cerrar Premiere: dentro de un mes
     // el recurso sigue sabiendo lo que tardó. `modelMs` es 0 en los renders que
@@ -1038,6 +1112,9 @@ function estimateTokens(body) {
         // proyectos que más contexto mandan.
         generalInstruction: body.generalInstruction || '',
         sequenceInstruction: body.sequenceInstruction || '',
+        // Un ajuste local cambia el tamaño del pedido, así que también cambia el
+        // semáforo: el estimado tiene que contar el prompt que se va a mandar.
+        promptOverride: body.promptOverride,
         stillsCount: stills.length,
         lean: body.mode === 'adjust',
       });
@@ -1547,7 +1624,16 @@ function listMarkerVersions(body) {
  * para toda la lista y se pasan ya cargados.
  */
 function findMarkerPosition(baseDir, slug, versions, ctx) {
-  const out = { start: null, duration: null, markerName: '', markerGuid: '', instruction: '', history: [], background: false, source: '' };
+  const out = {
+    start: null, duration: null, markerName: '', markerGuid: '', instruction: '',
+    history: [], background: false, source: '',
+    // Los tres niveles con los que se generó, y de qué versión salió ese
+    // registro. 0 = ninguna lo guardó (un recurso generado antes de que la ficha
+    // empezara a anotarlo, o una edición manual sin nada atrás): entonces no se
+    // puede saber qué se mandó, y eso hay que DECIRLO, no rellenarlo con los
+    // archivos de hoy y callarse.
+    prompts: null, promptsVersion: 0,
+  };
 
   // 1) La ficha, empezando por la versión más nueva. Se recorren TODAS y no se
   // corta en la primera que tiene el tramo: el encargo y el fondo pueden faltar
@@ -1562,6 +1648,14 @@ function findMarkerPosition(baseDir, slug, versions, ctx) {
     const encargo = String(meta.instruction || '').trim();
     if (!out.instruction && encargo && encargo !== '(edición manual)') out.instruction = encargo;
     if (!out.history.length && Array.isArray(meta.history)) out.history = meta.history;
+    // Se recorre de la versión más nueva a la más vieja, así que la primera que
+    // aparece es la última que lo guardó. Un render manual no anota nada (no
+    // llamó al modelo), y ésa es justo la razón de seguir bajando en vez de
+    // quedarse con la ficha de arriba.
+    if (!out.prompts && meta.prompts && typeof meta.prompts === 'object') {
+      out.prompts = meta.prompts;
+      out.promptsVersion = versions[i].version;
+    }
     // Con o sin fondo se decidió cuando se generó; la corrección tiene que
     // salir igual o cambiaría de opaco a transparente sin que nadie lo pida.
     // Una ficha que no lo declara no está diciendo "sin fondo": no sabe, y se
@@ -1729,6 +1823,7 @@ function listCorrections(body) {
     const vacio = {
       ok: true, sequenceName, sourceSequenceName: '', folderSlug: '',
       baseDir: activeDir, guessed: false, sources, markers: [],
+      promptsNow: { course: '', sequence: '', failed: false },
     };
     if (!elegida.source) return vacio;
 
@@ -1741,6 +1836,13 @@ function listCorrections(body) {
     // La cola se lee una vez para toda la lista: es el respaldo de los recursos
     // a los que les falta la ficha, y son varios en las clases viejas.
     const queueJobs = loadQueue({ projectPath: body.projectPath }).jobs || [];
+    // Los dos prompts generales COMO ESTÁN HOY, leídos una sola vez para toda la
+    // lista. No son "lo que recibió" ningún recurso: son los archivos de este
+    // momento, y sirven para los recursos cuya ficha no guardó nada — ahí es lo
+    // único que se puede ofrecer, y el panel lo tiene que mostrar diciendo que es
+    // una reconstrucción. Se leen contra la secuencia de ORIGEN, que es la misma
+    // contra la que los va a resolver la cola al momento de generar.
+    const ahora = loadGeneralPrompt({ projectPath: body.projectPath, sequenceName: sourceSequenceName });
     const markers = Object.keys(byHtml).sort(compareSlugs).map((slug) => {
       const versions = byHtml[slug];
       const videos = byVideo[slug] || [];
@@ -1760,11 +1862,23 @@ function listCorrections(body) {
         instruction: pos.instruction,
         history: pos.history,
         background: pos.background,
+        // Lo que este marcador recibió DE VERDAD, si su ficha lo guardó, y de
+        // qué versión salió. `null` = de este recurso no se puede saber.
+        prompts: pos.prompts,
+        promptsVersion: pos.promptsVersion,
       };
     });
     return {
       ok: true, sequenceName, sourceSequenceName, folderSlug,
       baseDir, guessed: elegida.guessed, sources, markers,
+      promptsNow: {
+        course: ahora.projectText || '',
+        sequence: ahora.sequenceText || '',
+        // Que no se hayan podido leer no es lo mismo que que no haya estilo: el
+        // proyecto puede estar en un disco desmontado, y ahí el panel tiene que
+        // decir que no sabe en vez de dibujar dos campos vacíos.
+        failed: ahora.ok === false,
+      },
     };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e), sources: [], markers: [] };
@@ -1796,9 +1910,9 @@ function saveCorrectionPosition(body) {
       name: prev.markerName || (prev.marker || {}).name || markerSlug,
       start, duration, end: start + duration,
     });
-    saveMeta(metaPath, Object.assign({}, prev, positionRecord({
-      sequenceName: body.sequenceName, markerSlug, marker,
-    })));
+    // Merge y no reescritura: contestar dónde iba no puede llevarse puesto con
+    // qué contexto se generó, ni el encargo, ni la historia de versiones.
+    mergeVersionMeta(metaPath, { sequenceName: body.sequenceName, markerSlug, marker });
     return { ok: true, version, start, duration };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
@@ -1871,19 +1985,28 @@ async function renderManualHtml(body, onProgress) {
     assetsDir: path.join(baseDir, '_assets', markerSlug),
   });
 
-  saveMeta(outPaths.meta, Object.assign(positionRecord({ sequenceName, markerSlug, marker }), {
+  writeVersionMeta(outPaths.meta, {
+    sequenceName, markerSlug, marker,
+    version, model: 'manual', provider: 'manual', mode: 'manual-edit',
     // La instrucción de la ficha es el ENCARGO del recurso, no lo último que se
     // le hizo: es lo que se le vuelve a mandar al modelo la próxima vez que se
     // corrija. Escribir acá "(edición manual)" borraba el encargo original, y a
     // partir de ahí las correcciones se pedían sin saber qué era ese gráfico.
     instruction: inheritedInstruction(baseDir, markerSlug, version) || '(edición manual)',
-    version, model: 'manual', provider: 'manual',
-    mode: 'manual-edit', createdAt: new Date(Date.now()).toISOString(),
+    // Los tres niveles del contexto NO van, y se dice acá en vez de dejarlo como
+    // una ausencia que haya que notar: este render no llamó a ningún modelo, así
+    // que no hay ningún prompt que haya recibido. Heredarlos de la versión
+    // anterior —como se hereda el encargo— sería anotar como "lo que se le
+    // mandó" algo que no se mandó nunca. Quien lea la ficha los sigue
+    // encontrando: la búsqueda baja por las versiones anteriores y dice de cuál
+    // los sacó (ver findMarkerPosition).
+    prompts: undefined,
     background: withBackground, format: videoExt,
+    createdAt: new Date(Date.now()).toISOString(),
     // Sin IA de por medio: acá el tiempo del modelo es cero de verdad.
     timings: { modelMs: 0, renderMs: Date.now() - renderStartedAt },
     history: buildHistory(baseDir, markerSlug, version),
-  }));
+  });
 
   return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
 }
@@ -2287,6 +2410,14 @@ module.exports = {
   // Expuesto para el test del ⬇ Log: qué niveles generales viajaron. Vive en
   // prompt/build-context.js, que es donde se decide qué le llega al modelo.
   _generalPromptLabel: generalPromptLabel,
+  // Expuesto para el test de la ficha: los tres niveles que se anotan al generar.
+  // Lo que la ficha guarda decide qué se puede saber de un recurso dentro de un
+  // mes, y llegar hasta acá por el camino largo pide un proveedor de verdad.
+  _promptRecord: promptRecord,
+  // Y la ficha entera de una generación, por lo mismo: es la costura donde se
+  // puede probar que los dos momentos de una generación anotan lo mismo, sin
+  // gastar una llamada al modelo ni un render.
+  _fichaDeGeneracion: fichaDeGeneracion,
   // Expuestos para los tests de continuidad (qué diseño se manda como referencia).
   _referencedMarkerNumbers: referencedMarkerNumbers,
   _listOtherResources: listOtherResources,

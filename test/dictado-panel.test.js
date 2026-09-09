@@ -176,6 +176,7 @@ function dibujarCola(dictado, espia) {
       needsPlacing: function () { return false; },
       regenerate: function (id, texto, idx) { espia.regenerados.push({ id: id, texto: texto, idx: idx }); },
       regenerateFresh: function () {},
+      payloadForEstimate: function (j) { return Promise.resolve(j.payload || {}); },
       timing: { calibrated: function () { return true; }, estimateSec: function () { return 0; } },
     },
     document: {
@@ -218,7 +219,7 @@ test('sin dictado, la caja de feedback de la cola se dibuja y funciona', functio
 
   // Lo que importa no es que la caja exista: es que ESCRIBIR Y MANDAR ande.
   caja.escribir('el título tapa la cara, subilo');
-  const refinar = d.panel.porTexto('↻ Refinar');
+  const refinar = d.panel.porTexto('↻ Aplicar el ajuste');
   ok(refinar, 'el botón de refinar está');
   refinar.click();
   eq(espia.regenerados.length, 1, 'el feedback se mandó');
@@ -236,7 +237,7 @@ test('con dictado, la caja de feedback suma el micrófono sin perder nada', func
 
   const caja = d.panel.buscar('qj-fb-input');
   caja.escribir('subí el título');
-  d.panel.porTexto('↻ Refinar').click();
+  d.panel.porTexto('↻ Aplicar el ajuste').click();
   eq(espia.regenerados[0].texto, 'subí el título', 'y mandar sigue andando igual');
 });
 
@@ -298,7 +299,7 @@ async function dibujarCorreccion(dictado, espia) {
   if (dictado) ctx.HPDictado = dictado;
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'corrections.js']) {
+  for (const f of ['util.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPCorrections.init({
@@ -320,9 +321,9 @@ test('sin dictado, la fila de correcciones se dibuja y encola', async function (
   ok(fila, 'la fila existe: sin esto la pestaña entera queda vacía y no se sabe por qué');
   ok(!fila.buscar('mic-bar'));
 
-  const cajas = fila.porTag('textarea');
-  ok(cajas.length, 'con su caja para escribir qué corregir');
-  cajas[0].value = 'el título tapa la cara';
+  const caja = fila.buscar('corr-input');
+  ok(caja, 'con su caja para escribir qué corregir');
+  caja.value = 'el título tapa la cara';
 
   const enviar = fila.porTexto('↻ Regenerar');
   ok(enviar, 'y su botón');
@@ -338,7 +339,7 @@ test('con dictado, la fila de correcciones suma el micrófono sin perder nada', 
   const { fila } = await dibujarCorreccion(dictadoDeMentira(espia), espia);
   ok(fila.buscar('mic-bar'), 'el micrófono está');
   eq(espia.enganchados[0], 'correccion:Marcador 3');
-  fila.porTag('textarea')[0].value = 'subí el título';
+  fila.buscar('corr-input').value = 'subí el título';
   fila.porTexto('↻ Regenerar').click();
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(espia.encolados.length, 1, 'y encolar sigue andando');
@@ -359,7 +360,7 @@ test('si el micrófono explota al colgarse, el campo se dibuja igual', function 
   ok(caja, 'la caja está');
   ok(!d.panel.buscar('mic-bar'), 'y el micrófono simplemente no aparece');
   caja.escribir('corregí el color');
-  d.panel.porTexto('↻ Refinar').click();
+  d.panel.porTexto('↻ Aplicar el ajuste').click();
   eq(espia.regenerados[0].texto, 'corregí el color');
 });
 

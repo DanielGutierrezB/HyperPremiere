@@ -126,6 +126,91 @@ function readMeta(metaPath) {
   }
 }
 
+// ── La ficha de una versión (.meta.json) ─────────────────────────────
+//
+// Al lado de cada `<marcador> vN [modelo].html` hay un `.meta.json` con TODO lo
+// que de esa versión no se puede reconstruir mirando el disco: en qué segundo
+// de qué secuencia iba (el marcador de Premiere puede ya no existir cuando
+// vuelvas de la revisión), qué se le pidió, con qué contexto se generó, cuánto
+// tardó y qué hubo antes. La pestaña Corrections vive de este archivo.
+//
+// La forma está declarada UNA vez, acá, y no en cada uno de los cuatro lugares
+// que la escriben. Mientras cada quien armaba su registro con su propio
+// `Object.assign`, la forma del archivo persistido no estaba escrita en ningún
+// lado: se deducía leyendo siete lugares, y "cuál preserva qué" eran cuatro
+// decisiones sueltas que nadie podía comparar. Los que escriben ahora dicen QUÉ
+// escriben; el CÓMO —el orden, qué se omite, qué se conserva— es de este módulo,
+// que es el que ya era dueño de saveMeta/readMeta.
+
+/**
+ * El registro de una versión, con sus campos en el orden en que se leen.
+ *
+ * Un campo `undefined` no se escribe. Eso es lo que deja que un pedido diga con
+ * una línea que un campo NO le corresponde —el render manual y `prompts`— en
+ * vez de armar otro objeto a mano y que la omisión haya que notarla.
+ */
+function versionMetaRecord(campos) {
+  const c = campos || {};
+  const marker = (c.marker && typeof c.marker === 'object') ? c.marker : {};
+  const rec = {
+    // Dónde iba. Es lo que Corrections necesita para devolver el clip corregido
+    // al mismo segundo y con la misma duración.
+    sequenceName: String(c.sequenceName || ''),
+    markerSlug: String(c.markerSlug || ''),
+    markerName: String(c.markerName || marker.name || ''),
+    markerGuid: String(c.markerGuid || marker.guid || ''),
+    marker,
+    // Qué versión es y con qué se hizo.
+    version: c.version,
+    model: c.model,
+    provider: c.provider,
+    mode: c.mode,
+    // Qué se le pidió: el encargo del recurso, la corrección de esta ronda si la
+    // hubo, y los tres niveles del contexto que viajaron al modelo.
+    instruction: c.instruction,
+    adjustment: c.adjustment,
+    prompts: c.prompts,
+    // Cómo salió el video (decide el formato de una corrección).
+    background: c.background,
+    format: c.format,
+    // Cuándo, si quedó a medias, cuánto costó y qué hubo antes.
+    createdAt: c.createdAt,
+    pending: c.pending,
+    timings: c.timings,
+    history: c.history,
+  };
+  Object.keys(rec).forEach((k) => { if (rec[k] === undefined) delete rec[k]; });
+  return rec;
+}
+
+/**
+ * Escribe la ficha ENTERA: lo que no venga en `campos` deja de estar en el
+ * archivo.
+ *
+ * Es lo que se quiere en los tres momentos que la escriben de punta a punta —la
+ * que se anota antes de gastar la llamada al modelo, la que la reemplaza cuando
+ * el render sale bien, y la del HTML editado a mano—: cada uno sabe todo lo que
+ * hay que saber de esa versión, y un campo que sobreviviera de la escritura
+ * anterior estaría hablando de otro intento. Por ejemplo `pending: true`, que se
+ * pone al principio justamente para que su AUSENCIA signifique "llegó al final".
+ */
+function writeVersionMeta(metaPath, campos) {
+  return saveMeta(metaPath, versionMetaRecord(campos));
+}
+
+/**
+ * Escribe SOLO los campos que le pasan y conserva el resto de la ficha.
+ *
+ * Es para los retoques que no son una generación: hoy, anotar a mano el tramo de
+ * un recurso viejo. Contestar dónde iba no puede llevarse puesto con qué
+ * contexto se generó — la fila pasaría de "esto es lo que se mandó" a "esto es
+ * una reconstrucción" por haber respondido una pregunta que no tiene que ver.
+ */
+function mergeVersionMeta(metaPath, campos) {
+  const prev = readMeta(metaPath) || {};
+  return saveMeta(metaPath, Object.assign({}, prev, versionMetaRecord(campos)));
+}
+
 /** El contenido de un archivo de texto, o null si no está (que no es lo mismo que vacío). */
 function readTextFileOrNull(file) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
@@ -222,11 +307,23 @@ function loadGeneralPrompt(body) {
  *
  * Cada campo del panel escribe en su propio archivo y en ninguno más: vaciar el
  * de una clase la deja con el del curso y nada más, y no toca el del curso.
- * Vaciar el de una secuencia borra su archivo —así el disco no queda diciendo
- * "esta clase tiene el suyo" con nada adentro— y borra también el del nombre
- * viejo, porque si quedara, el texto que el editor acaba de borrar volvería en
- * la próxima lectura. Vaciar el del curso se anota, pero no crea la carpeta solo
- * por eso: misma regla que la cola, abrir el panel no deja carpetas por ahí.
+ *
+ * Vaciar CUALQUIERA de los dos borra su archivo. El de la secuencia borra
+ * además el del nombre viejo, porque si quedara, el texto que el editor acaba
+ * de borrar volvería en la próxima lectura. El del curso se comportaba distinto
+ * —dejaba un `prompt-general.md` de cero bytes— y esa asimetría no era gratis:
+ * ese archivo vive en la raíz del proyecto, al lado del `.prproj`, así que viaja
+ * a la máquina de los demás editores y aparece en su carpeta sin decir nada. Lo
+ * que se pierde borrándolo es el matiz de "el proyecto DECIDIÓ que no hay
+ * estilo" frente a "todavía nadie decidió", que solo lo miraba la migración del
+ * localStorage (ver migrate() en cep/js/general-prompt.js): en una máquina que
+ * nunca migró, vaciar el del curso deja que lo local suba en su lugar. Es un
+ * caso angosto —hace falta un panel anterior a la 1.5.0 sobre un proyecto que
+ * ya usó estos archivos—, se anuncia en el log cuando pasa y se deshace
+ * vaciando el campo otra vez; basura que viaja con el proyecto, no.
+ *
+ * Vaciar tampoco crea la carpeta solo por eso: misma regla que la cola, abrir el
+ * panel no deja carpetas por ahí.
  */
 function saveGeneralPrompt(body) {
   body = body || {};
@@ -237,12 +334,13 @@ function saveGeneralPrompt(body) {
     const file = scope === 'sequence' ? files.sequence : files.project;
     if (!file) return { ok: false, error: 'para guardar el prompt de una secuencia hace falta su nombre' };
     if (!text) {
-      if (scope === 'sequence') {
-        removeIfPresent(file);
-        removeIfPresent(files.sequenceLegacy);
-        return { ok: true, path: file, scope, removed: true };
-      }
-      if (!fs.existsSync(file)) return { ok: true, path: file, scope, created: false };
+      // `removed` es lo que el panel mira para dejar el campo vacío sin volver a
+      // leer, y ahora lo contestan los dos niveles. `created: false` porque
+      // después de esto NO hay archivo: es lo que la caché del panel anota como
+      // "el proyecto no tiene el del curso".
+      removeIfPresent(file);
+      if (scope === 'sequence') removeIfPresent(files.sequenceLegacy);
+      return { ok: true, path: file, scope, removed: true, created: false };
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, text ? text + '\n' : '', 'utf8');
@@ -341,6 +439,8 @@ module.exports = {
   paths,
   saveMeta,
   readMeta,
+  writeVersionMeta,
+  mergeVersionMeta,
   readTextFileOrNull,
   // El estilo del curso y el de la clase, que viajan con el .prproj en vez de
   // con la máquina que los escribió.

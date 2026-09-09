@@ -119,6 +119,7 @@ server.listen(puerto, "127.0.0.1", function () {
   console.log("  " + url + "?e=whisper          falta el Whisper local");
   console.log("  " + url + "?e=otra-secuencia   Premiere está parado en otra secuencia");
   console.log("  " + url + "?e=conflicto        el prompt general de esta máquina no coincide con el del proyecto");
+  console.log("  " + url + "?e=sin-secuencia    Premiere sin secuencia al frente: el bloque de la clase no se ofrece");
   console.log("  " + url + "?e=sin-medir        todavía no se generó con ningún proveedor (⚙ lo dice)");
   console.log("  " + url + "?e=api-key          el CLI de Claude entra con API key, así que ⚙ sí promete el 1M");
   console.log("  " + url + "?e=cursor           Cursor elegido y con sesión");

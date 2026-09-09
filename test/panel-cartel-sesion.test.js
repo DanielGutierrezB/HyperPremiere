@@ -166,6 +166,11 @@ test('mientras se averigua, el panel se queda callado', async function () {
   });
   await asentar();
   ok(p.resumen().indexOf('iniciá sesión') === -1, 'sin respuesta todavía, no se asusta a nadie');
+  // Y no alcanza con que no diga la frase: mientras no se sabe, el semáforo no
+  // se pone en ámbar. Arrancar en "no" pinta un ⚠ SIN MOTIVO —el motivo todavía
+  // no lo contestó nadie— y eso es el bug original con el cartel vacío.
+  ok(p.resumen().indexOf('⚠') === -1, 'ni se dibuja el ⚠ con el motivo en blanco');
+  has(p.resumen(), '✓', 'no saber todavía no es un problema del editor');
   soltar({ estado: 'sin-sesion', resumen: 'Esta máquina no tiene sesión de Claude.', detalle: '' });
   await asentar();
   has(p.resumen(), 'iniciá sesión en Claude', 'y cuando la respuesta llega, se dice');

@@ -1155,8 +1155,20 @@
     return prepareContextFor(projectPath, seqName);
   });
 
-  // Encola la generación IA de un marcador. staged=true → solo encola (no arranca).
-  function enqueueMarkerGeneration(marker, mode, staged) {
+  /**
+   * Lo que se le manda al modelo por este marcador: TODO el pedido, armado en un
+   * solo lugar.
+   *
+   * Tiene dos lectores y por eso está separado de quien encola: el job que se va
+   * a la cola y el ESTIMADO de tokens de la tarjeta. Mientras el estimado armaba
+   * su propio cuerpo —sin los dos prompts generales, sin el ajuste, sin el modo,
+   * y con las imágenes del marcador nada más— el semáforo decía ≈4.875 tokens y
+   * se mandaban ≈9.207: 47% corto, y siempre para el mismo lado. El motor los
+   * contaba bien (estimateTokens en engine.js); el que no se los pasaba era el
+   * que llamaba. Con una sola función, el estimado no puede quedarse atrás de lo
+   * que viaja sin que se rompa también la generación.
+   */
+  function buildMarkerPayload(marker, mode) {
     var markerKey = markerKeyFor(marker);
     var data = HPStore.getMarkerData(markerKey);
     // Las imágenes del prompt general siguen siendo de esta secuencia; los dos
@@ -1194,6 +1206,13 @@
     // justo lo que la referencia estaba ahí para sostener. Ahora viajan siempre;
     // la selección por imagen sigue disponible en la caja de feedback de la Cola.
     if (mode === "adjust") payload.adjustment = data.instruction || "";
+    return payload;
+  }
+
+  // Encola la generación IA de un marcador. staged=true → solo encola (no arranca).
+  function enqueueMarkerGeneration(marker, mode, staged) {
+    var markerKey = markerKeyFor(marker);
+    var payload = buildMarkerPayload(marker, mode);
     var job = {
       kind: mode === "generate" ? "generate" : "feedback",
       payload: payload, seqName: currentSequenceName, projectPath: currentProjectPath,
@@ -1383,24 +1402,29 @@
       sBadge.textContent = generated ? "✓" : "";
     }
 
+    // En qué modo saldría este marcador si lo mandaran ahora: la primera vez se
+    // genera de cero y después se refina sobre la última versión. Lo miran los
+    // dos botones que encolan y el estimado, que tiene que estimar ESE pedido
+    // (el refinado manda un prompt lean y cuenta distinto).
+    function modoDeGeneracion() {
+      return HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
+    }
+
     function doGenerate() {
-      var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
-      enqueueMarkerGeneration(marker, mode);
+      enqueueMarkerGeneration(marker, modoDeGeneracion());
     }
     genBtn.addEventListener("click", doGenerate);
     regenBtn.addEventListener("click", function () {
       enqueueMarkerGeneration(marker, "regen");
     });
     queueBtn.addEventListener("click", function () {
-      var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
-      enqueueMarkerGeneration(marker, mode, true); // staged: no arranca
+      enqueueMarkerGeneration(marker, modoDeGeneracion(), true); // staged: no arranca
     });
 
     // Para los botones globales "Generar listos" / "Agregar listos a la cola".
     card._runGen = doGenerate;
     card._runGenStaged = function () {
-      var mode = HPStore.getMarkerData(markerKey).generated ? "adjust" : "generate";
-      enqueueMarkerGeneration(marker, mode, true);
+      enqueueMarkerGeneration(marker, modoDeGeneracion(), true);
     };
     card._isReady = function () {
       return !!(HPStore.getMarkerData(markerKey).instruction || "").trim();
@@ -1478,20 +1502,14 @@
     times.className = "marker-times";
 
     // Estima los tokens de entrada de este marcador (sin llamar al modelo).
+    //
+    // Sobre el MISMO pedido que armaría el botón de al lado, con el modo que le
+    // tocaría ahora (ver buildMarkerPayload): el prompt del curso, el de la
+    // clase, las imágenes del prompt general y el prompt lean del refinado
+    // cambian el número, y un semáforo que los omite se queda corto justo en los
+    // proyectos que más contexto mandan.
     function updateEstimate() {
-      var d = HPStore.getMarkerData(markerKey);
-      var segs = HPStore.getTranscript() || [];
-      var mt = HPTranscript.sliceForMarker(segs, marker.start, marker.start + marker.duration, HPStore.getTranscriptOffset());
-      var body = {
-        objective: HPStore.getObjective(),
-        transcript: segs,
-        marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
-        markerTranscript: mt,
-        instruction: d.instruction || "",
-        stills: d.stills || [],
-        resources: d.resources || []
-      };
-      hpCall("estimateTokens", body)
+      hpCall("estimateTokens", buildMarkerPayload(marker, modoDeGeneracion()))
         .then(function (r) {
           if (r && r.ok) {
             var extra = [];
@@ -1616,11 +1634,13 @@
       for (var i = 0; i < all.length; i++) {
         if (all[i] !== card) all[i].open = false;
       }
-      // Plegar el setup y los prompts generales → máximo espacio al marcador.
-      var ctx = document.getElementById("context-section");
-      if (ctx) ctx.open = false;
-      var gen = document.getElementById("general-section");
-      if (gen) gen.open = false;
+      // Plegar el setup y los DOS bloques de estilo → máximo espacio al
+      // marcador. Son dos ids desde que el del curso se fue arriba: si se
+      // pliega uno solo, el acordeón deja media pantalla ocupada.
+      ["context-section", "general-section", "general-sequence-section"].forEach(function (id) {
+        var s = document.getElementById(id);
+        if (s) s.open = false;
+      });
     });
 
     syncUI();

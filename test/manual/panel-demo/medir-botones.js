@@ -72,10 +72,16 @@ const CAPS = arg('--capturas', '');
 // así, la corrida falla en vez de mentir.
 const VISTAS = [
   { nombre: 'marcadores', escenario: '', abrir: 'todoAbierto', esperar: '.marker-card[open]' },
-  { nombre: 'prompts-generales', escenario: '', abrir: 'promptsGenerales', esperar: '#general-section[open] #general-sequence-instruction' },
+  { nombre: 'prompts-generales', escenario: '', abrir: 'promptsGenerales', esperar: '#general-section[open] #general-instruction, #general-sequence-section[open] #general-sequence-instruction' },
+  { nombre: 'sin-secuencia', escenario: '?e=sin-secuencia', abrir: 'promptsGenerales', esperar: '#general-section[open] #general-instruction' },
   { nombre: 'cola', escenario: '', abrir: 'cola', esperar: '.qbtn-fresh' },
   { nombre: 'cola-editor', escenario: '', abrir: 'colaEditor', esperar: '.code-edit' },
   { nombre: 'corrections', escenario: '', abrir: 'corrections', esperar: '.corr-row' },
+  // El contexto de cada fila desplegado, y con un nivel ajustado a mano para que
+  // aparezca el botón de guardarlo en el proyecto. Es su propia vista porque ese
+  // botón no existe hasta que hay algo que guardar, así que en `corrections` no
+  // se mide nunca — y es el único botón nuevo de la fila.
+  { nombre: 'corrections-contexto', escenario: '', abrir: 'correctionsContexto', esperar: '.corr-level-save' },
   { nombre: 'config', escenario: '', abrir: 'config', esperar: '#btn-save-config' },
   { nombre: 'ayuda', escenario: '', abrir: 'ayuda', esperar: '#btn-help-close' },
   { nombre: 'mic-medidor', escenario: '', abrir: 'micMedidor', esperar: '.mic-meter, .mic-medidor, #mic-status' },
@@ -120,14 +126,19 @@ const ABRIR = async function (modo) {
   if (modo === 'todoAbierto') {
     abrirDetalles();
   } else if (modo === 'promptsGenerales') {
-    // El bloque de los dos prompts generales no se puede medir con `todoAbierto`:
-    // main.js tiene un acordeón, y abrir la tarjeta de un marcador PLIEGA este
-    // bloque para darle la pantalla al marcador. Así que se cierran las tarjetas
-    // y se abre éste, que es la única forma de verlo con sus dos campos, sus dos
-    // micrófonos y su renglón de qué viaja.
+    // Los dos bloques de estilo no se pueden medir con `todoAbierto`: main.js
+    // tiene un acordeón, y abrir la tarjeta de un marcador los PLIEGA a los dos
+    // para darle la pantalla al marcador. Así que se cierran las tarjetas y se
+    // abren éstos, que es la única forma de verlos con sus dos campos, sus dos
+    // micrófonos y los dos renglones de qué viaja. Son dos y están lejos —el del
+    // curso arriba, el de la clase adentro del área de marcadores—, así que la
+    // foto de esta vista es la que muestra si el panel entero desborda con los
+    // dos desplegados a la vez.
     [].slice.call(document.querySelectorAll('details.marker-card')).forEach(function (d) { d.open = false; });
-    const gen = document.getElementById('general-section');
-    if (gen) gen.open = true;
+    ['general-section', 'general-sequence-section'].forEach(function (id) {
+      const gen = document.getElementById(id);
+      if (gen) gen.open = true;
+    });
     await respirar(400);
   } else if (modo === 'cola' || modo === 'colaEditor') {
     apretar('tab-queue');
@@ -148,6 +159,19 @@ const ABRIR = async function (modo) {
   } else if (modo === 'corrections') {
     apretar('tab-corrections');
     await respirar(1200);
+  } else if (modo === 'correctionsContexto') {
+    apretar('tab-corrections');
+    await respirar(1400);
+    abrirDetalles();
+    await respirar(300);
+    // Tipear de verdad en el campo del curso de la primera fila: el botón de
+    // guardarlo en el proyecto se crea al primer cambio, no antes.
+    const campo = document.querySelector('.corr-level .corr-level-input');
+    if (campo) {
+      campo.value = campo.value + '\nY para este cartel: nada de degradés.';
+      campo.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await respirar(300);
   } else if (modo === 'config') {
     apretar('btn-config');
     await respirar(600);

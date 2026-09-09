@@ -1,12 +1,20 @@
 /**
- * HPGeneralView — el bloque de los prompts generales, en el encabezado del panel.
+ * HPGeneralView — los DOS bloques de prompts generales del panel.
  *
- * Son DOS campos y dos archivos al lado del .prproj, que los administra
+ * Son dos campos y dos archivos al lado del .prproj, que los administra
  * HPGeneral: el "Prompt general" del curso entero (se queda al cambiar de
  * secuencia) y el "Prompt de secuencia" de esta clase. Los dos viajan al modelo,
  * con la instrucción del marcador como tercer nivel. Acá está solamente lo que
- * se ve y se toca: los dos campos, el renglón que dice qué niveles van a viajar y
- * el cartel de cuando esta máquina y el proyecto no dicen lo mismo.
+ * se ve y se toca: los dos campos, el renglón de cada uno y el cartel de cuando
+ * esta máquina y el proyecto no dicen lo mismo.
+ *
+ * Los dos bloques están SEPARADOS en la pantalla, y esta vista maneja los dos:
+ * "Estilo del curso" arriba, junto al Contexto de la clase, porque no es de
+ * ninguna clase; "Estilo de esta secuencia" adentro del área de marcadores,
+ * porque es de ésta y de ninguna otra. Lo que se paga por separarlos es que la
+ * relación entre los dos dejó de verse sola, y lo que la sostiene ahora son los
+ * dos renglones: cada uno nombra al otro bloque, y la precedencia se dice una
+ * sola vez, en el de la secuencia, que es el que gana.
  *
  * Que se diga qué viaja no es decoración: el bug entero fue no poder saberlo. El
  * segundo editor generaba con el campo vacío y el panel se callaba.
@@ -45,10 +53,17 @@
 
   var deps = null;
 
+  // Los dos bloques están separados en la pantalla y cada uno tiene lo suyo: su
+  // badge (lo que se lee plegado) y su renglón. Que compartieran un resumen
+  // combinado sería, en cada uno, decir algo que no es sobre el bloque que se
+  // está mirando.
   var mount = null;
   var summary = null;
+  var seqSummary = null;
   var sourceEl = null;
+  var seqSourceEl = null;
   var conflict = null;
+  var seqSection = null;
 
   // Los dos niveles, cada uno con su campo y su archivo. `scope` es el que
   // entiende HPGeneral.save: cuál de los dos se está guardando.
@@ -78,28 +93,48 @@
     return HPGeneral.describe(c.projectPath, c.sequenceName);
   }
 
-  /** El badge del encabezado plegado: qué niveles viajan y cuántos adjuntos hay. */
+  /** El badge de cada encabezado plegado: qué hay en ESE nivel. */
   function refreshSummary() {
-    if (!summary) return;
     var v = vista();
-    var g = HPStore.getMarkerData(HPStore.GENERAL_KEY);
-    var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
-    // Los adjuntos se cuentan aparte porque son de esta secuencia y de esta
-    // máquina: no van con el texto ni viajan con el proyecto.
-    summary.textContent = v.badge + (n && v.badgeState === "ok" ? " · " + n + " adj." : "");
-    summary.className = "cfg-summary section-state is-" + v.badgeState;
+    if (summary) {
+      summary.textContent = v.courseBadge;
+      summary.className = "cfg-summary section-state is-" + v.courseBadgeState;
+    }
+    if (seqSummary) {
+      var g = HPStore.getMarkerData(HPStore.GENERAL_KEY);
+      var n = (g.stills ? g.stills.length : 0) + (g.resources ? g.resources.length : 0);
+      // Los adjuntos se cuentan en el badge de la secuencia y no en el del curso
+      // porque es donde están, y porque su alcance es el de este bloque: son de
+      // esta secuencia y de esta máquina, y no viajan con el .prproj.
+      var adj = n && v.sequenceBadgeState !== "warn" ? " · " + n + " adj." : "";
+      seqSummary.textContent = v.sequenceBadge + adj;
+      seqSummary.className = "cfg-summary section-state is-" + v.sequenceBadgeState;
+    }
   }
 
-  /** El renglón que dice qué niveles le van a llegar al modelo. */
+  function pintarRenglon(el, texto, estado) {
+    if (!el) return;
+    el.textContent = texto;
+    el.className = "general-source" + (estado ? " is-" + estado : "");
+  }
+
+  /**
+   * Los renglones que dicen qué le va a llegar al modelo. Son dos, uno por
+   * bloque, y cada uno nombra al otro: separados, es lo único que sostiene que
+   * se entienda que los dos viajan y cuál manda. Las palabras las arma
+   * HPGeneral.describe, que es donde se prueban.
+   */
   function pintarOrigen() {
     var v = vista();
-    if (sourceEl) {
-      sourceEl.textContent = v.line;
-      sourceEl.className = "general-source" + (v.lineState ? " is-" + v.lineState : "");
-    }
+    pintarRenglon(sourceEl, v.courseLine, v.courseLineState);
+    pintarRenglon(seqSourceEl, v.sequenceLine, v.sequenceLineState);
     // El rótulo nombra la secuencia: es la mitad de "nunca dudar de dónde estás
     // escribiendo", y la otra mitad es que sean dos campos distintos.
     if (seqLabel) seqLabel.textContent = v.sequenceLabel;
+    // Sin secuencia abierta no hay carpeta donde guardar nada de esta clase, así
+    // que no se ofrece el bloque entero —ni el campo ni las referencias— en vez
+    // de aceptar cosas que no tendrían dónde ir.
+    if (seqSection) seqSection.setAttribute("data-hidden", v.sequenceEnabled ? "false" : "true");
     if (seqRow) seqRow.setAttribute("data-hidden", v.sequenceEnabled ? "false" : "true");
   }
 
@@ -194,6 +229,9 @@
       summary = document.getElementById("general-summary");
       sourceEl = document.getElementById("general-source");
       conflict = document.getElementById("general-conflict");
+      seqSection = document.getElementById("general-sequence-section");
+      seqSummary = document.getElementById("general-sequence-summary");
+      seqSourceEl = document.getElementById("general-sequence-source");
       seqLabel = document.getElementById("general-sequence-label");
       seqRow = document.getElementById("general-sequence-row");
 
@@ -237,6 +275,14 @@
       // También si falló: el renglón tiene que decir que no se pudo leer.
       HPGeneral.migrate(c.projectPath, c.sequenceName).then(repintar, repintar);
     },
+
+    /**
+     * Redibuja los dos campos con lo que hay en la caché, sin migrar ni volver a
+     * montar nada. Lo llama la pestaña de correcciones cuando guarda el prompt
+     * del curso desde una fila: es el mismo archivo, y estos campos no pueden
+     * quedar mostrando el texto anterior.
+     */
+    refresh: function () { pintar(); },
 
     /** Las imágenes del prompt general cambiaron (las cuenta el badge). */
     refreshSummary: refreshSummary

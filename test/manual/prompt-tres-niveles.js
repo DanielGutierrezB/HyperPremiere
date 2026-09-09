@@ -19,6 +19,16 @@
 //
 // Escenario, el real del README: el curso pide paleta azul institucional y esta
 // clase va en blanco y negro.
+//
+// Y después la segunda pregunta, la de la pestaña de correcciones: si el editor
+// abre ese recurso, ve el contexto con el que se generó y lo AJUSTA a mano para
+// esa corrección, ¿llega el ajuste al modelo? Es el punto donde esto se puede
+// volver decorativo, porque la cola relee los prompts del disco justo antes de
+// generar. Así que la segunda parte va de punta a punta también, y con la pestaña
+// de verdad montada: se lista el recurso desde el disco (con lo que su ficha
+// guardó), se editan los tres campos, se aprieta ↻ Regenerar y se vuelca el
+// prompt que salió. Al final se comprueba que los archivos del proyecto siguen
+// diciendo lo mismo que antes.
 
 const fs = require('fs');
 const os = require('os');
@@ -78,6 +88,47 @@ function proveedorEspia(anotar) {
   require.cache[RUTA_PROVEEDOR] = mod;
 }
 
+// Lo que el editor escribe encima, en la fila de correcciones, para ESE pedido.
+const CURSO_AJUSTADO = CURSO +
+  '\nPara este cartel: NADA de degradés ni de glow, que en el proyector se ven sucios.';
+const SECUENCIA_AJUSTADA = SECUENCIA +
+  '\nY en este módulo los carteles ocupan media pantalla, no el ancho completo.';
+const OBJETIVO_AJUSTADO = 'Que el estudiante pueda NOMBRAR los tres componentes sin mirar la pantalla.';
+
+// ── Un DOM mínimo, para poder montar la pestaña de verdad ────────────
+// Es la única forma de que el ajuste salga del mismo lugar del que sale cuando lo
+// hace el editor: un textarea que se edita y un botón que se aprieta.
+
+function elemento(tag) {
+  const el = {
+    tagName: tag, children: [], listeners: {}, style: {},
+    className: '', textContent: '', value: '', title: '',
+    appendChild: function (h) { this.children.push(h); return h; },
+    setAttribute: function (k, v) { this[k] = v; },
+    addEventListener: function (ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
+    emitir: function (ev) { (this.listeners[ev] || []).forEach(function (f) { f(); }); },
+    click: function () { this.emitir('click'); },
+    buscar: function (clase) {
+      for (const h of this.children) {
+        if (h.className === clase) return h;
+        const hit = h.buscar && h.buscar(clase);
+        if (hit) return hit;
+      }
+      return null;
+    },
+    buscarTodos: function (clase) {
+      let out = [];
+      for (const h of this.children) {
+        if (h.className === clase) out.push(h);
+        if (h.buscarTodos) out = out.concat(h.buscarTodos(clase));
+      }
+      return out;
+    },
+  };
+  Object.defineProperty(el, 'innerHTML', { get: function () { return ''; }, set: function () { el.children.length = 0; } });
+  return el;
+}
+
 /** El panel, con los módulos de verdad y el motor de verdad detrás. */
 function montarPanel(proyecto, notas) {
   const almacen = {};
@@ -98,15 +149,18 @@ function montarPanel(proyecto, notas) {
       call: function (m, arg) {
         if (m === 'loadGeneralPrompt') return Promise.resolve(engine.loadGeneralPrompt(arg));
         if (m === 'saveGeneralPrompt') return Promise.resolve(engine.saveGeneralPrompt(arg));
+        if (m === 'listCorrections') return Promise.resolve(engine.listCorrections(arg));
+        if (m === 'readMarkerHtml') return Promise.resolve(engine.readMarkerHtml(arg));
         if (m === 'loadTranscript') return Promise.resolve({ ok: true, found: false });
         if (m === 'mediaHasAudio') return Promise.resolve({ ok: true, hasAudio: false });
         return Promise.resolve({ ok: true });
       },
       callProg: function (m, arg, onP) {
-        if (m === 'prepareGenerate') {
+        if (m === 'prepareGenerate' || m === 'prepareFeedback') {
           // Las notas del motor son la otra evidencia: ahí se anota qué niveles
           // entraron, que es la línea que se mira en el ⬇ Log del editor.
-          return engine.prepareGenerate(arg, function (p) {
+          const fn = m === 'prepareGenerate' ? engine.prepareGenerate : engine.prepareFeedback;
+          return fn(arg, function (p) {
             if (p && p.note) notas.push(p.note);
             if (onP) onP(p);
           });
@@ -116,15 +170,57 @@ function montarPanel(proyecto, notas) {
         return Promise.resolve({ ok: true });
       },
     },
+    // Lo que la pestaña de correcciones necesita del panel, reducido a lo que
+    // hace falta para dibujar una fila y apretarle el botón.
+    HPStills: {
+      fbInit: function () {}, fbClear: function () {}, fbCollect: function () { return []; },
+      createControl: function () { return elemento('div'); },
+    },
+    HPWidgets: {
+      select: function (root) {
+        const api = { value: null, onChange: null, setOptions: function (l, s) { api.value = s; } };
+        root.select = api;
+        return api;
+      },
+      makeCodeEditor: function () {
+        let v = '';
+        return { el: elemento('div'), getValue: function () { return v; }, setValue: function (x) { v = String(x || ''); } };
+      },
+      // Este script no aprieta el guardado explícito: si algo lo llamara, es un
+      // bug y tiene que reventar acá, no escribir el archivo del curso.
+      confirmOverlay: function () { throw new Error('acá NO se guarda nada en el proyecto'); },
+    },
+  };
+  ctx.document = {
+    createElement: elemento,
+    getElementById: function (id) { return ctx.__nodos[id] || null; },
+  };
+  ctx.__nodos = {
+    'corr-list': elemento('div'), 'corr-status': elemento('span'),
+    'corr-picker': elemento('div'), 'btn-load-corrections': elemento('button'),
   };
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'queue.js']) {
+  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'queue.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPStore.setContext(proyecto, 'Clase 12 · Fotografía');
+  ctx.HPCorrections.init({
+    context: function () { return { projectPath: proyecto, sequenceName: 'Clase 12 · Fotografía' }; },
+    refreshContext: function (cb) { cb(); },
+  });
   return ctx;
+}
+
+/** El primer descendiente cuya clase arranca con ese prefijo. */
+function porClase(nodo, prefijo) {
+  for (const h of nodo.children || []) {
+    if (String(h.className).indexOf(prefijo) === 0) return h;
+    const hit = porClase(h, prefijo);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 async function main() {
@@ -167,6 +263,57 @@ async function main() {
   for (let i = 0; i < 400 && !visto; i++) await new Promise((r) => setTimeout(r, 25));
   if (!visto) throw new Error('el pedido nunca llegó al proveedor');
 
+  // 4. La segunda mitad: el recurso ya existe en el disco y su ficha guardó con
+  // qué contexto se generó. Se abre en la pestaña de correcciones, se ajustan los
+  // tres niveles a mano y se manda. Lo que se está probando es que el ajuste
+  // sobreviva a la relectura del disco que hace la cola.
+  const fichaCruda = fs.readFileSync(
+    path.join(path.dirname(proyecto), 'HyperPremiere', 'clase-12-fotografia', 'Marcador 1 v1 [falso].meta.json'), 'utf8');
+  const ficha = JSON.parse(fichaCruda);
+
+  let vistoCorr = null;
+  proveedorEspia(function (arg) { if (visto) vistoCorr = vistoCorr || arg; else visto = arg; });
+
+  ctx.__nodos['btn-load-corrections'].click();
+  for (let i = 0; i < 100 && !ctx.__nodos['corr-list'].children.length; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const fila = ctx.__nodos['corr-list'].children.filter(
+    (c) => String(c.className).indexOf('corr-row') === 0)[0];
+  if (!fila) throw new Error('la pestaña de correcciones no dibujó la fila');
+
+  const panel = fila.buscar('corr-prompts');
+  if (!panel) throw new Error('la fila no muestra con qué contexto se generó');
+  const etiqueta = porClase(panel, 'corr-prompts-tag').textContent;
+  const niveles = panel.buscarTodos('corr-level');
+  const leido = niveles.map((w) => ({
+    rotulo: w.buscar('corr-level-label').textContent,
+    valor: w.buscar('corr-level-input').value,
+  }));
+
+  // Editar como el editor: se cambia el texto y se avisa.
+  function ajustar(i, texto) {
+    const campo = niveles[i].buscar('corr-level-input');
+    campo.value = texto;
+    campo.emitir('input');
+  }
+  ajustar(0, CURSO_AJUSTADO);
+  ajustar(1, SECUENCIA_AJUSTADA);
+  ajustar(2, OBJETIVO_AJUSTADO);
+  const etiquetaAjustada = porClase(panel, 'corr-prompts-tag').textContent;
+
+  fila.buscar('corr-input').value = 'el cartel tapa la cara del profe, subilo y hacelo más chico';
+  const botón = fila.buscar('qbtn qbtn-react');
+  if (!botón) throw new Error('la fila no tiene el botón de regenerar');
+  botón.click();
+
+  for (let i = 0; i < 400 && !vistoCorr; i++) await new Promise((r) => setTimeout(r, 25));
+  if (!vistoCorr) throw new Error('la corrección nunca llegó al proveedor');
+
+  // 5. Y los archivos del proyecto, como quedaron. Es la mitad del contrato.
+  const cursoEnDisco = fs.readFileSync(rutas.project, 'utf8');
+  const secuenciaEnDisco = fs.readFileSync(rutas.sequence, 'utf8');
+
   const partes = [];
   partes.push('# El prompt que recibe el modelo, con los tres niveles puestos');
   partes.push('');
@@ -199,6 +346,64 @@ async function main() {
   partes.push('```');
   partes.push(String(visto.userPrompt || ''));
   partes.push('```');
+
+  // ── Segunda parte: la corrección con los tres niveles ajustados ────
+  partes.push('');
+  partes.push('# Lo mismo, corrigiendo con los tres niveles ajustados a mano');
+  partes.push('');
+  partes.push('El recurso de arriba, abierto en la pestaña de correcciones. La ficha guardó con');
+  partes.push('qué contexto se generó, así que lo que la fila muestra es un dato y no una');
+  partes.push('reconstrucción — el renglón plegado lo dice:');
+  partes.push('');
+  partes.push('```');
+  partes.push('Lo que recibió este marcador ' + etiqueta);
+  partes.push('```');
+  partes.push('');
+  partes.push('## Lo que la ficha había guardado (`.meta.json`)');
+  partes.push('');
+  partes.push('```json');
+  partes.push(JSON.stringify({ instruction: ficha.instruction, prompts: ficha.prompts }, null, 2));
+  partes.push('```');
+  partes.push('');
+  partes.push('## Los cuatro campos, como los abrió la fila');
+  partes.push('');
+  leido.forEach(function (n) {
+    partes.push('- **' + n.rotulo + '** → ' + JSON.stringify(n.valor.slice(0, 90) + (n.valor.length > 90 ? '…' : '')));
+  });
+  partes.push('');
+  partes.push('Se editan los tres primeros y el renglón cambia de dato a ajuste:');
+  partes.push('');
+  partes.push('```');
+  partes.push('Lo que recibió este marcador ' + etiquetaAjustada);
+  partes.push('```');
+  partes.push('');
+  partes.push('## Lo que el motor le dijo al log de la corrección');
+  partes.push('');
+  partes.push('```');
+  partes.push(notas.filter((n) => n.indexOf('prompt general') !== -1).slice(-1).join('\n') || '(nada)');
+  partes.push('```');
+  partes.push('');
+  partes.push('## User prompt de la corrección (con los ajustes aplicados)');
+  partes.push('');
+  partes.push('```');
+  partes.push(String(vistoCorr.userPrompt || ''));
+  partes.push('```');
+  partes.push('');
+  partes.push('## Y los archivos del proyecto, después de todo eso');
+  partes.push('');
+  partes.push('Sin tocar: el ajuste valió para ese pedido y para ninguno más.');
+  partes.push('');
+  partes.push('```');
+  partes.push('$ cat ' + rutas.project);
+  partes.push(cursoEnDisco.trim());
+  partes.push('');
+  partes.push('$ cat ' + rutas.sequence);
+  partes.push(secuenciaEnDisco.trim());
+  partes.push('```');
+  partes.push('');
+  partes.push(cursoEnDisco.trim() === CURSO.trim() && secuenciaEnDisco.trim() === SECUENCIA.trim()
+    ? '✅ Los dos archivos dicen exactamente lo que decían antes de la corrección.'
+    : '❌ ALGUIEN ESCRIBIÓ LOS ARCHIVOS DEL PROYECTO: es la regresión que este diseño evita.');
   const texto = partes.join('\n') + '\n';
 
   if (salida) {

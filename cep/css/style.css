@@ -989,16 +989,22 @@ textarea:focus {
 /* Sugerencia (Prompt general vacío): tenue pero en acento, invita a desplegar. */
 .section-state.is-hint { color: var(--accent); opacity: 0.85; }
 
-/* Prompts generales: encabezado que aplica a los marcadores de abajo. Va pegado
-   a la lista (poco margen) para leerse como "esto afecta lo de acá abajo". */
-.general-section { margin-bottom: 2px; }
-/* La state de "Prompts generales" tiene ambas clases; el id gana a .cfg-summary. */
-#general-summary { margin-left: auto; }
+/* Los dos bloques de prompts generales. El del CURSO va arriba, con el Contexto
+   de la clase, y se espacia como cualquier otra sección; el de la SECUENCIA va
+   pegado a la lista de marcadores (poco margen) porque lo que se escriba ahí
+   afecta exactamente a lo de acá abajo. */
+#general-sequence-section { margin-bottom: 2px; }
+/* Sin secuencia abierta el bloque de la clase no se ofrece: no hay carpeta donde
+   guardar ni el texto ni las referencias. */
+.general-section[data-hidden="true"] { display: none; }
+/* Las state de los dos tienen ambas clases; el id gana a .cfg-summary. */
+#general-summary, #general-sequence-summary { margin-left: auto; }
 
-/* Los dos niveles, uno abajo del otro. El de la secuencia lleva una guarda de
-   color a la izquierda: es la diferencia que hay que ver de un vistazo —lo que
-   se escriba ahí vale SOLO para esta clase— y no cuesta ni una palabra ni una
-   línea de alto, que a 320 px es lo que hay. */
+/* Cada nivel, con su campo y su barra de dictado. El de la secuencia lleva una
+   guarda de color a la izquierda: ahora que están en cajas separadas es un
+   refuerzo y no la única señal, pero sigue siendo lo que se ve antes de leer
+   —esto vale SOLO para esta clase— y no cuesta ni una palabra ni una línea de
+   alto, que a 320 px es lo que hay. */
 .general-level { display: flex; flex-direction: column; gap: 4px; }
 /* El rótulo del de secuencia lleva el nombre de la clase, y los nombres reales
    son largos y sin espacios: sin esto, a 320 px se sale de la caja. */
@@ -1503,6 +1509,8 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 /* Caja de feedback inline en un job terminado */
 .qj-feedback-wrap { margin-top: 5px; }
 .qj-fb-stills { margin-top: 8px; }
+/* La fila del campo: ahora el campo solo. Sigue siendo un flex de un hijo para
+   que el `flex: 1` del textarea siga siendo el que le da el ancho. */
 .qj-feedback { display: flex; gap: 6px; align-items: flex-end; }
 .qj-fb-input {
   flex: 1; resize: vertical; min-height: 34px; font: inherit; font-size: 11px;
@@ -1510,17 +1518,45 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
   color: var(--text-primary); border: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 .qj-fb-input:focus { outline: none; border-color: var(--accent); }
-.qj-feedback .qbtn-react { align-self: stretch; }
-/* "Regenerar desde cero", al lado de Refinar: misma caja y mismo alto, para que
-   no parezca un control menor de la barra. Apagado a propósito —descarta trabajo
-   y es la salida menos frecuente—, y con confirmación, que es lo que de verdad
-   protege del clic errado entre dos botones tan parecidos. */
-.qj-feedback .qbtn-fresh {
-  align-self: stretch; font-size: 11px; padding: 2px 10px;
-  color: var(--text-secondary); border-color: var(--border, rgba(255,255,255,0.18));
+
+/* v1.5.1 — las dos salidas de la ronda, DEBAJO del campo y a lo ancho.
+   Antes iban al costado, en dos columnas altas estiradas al alto del campo. Dos
+   problemas medidos en la maqueta (`medir-botones.js`): el campo se quedaba con
+   lo que sobraba —137 px a 400 y 57 px a 320, con el editor alargándolo a ocho
+   renglones para escribir— y "Regenerar desde cero" pedía 147 px de los 278 de
+   la fila, o sea que la etiqueta más larga decidía el ancho del cuadro de texto.
+   Abajo, cada uno se lleva el renglón entero: 278 px a 320 y 358 a 400, contra
+   los 62 y 140 que piden sus etiquetas.
+
+   El `flex` va acá, sobre los hijos de MI contenedor, y no en los botones: el
+   default del panel es que un botón valga su etiqueta (ver el comentario de
+   `button`), y lo que este caso necesita es lo contrario, repartir a lo ancho.
+   `1 1 100%` con `wrap` es "cada uno en su renglón" sin números elegidos a ojo. */
+.qj-fb-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+
+/* Refinar es LA acción de la caja: es la de todos los días y la que no destruye
+   nada. Mismo tratamiento que "↻ Regenerar" en Corrections —el ámbar de la
+   familia "rehacer", 12 px y 600— porque es la misma acción en el otro lugar
+   donde se da feedback, y dos botones que hacen lo mismo se ven igual. */
+.qj-fb-actions .qbtn-react {
+  flex: 1 1 100%;
+  font-size: 12px; font-weight: 600; padding: 8px 14px;
+  background: rgba(251, 191, 36, 0.12);
 }
-.qj-feedback .qbtn-fresh:hover {
-  color: var(--text-primary); border-color: var(--text-secondary); background: rgba(255,255,255,0.06);
+.qj-fb-actions .qbtn-react:hover { background: rgba(251, 191, 36, 0.22); }
+
+/* "Regenerar desde cero" queda abajo, gris y más chico: descarta el diseño
+   anterior y es la salida menos frecuente, así que no se la invita a apretar.
+   Gris `--text-secondary` y no `--text-muted`: es una acción de verdad y tiene
+   que poder leerse, no desaparecer. Lo que protege del clic errado sigue siendo
+   la confirmación (ver queue-view.js), no el color. */
+.qj-fb-actions .qbtn-fresh {
+  flex: 1 1 100%;
+  font-size: 10.5px; padding: 4px 10px;
+  color: var(--text-secondary); border-color: var(--hairline);
+}
+.qj-fb-actions .qbtn-fresh:hover {
+  color: var(--text-primary); border-color: var(--hairline-strong); background: rgba(255, 255, 255, 0.06);
 }
 .qj-fb-hint {
   margin-top: 6px; font-size: 10px; line-height: 1.35;
@@ -1656,6 +1692,60 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
    reparte entre las dos y quedan separadas a los extremos. */
 .corr-actions .qbtn-stage { margin-left: auto; font-size: 12px; padding: 8px 14px; }
 .corr-actions .qbtn-stage ~ .qbtn-react { margin-left: 0; }
+
+/* "Lo que recibió este marcador": el contexto con el que se generó el recurso,
+   plegado. Va plegado porque son cuatro campos de texto y la fila ya tiene
+   nombre, tramo, versiones, el encargo, la corrección con su micrófono, las
+   miniaturas y el editor de HTML: abiertos, a 320 px no se ve nada más.
+   Todo lo que hay que saber sin abrirlo está en el renglón del resumen. */
+.corr-prompts { margin-top: 6px; }
+/* Mismo triangulito nativo que el editor de HTML, que es el otro desplegable de
+   la fila: dos flechitas distintas en la misma caja se leen como dos cosas
+   distintas. El rótulo y la etiqueta son inline, así que la etiqueta baja sola
+   de renglón cuando no entra —el nombre de la clase la hace larga y a 320 px se
+   saldría de la caja. */
+.corr-prompts summary {
+  font-size: 11px; color: var(--text-secondary); cursor: pointer; line-height: 1.45;
+}
+.corr-prompts-title { color: var(--text-secondary); }
+/* Un dato y una reconstrucción se deciden distinto, así que se ven distinto: el
+   color es lo que se lee sin abrir nada. El ajuste puesto usa el mismo amarillo
+   que Regenerar, que es a dónde va a ir. */
+.corr-prompts-tag { margin-left: 4px; overflow-wrap: anywhere; }
+.corr-prompts-tag.is-saved { color: #0ae98d; }
+.corr-prompts-tag.is-rebuilt { color: var(--warn); }
+.corr-prompts-tag.is-adjusted { color: var(--warn); font-weight: 600; }
+.corr-prompts-note {
+  font-size: 10px; line-height: 1.45; color: var(--text-muted);
+  margin: 6px 0 2px; white-space: normal;
+}
+.corr-prompts-note.is-rebuilt {
+  color: var(--warn);
+  padding-left: 6px; border-left: 2px solid var(--warn);
+}
+/* Cada nivel: rótulo, campo y pie. El pie dice hasta dónde llega lo que hay
+   escrito ahí, que es la única cosa que no se puede deducir mirando el campo. */
+.corr-level { display: flex; flex-direction: column; margin-top: 6px; }
+.corr-level-label {
+  font-size: 10px; color: var(--text-secondary); font-weight: 600;
+  /* Lleva el nombre de la clase, y los nombres reales son largos y sin espacios
+     (mismo motivo que en .general-level .field-label). */
+  overflow-wrap: anywhere;
+}
+.corr-level-input { font-size: 11px; line-height: 1.45; }
+.corr-level-hint { font-size: 10px; line-height: 1.4; color: var(--text-muted); margin-top: 3px; }
+.corr-level-hint.is-adjusted { color: var(--warn); }
+/* Guardar en el archivo del proyecto es la acción de irse del alcance de esta
+   fila, así que no se disfraza de las otras: se alinea a la izquierda, debajo
+   del campo que va a escribir, y sale del flujo de .corr-actions. Aparece recién
+   cuando hay algo que guardar (lo crea el JS al primer tecleo). */
+.corr-level-save {
+  align-self: flex-start; margin-top: 5px;
+  font-size: 11px; color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+.corr-level-save:hover { background: rgba(251, 191, 36, 0.14); }
+.corr-level-save[data-hidden="true"] { display: none; }
 
 /* v1.4.49 — la barra del micrófono, debajo de cada campo de prompt.
    Va abajo y no encima del textarea a propósito: pegada a la esquina se

@@ -31,6 +31,8 @@ function elemento(tag) {
     addEventListener: function (ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
     /** Dispara un evento como si el editor hubiera hecho clic. */
     click: function () { (this.listeners.click || []).forEach(function (f) { f(); }); },
+    /** Cualquier otro evento del editor (tipear en un campo, por ejemplo). */
+    emitir: function (ev) { (this.listeners[ev] || []).forEach(function (f) { f(); }); },
     /** Busca en profundidad por clase, para encontrar controles sin ids. */
     buscar: function (clase) {
       for (const h of this.children) {
@@ -79,6 +81,15 @@ function montarPestana(opts) {
     controles: [], fbAbiertos: [], fbCerrados: [], transcriptsPedidos: [],
     // Por cada encolado, si la cola arranca sola o queda esperando "Iniciar cola".
     modos: [],
+    // Los prompts generales escritos EN EL PROYECTO. Que esto quede vacío es la
+    // mitad del contrato de editar en Corrections: el ajuste no toca los archivos.
+    promptsEscritos: [],
+    // Las confirmaciones que se le pusieron adelante al editor, con su texto: es
+    // donde tiene que estar la advertencia de a quién le llega el cambio.
+    confirmaciones: [],
+    // Los redibujados que se le pidieron al encabezado, que tiene los mismos dos
+    // campos: si el del curso cambió, no puede seguir mostrando el viejo.
+    encabezadoRefrescado: 0,
   };
 
   // El estado del panel es POR SECUENCIA: el mismo marcador tiene un objetivo y
@@ -115,7 +126,24 @@ function montarPestana(opts) {
           setValue: function (v) { valor = String(v == null ? '' : v); },
         };
       },
+      // La confirmación de verdad es un overlay; acá se guarda lo que le dice al
+      // editor y queda un `aceptar()` para seguir, que es lo que hace que el test
+      // pueda comprobar que primero se pregunta y después se escribe.
+      confirmOverlay: function (titulo, armarCuerpo, okLabel, onOk) {
+        const cuerpo = elemento('div');
+        armarCuerpo(cuerpo);
+        const textos = [];
+        (function bajar(n) {
+          if (n.textContent) textos.push(n.textContent);
+          (n.children || []).forEach(bajar);
+        })(cuerpo);
+        espia.confirmaciones.push({
+          titulo: titulo, okLabel: okLabel, texto: textos.join(' '), aceptar: onOk,
+        });
+      },
     },
+    // El encabezado tiene los mismos dos campos que la fila deja editar.
+    HPGeneralView: { refresh: function () { espia.encabezadoRefrescado++; } },
     HPHost: {
       openSequenceAndSeek: function (seq, segundos, cb) {
         espia.saltos.push({ seq: seq, segundos: segundos });
@@ -174,8 +202,27 @@ function montarPestana(opts) {
           return Promise.resolve(opts.transcriptEnDisco ||
             { ok: true, found: false });
         }
+        // Los dos prompts generales viven al lado del .prproj. Escribirlos es la
+        // acción explícita de la fila —la que sale del alcance de esa corrección—,
+        // así que cada llamada se anota con su alcance.
+        if (metodo === 'saveGeneralPrompt') {
+          espia.promptsEscritos.push(arg);
+          if (opts.guardarPromptFalla) return Promise.resolve({ ok: false, error: 'disco de solo lectura' });
+          return Promise.resolve({
+            ok: true, scope: arg.scope, text: String(arg.text || '').trim(),
+            path: '/p/HyperPremiere/' + (arg.scope === 'sequence' ? 'clase-14/prompt-secuencia.md' : 'prompt-general.md'),
+          });
+        }
+        if (metodo === 'loadGeneralPrompt') {
+          return Promise.resolve({ ok: true, projectText: '', sequenceText: '', hasProjectFile: false });
+        }
         return Promise.resolve({ ok: false, error: 'método inesperado: ' + metodo });
       },
+    },
+    localStorage: {
+      getItem: function () { return null; },
+      setItem: function () {},
+      removeItem: function () {},
     },
     document: {
       createElement: elemento,
@@ -184,7 +231,9 @@ function montarPestana(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'corrections.js']) {
+  // `general-prompt.js` va de verdad: guardar para todo el curso desde una fila
+  // pasa por ahí, y con un doble no se probaría el camino que el editor aprieta.
+  for (const f of ['util.js', 'general-prompt.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
 
@@ -252,6 +301,66 @@ function enviarACola(fila) {
   return b;
 }
 
+/** El primer descendiente cuya clase arranca con ese prefijo (las clases mutan). */
+function porClase(nodo, prefijo) {
+  for (const h of nodo.children || []) {
+    if (String(h.className).indexOf(prefijo) === 0) return h;
+    const hit = porClase(h, prefijo);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * El panel "Lo que recibió este marcador": el contexto con el que se generó el
+ * recurso, con sus cuatro niveles accesibles por nombre.
+ *
+ * Se toman en el orden en que se dibujan, que es el orden en que le llegan al
+ * modelo: del curso entero al clip.
+ */
+function contextoDe(fila) {
+  const caja = fila.buscar('corr-prompts');
+  if (!caja) throw new Error('la fila no muestra con qué contexto se generó el recurso');
+  const nombres = ['curso', 'secuencia', 'objetivo', 'encargo'];
+  const niveles = {};
+  caja.buscarTodos('corr-level').forEach(function (w, i) {
+    const campo = w.buscar('corr-level-input');
+    niveles[nombres[i]] = {
+      rotulo: w.buscar('corr-level-label').textContent,
+      campo: campo,
+      pie: function () { return porClase(w, 'corr-level-hint').textContent; },
+      /** El botón de guardar en el proyecto, si la fila ya lo ofrece. */
+      guardar: function () { return porClase(w, 'qbtn corr-level-save'); },
+      /** Escribir como el editor: cambia el texto y avisa. */
+      escribir: function (t) { campo.value = t; campo.emitir('input'); },
+    };
+  });
+  return {
+    caja: caja,
+    /** El renglón que se lee con el panel plegado. */
+    etiqueta: function () { return porClase(caja, 'corr-prompts-tag').textContent; },
+    /** La nota de arriba, que explica qué se está mirando. */
+    nota: function () { return porClase(caja, 'corr-prompts-note').textContent; },
+    niveles: niveles,
+  };
+}
+
+/** Un listado con los prompts del proyecto tal como están HOY. */
+function conPromptsDeHoy(extra) {
+  return Object.assign({
+    promptsNow: { course: 'todo en Inter, acento verde', sequence: 'los gráficos entran de abajo', failed: false },
+  }, extra);
+}
+
+/** El contexto que la ficha de una versión guardó. */
+function promptsGuardados(extra) {
+  return Object.assign({
+    course: 'todo en Inter, acento AZUL',
+    sequence: 'los gráficos entran de costado',
+    objective: 'enseñar deep research',
+  }, extra);
+}
+
 /** El botón de la fila que todavía no sabe dónde iba el recurso. */
 function guardarTramo(fila) {
   const b = fila.buscar('qbtn');
@@ -281,7 +390,7 @@ test('acortar por el medio conserva los dos extremos', function () {
 
 test('corregir encola un refinamiento con el tramo original', async function () {
   const { p, fila } = await cargarFila(recurso());
-  fila.porTag('textarea')[0].value = 'el título tapa la cara, subilo';
+  fila.buscar('corr-input').value = 'el título tapa la cara, subilo';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -307,7 +416,7 @@ test('corregir encola un refinamiento con el tramo original', async function () 
 
 test('enviar a la cola deja la corrección en espera, sin arrancar', async function () {
   const { p, fila } = await cargarFila(recurso());
-  fila.porTag('textarea')[0].value = 'el título tapa la cara, subilo';
+  fila.buscar('corr-input').value = 'el título tapa la cara, subilo';
   enviarACola(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -321,12 +430,12 @@ test('en espera o ya mismo, el job que se manda es el mismo', async function () 
   // La única diferencia tiene que ser cuándo arranca. Si el camino "en espera"
   // armara un payload distinto, el resultado dependería del botón que tocaste.
   const ya = await cargarFila(recurso());
-  ya.fila.porTag('textarea')[0].value = 'subí el título';
+  ya.fila.buscar('corr-input').value = 'subí el título';
   regenerar(ya.fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
   const luego = await cargarFila(recurso());
-  luego.fila.porTag('textarea')[0].value = 'subí el título';
+  luego.fila.buscar('corr-input').value = 'subí el título';
   enviarACola(luego.fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -346,9 +455,9 @@ test('varias filas se pueden dejar juntas antes de largar la cola', async functi
   const { p, filas } = await cargarFila(recurso(), {
     listado: { markers: [recurso(), recurso({ slug: 'Marcador 8', start: 333, duration: 60 })] },
   });
-  filas[0].porTag('textarea')[0].value = 'subí el título';
+  filas[0].buscar('corr-input').value = 'subí el título';
   enviarACola(filas[0]);
-  filas[1].porTag('textarea')[0].value = 'el dato no se lee';
+  filas[1].buscar('corr-input').value = 'el dato no se lee';
   enviarACola(filas[1]);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -368,7 +477,7 @@ test('el encargo original viaja junto a la corrección, no en su lugar', async f
   // que el encargo entero era "subí el título" — y la ficha nueva se quedaba con
   // eso, así que el encargo se perdía para la corrección siguiente.
   const { p, fila } = await cargarFila(recurso({ instruction: 'un gráfico de barras con las ventas por trimestre' }));
-  fila.porTag('textarea')[0].value = 'el título tapa la cara, subilo';
+  fila.buscar('corr-input').value = 'el título tapa la cara, subilo';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -381,10 +490,454 @@ test('sin encargo guardado, la corrección hace de encargo', async function () {
   // Recursos viejos, de antes de que la ficha guardara la instrucción: es
   // preferible un encargo pobre a mandar el hueco.
   const { p, fila } = await cargarFila(recurso({ instruction: '' }));
-  fila.porTag('textarea')[0].value = 'poné el logo arriba';
+  fila.buscar('corr-input').value = 'poné el logo arriba';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados[0].payload.instruction, 'poné el logo arriba');
+});
+
+// ── Lo que recibió este marcador ─────────────────────────────────────
+// El pedido: al abrir un recurso en Corrections, ver el contexto con el que se
+// generó —el prompt del curso, el de la secuencia, el objetivo y su encargo— y
+// poder cambiarlo antes de regenerar.
+//
+// Lo delicado no es mostrarlo, es no mentir. Los recursos generados antes de que
+// la ficha lo anotara NO tienen ese dato, y lo único que se les puede ofrecer son
+// los archivos de HOY, que pueden haber cambiado veinte veces. El editor mira
+// esto para decidir un rediseño, así que las dos cosas se ven distinto y se
+// nombran.
+
+test('con el contexto guardado, la fila muestra lo que se mandó y de qué versión salió', async function () {
+  const { fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+
+  eq(c.niveles.curso.campo.value, 'todo en Inter, acento AZUL',
+    'el del curso COMO ERA entonces, no como está hoy');
+  eq(c.niveles.secuencia.campo.value, 'los gráficos entran de costado');
+  eq(c.niveles.objetivo.campo.value, 'enseñar deep research');
+  eq(c.niveles.encargo.campo.value, 'un gráfico de barras');
+  has(c.etiqueta(), 'lo que se mandó al generar la v4');
+  has(c.nota(), 'tal como salió');
+});
+
+test('sin contexto guardado se dice que es una reconstrucción de los archivos de hoy', async function () {
+  // El caso honesto, y el que define si esto sirve: de un recurso viejo no se
+  // puede saber qué se le mandó. Mostrar los archivos actuales como si fueran "lo
+  // que recibió" es peor que no mostrar nada, porque se rediseña creyéndolo.
+  const { fila } = await cargarFila(recurso({ prompts: null, promptsVersion: 0 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+
+  eq(c.niveles.curso.campo.value, 'todo en Inter, acento verde', 'los archivos de hoy, que es lo único que hay');
+  has(c.etiqueta(), 'no quedó guardado');
+  has(c.etiqueta(), 'reconstruido');
+  has(c.nota(), 'no se puede saber qué se mandó');
+  has(c.nota(), 'COMO ESTÁN HOY');
+  has(c.nota(), 'De acá en adelante sí queda guardado', 'y se dice que esto se arregla solo con el uso');
+});
+
+test('si tampoco se pudieron leer los archivos, no se hace pasar el vacío por estilo', async function () {
+  // El disco del proyecto puede estar desmontado. Un campo vacío ahí no significa
+  // "esta clase no tiene estilo": significa que no se pudo leer, y son dos
+  // decisiones de rediseño opuestas.
+  const { fila } = await cargarFila(recurso({ prompts: null }),
+    { listado: { promptsNow: { course: '', sequence: '', failed: true } } });
+  has(contextoDe(fila).nota(), 'tampoco pude leer los archivos del proyecto');
+  has(contextoDe(fila).nota(), 'no porque no haya estilo');
+});
+
+test('lo que la ficha guardó se muestra aunque el archivo hoy diga otra cosa, y se avisa', async function () {
+  // Es el motivo entero de guardarlo: "por qué este salió distinto" se contesta
+  // comparando lo que recibió contra lo que dice el archivo ahora.
+  const { fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  has(contextoDe(fila).niveles.curso.pie(), 'El archivo del proyecto dice otra cosa hoy');
+});
+
+test('si ese nivel se había ajustado a mano, NO se le echa la culpa al archivo', async function () {
+  // Hay dos motivos opuestos para que lo que se muestra no coincida con el
+  // archivo, y son lo contrario uno del otro: o el archivo cambió desde
+  // entonces, o ese texto nunca salió del archivo porque se ajustó a mano para
+  // aquella corrección. Decir siempre lo primero acusaba a un archivo que nadie
+  // había tocado — y el dato para distinguirlos ya estaba en la ficha, sin usar.
+  const { fila } = await cargarFila(recurso({
+    prompts: promptsGuardados({ adjusted: { course: true, sequence: false, objective: false } }),
+    promptsVersion: 4,
+  }), { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  has(c.niveles.curso.pie(), 'se ajustó a mano para aquella corrección');
+  ok(c.niveles.curso.pie().indexOf('El archivo del proyecto dice otra cosa hoy') === -1,
+    'el archivo no cambió: no puede decir que cambió');
+  has(c.niveles.secuencia.pie(), 'El archivo del proyecto dice otra cosa hoy',
+    'y el nivel que NO se ajustó sigue contando lo que le pasa a él');
+});
+
+test('el panel viene plegado: la fila ya tiene bastante', async function () {
+  // A 320 px, cuatro campos de texto abiertos tapan el campo de corrección y el
+  // botón. Lo que se lee sin abrir nada es el renglón del resumen.
+  const { fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }));
+  const c = contextoDe(fila);
+  eq(c.caja.tagName, 'details', 'un desplegable, no cuatro campos a la vista');
+  eq(c.caja.open, undefined, 'y nadie lo abre al dibujar la lista');
+  ok(c.etiqueta(), 'lo que se lee plegado es el renglón del resumen');
+});
+
+test('sin el tramo no se muestra el contexto: esa fila no puede mandar nada', async function () {
+  const { fila } = await cargarFila(recurso({ start: null, duration: null, timeSource: '', prompts: promptsGuardados() }));
+  eq(fila.buscar('corr-prompts'), null, 'primero se pregunta dónde iba');
+});
+
+// ── Editar es un ajuste PARA ESA CORRECCIÓN ──────────────────────────
+// El prompt del curso lo comparten todas las clases y viaja en el .prproj a las
+// máquinas de los demás editores. Que se reescriba desde una fila de
+// correcciones —donde uno está pensando en un clip suelto— es cómo se le cambia
+// el estilo a un curso entero sin darse cuenta. Ya pagamos un bug de esa familia.
+
+test('editar el prompt del curso en la fila NO escribe el archivo del proyecto', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, acento AZUL, y NADA de degradés');
+  fila.buscar('corr-input').value = 'el título tapa la cara';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos.length, 0, 'ni un archivo del proyecto tocado');
+  eq(p.espia.encolados.length, 1, 'y la corrección salió igual');
+});
+
+test('el ajuste viaja con ESE pedido, para que el motor lo aplique al final', async function () {
+  // No se resuelve acá a propósito: la cola relee los prompts del proyecto justo
+  // antes de generar (para que arreglar el estilo y reintentar salga con el
+  // arreglado). Si la pestaña mandara el texto ya resuelto, esa relectura lo
+  // pisaría y editar acá sería decorativo.
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.secuencia.escribir('los gráficos entran de arriba');
+  fila.buscar('corr-input').value = 'el título tapa la cara';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const pl = p.espia.encolados[0].payload;
+  eq(pl.promptOverride.course, 'todo en Inter, y NADA de degradés');
+  eq(pl.promptOverride.sequence, 'los gráficos entran de arriba');
+  eq(pl.generalInstruction, undefined, 'y el texto resuelto NO viaja: eso lo hace la cola');
+});
+
+test('sin tocar nada no viaja ningún ajuste', async function () {
+  // La contraprueba, y la que mantiene la relectura viva: mandar el contexto
+  // "tal como se mostró" en toda corrección congelaría el prompt del proyecto y
+  // arreglarlo dejaría de servir para nada.
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  fila.buscar('corr-input').value = 'el título tapa la cara';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados[0].payload.promptOverride, undefined);
+});
+
+test('solo viaja el nivel que se tocó', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  contextoDe(fila).niveles.secuencia.escribir('los gráficos entran de arriba');
+  fila.buscar('corr-input').value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  const ov = p.espia.encolados[0].payload.promptOverride;
+  eq(ov.sequence, 'los gráficos entran de arriba');
+  eq(ov.course, undefined, 'el del curso lo sigue diciendo el disco al momento de generar');
+});
+
+test('dejarlo como estaba deshace el ajuste', async function () {
+  // Se prueba a mano todo el tiempo: se cambia algo, se mira, se vuelve atrás. Si
+  // volver atrás dejara el ajuste puesto, el pedido saldría con un prompt idéntico
+  // al del disco pero congelado, y el editor no tendría cómo saberlo.
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('otra cosa');
+  has(c.etiqueta(), 'ajustado para esta corrección');
+  c.niveles.curso.escribir('todo en Inter, acento AZUL');
+  has(c.etiqueta(), 'lo que se mandó al generar la v4', 'vuelve a ser lo que se mandó');
+
+  fila.buscar('corr-input').value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados[0].payload.promptOverride, undefined);
+});
+
+test('con un ajuste puesto, el renglón plegado lo dice y el pie del campo también', async function () {
+  // Hay que poder saber que esa fila va a salir con otro contexto SIN abrirla: es
+  // la única diferencia que no se ve en el resultado hasta mirar el video.
+  const { fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  has(c.etiqueta(), 'ajustado para esta corrección');
+  has(c.niveles.curso.pie(), 'El archivo del curso NO se toca');
+});
+
+test('el encargo editado es el que viaja, y es el que la ficha nueva va a guardar', async function () {
+  // El encargo es el único de los cuatro que es de ESTE recurso y de ningún otro,
+  // así que cambiarlo no le toca nada a nadie: se cambia para siempre y se dice.
+  const { p, fila } = await cargarFila(recurso({ instruction: 'un gráfico de barras' }));
+  const c = contextoDe(fila);
+  eq(c.niveles.encargo.guardar(), null, 'y no necesita ninguna acción aparte para eso');
+  c.niveles.encargo.escribir('un gráfico de barras con las ventas por trimestre');
+  fila.buscar('corr-input').value = 'el título tapa la cara';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.encolados[0].payload.instruction, 'un gráfico de barras con las ventas por trimestre');
+  eq(p.espia.encolados[0].payload.adjustment, 'el título tapa la cara', 'y la corrección, aparte');
+});
+
+test('vaciar el encargo lo manda VACÍO: es un ajuste, como en los otros tres niveles', async function () {
+  // El editor borra el campo entero porque quiere que esta versión nazca sin
+  // encargo escrito —la corrección de ahora dice todo lo que hay que decir—. La
+  // fila se pinta como "ajustado para esta corrección" y el pie promete que la
+  // versión nueva nace con lo que quedó en el campo. Mientras el vacío se leía
+  // como "no hay nada que ajustar" viajaba el encargo anterior: se prometía una
+  // cosa y salía otra, y sin nada que lo dijera.
+  const { p, fila } = await cargarFila(recurso({ instruction: 'un gráfico de barras' }));
+  const c = contextoDe(fila);
+  c.niveles.encargo.escribir('');
+  has(c.etiqueta(), 'ajustado para esta corrección', 'el panel dice que va ajustado');
+
+  fila.buscar('corr-input').value = 'poné una foto en vez del gráfico';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.encolados[0].payload.instruction, '', 'viaja vacío, no el encargo anterior');
+  eq(p.espia.encolados[0].payload.adjustment, 'poné una foto en vez del gráfico');
+});
+
+test('no tocar el encargo lo deja como estaba: vacío no es lo mismo que no tocado', async function () {
+  const { p, fila } = await cargarFila(recurso({ instruction: 'un gráfico de barras' }));
+  contextoDe(fila).niveles.curso.escribir('otra cosa'); // se toca OTRO nivel
+  fila.buscar('corr-input').value = 'subilo un poco';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.encolados[0].payload.instruction, 'un gráfico de barras',
+    'el encargo del recurso sigue viajando: nadie lo tocó');
+});
+
+// ── Guardar para siempre: la acción explícita ────────────────────────
+
+test('el botón de guardar en el proyecto aparece recién cuando hay algo que guardar', async function () {
+  // Dibujarlo siempre pondría dos acciones que salen del alcance de la fila en
+  // cada una de las seis filas de una clase, para el caso raro.
+  const { fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  eq(c.niveles.curso.guardar(), null, 'sin tocar nada, no está');
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  const b = c.niveles.curso.guardar();
+  ok(b, 'y aparece al primer cambio');
+  eq(b.textContent, 'Guardar para todo el curso', 'diciendo hasta dónde llega');
+});
+
+test('el objetivo y el encargo no ofrecen guardarse en el proyecto: no viven ahí', async function () {
+  const { fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }));
+  const c = contextoDe(fila);
+  c.niveles.objetivo.escribir('otro objetivo');
+  c.niveles.encargo.escribir('otro encargo');
+  eq(c.niveles.objetivo.guardar(), null, 'el objetivo se escribe en la pestaña Marcadores');
+  eq(c.niveles.encargo.guardar(), null, 'y el encargo ya queda en la ficha de la versión nueva');
+});
+
+test('guardar para todo el curso pregunta antes, y dice a quién le llega', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+
+  eq(p.espia.promptsEscritos.length, 0, 'todavía no escribió nada');
+  eq(p.espia.confirmaciones.length, 1, 'primero pregunta');
+  const q = p.espia.confirmaciones[0];
+  has(q.texto, 'TODAS las clases de este proyecto');
+  has(q.texto, '.prproj', 'y que el archivo viaja a las otras máquinas');
+  has(q.texto, 'Si solo querés que valga para esta corrección, cancelá',
+    'con la salida a mano: el ajuste ya viaja sin guardar nada');
+  has(q.texto, 'el archivo dice otra cosa hoy',
+    'y el aviso de que se está pisando el texto actual con uno de hace un mes');
+  has(q.texto, 'con los cambios que le haya hecho otro editor',
+    'que es el trabajo concreto que se puede perder acá');
+});
+
+test('aceptar sí escribe el archivo del curso, con su alcance', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos.length, 1);
+  eq(p.espia.promptsEscritos[0].scope, 'project', 'en el archivo del curso');
+  eq(p.espia.promptsEscritos[0].text, 'todo en Inter, y NADA de degradés');
+  has(fila.buscar('corr-state is-ok').textContent, 'le llega a todas las clases');
+  eq(p.espia.encabezadoRefrescado, 1, 'y el encabezado deja de mostrar el viejo');
+});
+
+test('guardar para la secuencia escribe SOLO el de la secuencia', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.secuencia.escribir('los gráficos entran de arriba');
+  eq(c.niveles.secuencia.guardar().textContent, 'Guardar para esta secuencia');
+  c.niveles.secuencia.guardar().click();
+  has(p.espia.confirmaciones[0].texto, 'No toca el prompt general del curso');
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos.length, 1);
+  eq(p.espia.promptsEscritos[0].scope, 'sequence');
+  eq(p.espia.promptsEscritos[0].text, 'los gráficos entran de arriba');
+});
+
+test('el prompt de la secuencia se guarda en la secuencia de ORIGEN del recurso', async function () {
+  // La clase volvió re-cortada: el recurso nació en "Clase 14" y su estilo vive en
+  // esa carpeta. Guardarlo contra la abierta le escribiría el prompt a un corte
+  // que no tiene nada generado, y el recurso seguiría saliendo con el viejo.
+  const { p, fila } = await cargarCruzada();
+  const c = contextoDe(fila);
+  has(c.niveles.secuencia.rotulo, 'Clase 14 v1', 'el rótulo dice de qué clase es');
+  c.niveles.secuencia.escribir('los gráficos entran de arriba');
+  c.niveles.secuencia.guardar().click();
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos[0].sequenceName, 'Clase 14 v1');
+});
+
+test('cancelar la confirmación no escribe nada, y el ajuste sigue en pie', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+  // Cancelar es no llamar a `aceptar`.
+  fila.buscar('corr-input').value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos.length, 0, 'el archivo quedó como estaba');
+  eq(p.espia.encolados[0].payload.promptOverride.course, 'todo en Inter, y NADA de degradés',
+    'y la corrección igual sale con el ajuste');
+});
+
+test('se guarda lo que el campo dice al ACEPTAR, no lo que decía al apretar', async function () {
+  // La confirmación son cinco renglones: entre apretar el botón y aceptar se
+  // sigue pudiendo escribir. Leyendo el texto al apretar, al archivo iba el
+  // viejo y el campo quedaba mostrando otro — en la única función cuyo contrato
+  // entero es que lo que ves es lo que viaja.
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+  // Lo pensó mejor mientras leía la confirmación.
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés ni glow');
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos[0].text, 'todo en Inter, y NADA de degradés ni glow');
+});
+
+test('si siguió escribiendo mientras se guardaba, lo del campo sigue siendo un ajuste', async function () {
+  // Y esta es la otra mitad: después de guardar, "ya no está ajustado" se
+  // VUELVE A COMPARAR en vez de darse por hecho. Forzándolo, el campo mostraba
+  // X, el archivo tenía Y, el pedido no llevaba ajuste y la corrección se
+  // generaba con Y. En silencio.
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+  p.espia.confirmaciones[0].aceptar();
+  // Mientras se escribía el archivo, siguió tecleando.
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés ni glow');
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(p.espia.promptsEscritos[0].text, 'todo en Inter, y NADA de degradés',
+    'al archivo fue lo que había cuando aceptó');
+  fila.buscar('corr-input').value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados[0].payload.promptOverride.course, 'todo en Inter, y NADA de degradés ni glow',
+    'y lo que el campo muestra viaja como ajuste, porque el archivo no lo dice');
+});
+
+test('guardado, deja de ser un ajuste: el pedido ya no lo lleva pegado', async function () {
+  // Después de guardar, el archivo dice esto, así que la cola lo va a releer como
+  // en cualquier otra generación. Seguir mandándolo como ajuste sería congelarlo
+  // justo cuando dejó de hacer falta.
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy() });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  fila.buscar('corr-input').value = 'corregir';
+  regenerar(fila);
+  await new Promise(function (r) { setTimeout(r, 0); });
+  eq(p.espia.encolados[0].payload.promptOverride, undefined);
+});
+
+test('guardado, las otras filas dejan de mostrar el archivo anterior', async function () {
+  // Lo que las filas sin ficha ofrecen es "el archivo del proyecto como está
+  // hoy", y el archivo acaba de cambiar. Quedándose con el anterior, la
+  // corrección que se mandara desde la fila de al lado viajaba con el estilo
+  // viejo sin que nada lo dijera. Esto era lo que el mensaje "las otras filas
+  // siguen mostrando el anterior hasta que recargues la secuencia" tapaba, y el
+  // mensaje se borró porque el problema se arregló.
+  const { p } = await cargarFila(recurso(), {
+    listado: conPromptsDeHoy({
+      markers: [
+        recurso({ slug: 'Marcador 3', prompts: promptsGuardados(), promptsVersion: 4 }),
+        recurso({ slug: 'Marcador 5', markerGuid: 'g-5' }),  // sin ficha: reconstruye
+      ],
+    }),
+  });
+  const filas = p.nodos['corr-list'].children.filter(function (c) {
+    return String(c.className).indexOf('corr-row') === 0;
+  });
+  const conFicha = contextoDe(filas[0]);
+  const reconstruida = contextoDe(filas[1]);
+  eq(reconstruida.niveles.curso.campo.value, 'todo en Inter, acento verde', 'el archivo de hoy');
+
+  conFicha.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  conFicha.niveles.curso.guardar().click();
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  eq(reconstruida.niveles.curso.campo.value, 'todo en Inter, y NADA de degradés',
+    'la otra fila reconstruye con el archivo de AHORA');
+  ok(reconstruida.etiqueta().indexOf('ajustado') === -1,
+    'y no como si el editor lo hubiera tocado en esa fila: es el archivo, no un ajuste');
+});
+
+test('si el proyecto no se puede escribir, se dice y no se hace pasar por guardado', async function () {
+  const { p, fila } = await cargarFila(recurso({ prompts: promptsGuardados(), promptsVersion: 4 }),
+    { listado: conPromptsDeHoy(), guardarPromptFalla: true });
+  const c = contextoDe(fila);
+  c.niveles.curso.escribir('todo en Inter, y NADA de degradés');
+  c.niveles.curso.guardar().click();
+  p.espia.confirmaciones[0].aceptar();
+  await new Promise(function (r) { setTimeout(r, 0); });
+  await new Promise(function (r) { setTimeout(r, 0); });
+
+  has(fila.buscar('corr-state is-error').textContent, 'No pude guardarlo en el proyecto');
 });
 
 test('la fila muestra qué se le había pedido a ese recurso', async function () {
@@ -397,7 +950,7 @@ test('el objetivo de la clase viaja con la corrección', async function () {
   const { p, fila } = await cargarFila(recurso(), { almacen: {
     'Clase 14': { objective: 'enseñar deep research' },
   } });
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -414,7 +967,7 @@ test('el prompt general NO lo arma la pestaña: lo resuelve la cola contra el pr
   const { p, fila } = await cargarFila(recurso(), { almacen: {
     'Clase 14': { objective: 'enseñar deep research', __general__: { instruction: 'un texto viejo del localStorage' } },
   } });
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -429,7 +982,7 @@ test('leyendo de otro corte, el objetivo sale del corte ABIERTO si allá no est�
     'Clase 14': { objective: 'enseñar deep research' },
     'Clase 14 v1': {},
   } });
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -441,7 +994,7 @@ test('lo que SÍ está guardado en el corte viejo gana sobre lo del abierto', as
     'Clase 14': { objective: 'objetivo del corte nuevo' },
     'Clase 14 v1': { objective: 'el objetivo con el que se generó' },
   } });
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados[0].payload.objective, 'el objetivo con el que se generó');
@@ -456,7 +1009,7 @@ test('el HTML previo viaja explícito, de la versión que se eligió', async fun
   ok(picker, 'con dos versiones, la fila deja elegir cuál corregir');
   picker.value = '3';
 
-  fila.porTag('textarea')[0].value = 'cambiá el color';
+  fila.buscar('corr-input').value = 'cambiá el color';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -468,7 +1021,7 @@ test('con una sola versión no se pregunta cuál, y se usa la última', async fu
   const { p, fila } = await cargarFila(recurso({
     latestVersion: 1, versions: [{ version: 1, model: 'x', hasVideo: true }],
   }));
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.leidos[0].version, 1);
@@ -476,7 +1029,7 @@ test('con una sola versión no se pregunta cuál, y se usa la última', async fu
 
 test('con fondo se conserva el fondo', async function () {
   const { p, fila } = await cargarFila(recurso({ background: true }));
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados[0].payload.background, true, 'un clip opaco no se vuelve transparente al corregirlo');
@@ -492,7 +1045,7 @@ test('sin instrucción no se gasta una llamada', async function () {
 
 test('si el HTML de esa versión no se puede leer, se dice y no se encola', async function () {
   const { p, fila } = await cargarFila(recurso(), { htmlFalla: true });
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados.length, 0, 'mejor no encolar que encolar sin referencia');
@@ -709,7 +1262,7 @@ test('la corrección se genera en la carpeta de origen y se coloca en la secuenc
   // seguir siendo una (v5 después de la v4, en su carpeta) y el clip tiene que
   // caer en el timeline que el editor está mirando.
   const { p, fila } = await cargarCruzada();
-  fila.porTag('textarea')[0].value = 'subí el título';
+  fila.buscar('corr-input').value = 'subí el título';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -727,7 +1280,7 @@ test('el segundo no se pregunta nunca: cae donde nació, aunque sea de otro cort
   // en riesgo (ese sale de markerStart, el mismo número).
   const { p, fila } = await cargarCruzada();
   eq(fila.buscar('corr-second'), null, 'no hay campo de segundo');
-  fila.porTag('textarea')[0].value = 'subí el título';
+  fila.buscar('corr-input').value = 'subí el título';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
 
@@ -768,7 +1321,7 @@ test('las imágenes se leen de la secuencia de ORIGEN, no de la abierta', async 
 
 test('qué imágenes viajan sale del 📤 de cada miniatura', async function () {
   const { p, fila } = await cargarFila(recurso(), { reenviar: [0, 2] });
-  fila.porTag('textarea')[0].value = 'corregir';
+  fila.buscar('corr-input').value = 'corregir';
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(JSON.stringify(p.espia.encolados[0].payload.stillsSend), '[0,2]');

@@ -13,6 +13,242 @@ const { execFileSync } = require('child_process');
 const raiz = path.join(__dirname, '..', '..');
 
 const MUTACIONES = [
+  // --- Lo que recibió este marcador: verlo, ajustarlo, y que no se escape ---
+  //
+  // Las dos primeras son las que el diseño existe para evitar, y son opuestas: o
+  // el ajuste se va de su alcance y reescribe los archivos del proyecto, o se
+  // queda tan corto que se muestra y no viaja. Ninguna hace fallar nada a la
+  // vista: en la primera el recurso sale bien y el que sale distinto es el de otra
+  // clase, la semana que viene; en la segunda el recurso sale igual que antes y
+  // parece que el modelo no hizo caso.
+
+  {
+    // LA regresión. Tipear en el campo del curso escribe el archivo del curso, que
+    // comparten todas las clases y viaja en el .prproj a las otras máquinas. Ya
+    // pagamos un bug de esta familia (vaciar el campo de una clase reescribía la
+    // base de todas) y este diseño existe para no reintroducirlo por otra puerta.
+    nombre: 'editar en Corrections reescribe el archivo del curso',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '      ta.addEventListener("input", function () {\n        marcar(o.key);',
+    a: '      ta.addEventListener("input", function () {\n' +
+       '        if (marcar(o.key) && o.scope) HPGeneral.save(deps.projectPath(), deps.sequenceName(), ta.value, o.scope).catch(function () {});\n' +
+       '        marcar(o.key);',
+  },
+  {
+    // El otro extremo: el ajuste es decorativo. Se ve en la fila, se dice que se
+    // ajustó, y el pedido sale con el prompt del proyecto igual que siempre.
+    nombre: 'el ajuste local se muestra pero no viaja con el pedido',
+    archivo: 'cep/js/corrections.js',
+    de: '      if (ajuste) job.payload.promptOverride = ajuste;',
+    a:  '      if (false) job.payload.promptOverride = ajuste;',
+  },
+  {
+    // Viaja, pero el motor no lo aplica: el mismo síntoma que la anterior, un
+    // escalón más abajo, y del lado donde el contexto se combina de verdad.
+    nombre: 'el ajuste llega al motor y el motor lo ignora',
+    archivo: 'bridge/prompt/build-context.js',
+    de: "    if (!ov || typeof ov !== 'object' || typeof ov[nivel] !== 'string') return;",
+    a:  '    if (true) return;',
+  },
+  {
+    // Se aplica, pero pisa TODO: los niveles que el editor no tocó salen
+    // congelados con el texto de la fila, así que arreglar el prompt del proyecto
+    // deja de servir para esa corrección sin que nada lo diga.
+    nombre: 'el ajuste pisa también los niveles que el editor no tocó',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '          if (!tocado[k]) return;\n          out = out || {};',
+    a:  '          out = out || {};',
+  },
+  {
+    // El objetivo ajustado se rellena solo: la cola lo completa cuando el payload
+    // no trae ninguno, así que vaciarlo a mano no hace nada.
+    nombre: 'el objetivo ajustado lo vuelve a rellenar el del panel',
+    archivo: 'bridge/prompt/build-context.js',
+    de: "const NIVELES = ['course', 'sequence', 'objective'];",
+    a:  "const NIVELES = ['course', 'sequence'];",
+  },
+  {
+    // "Desde cero" arrastra el ajuste: un job encolado con un prompt de otro día
+    // se rediseñaría con ese prompt para siempre, incluso después de arreglarlo.
+    nombre: '"desde cero" se queda con el ajuste de la corrección anterior',
+    archivo: 'cep/js/queue.js',
+    de: '        delete j.payload.promptOverride;\n        j.payload.mode = "regen";',
+    a:  '        j.payload.mode = "regen";',
+  },
+  {
+    // La relectura al revés: la pestaña manda el contexto ya resuelto en toda
+    // corrección, así que arreglar el prompt del proyecto y reintentar sale con el
+    // viejo. Es el bug que se arregló a propósito hace unos días.
+    nombre: 'la pestaña vuelve a mandar el contexto resuelto en cada corrección',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '        var out = null;\n        ["course", "sequence", "objective"].forEach(function (k) {\n          if (!tocado[k]) return;',
+    a:  '        var out = {};\n        ["course", "sequence", "objective"].forEach(function (k) {',
+  },
+  {
+    // La ficha deja de anotar los tres niveles: de acá en adelante tampoco se
+    // podría saber con qué contexto se generó nada, y no falla nada.
+    nombre: 'la ficha vuelve a guardar solo la instrucción',
+    archivo: 'bridge/engine.js',
+    de: '    prompts: g.prompts,\n',
+    a:  '',
+  },
+  {
+    // La otra mitad de la misma promesa: la ficha del final tiene que decir que
+    // la generación LLEGÓ, y lo dice por ausencia. Si el campo se arrastra, toda
+    // generación exitosa queda marcada como a medias y "esto no terminó" deja de
+    // significar algo.
+    nombre: 'la ficha del final arrastra el "quedó a medias" del principio',
+    archivo: 'bridge/engine.js',
+    de: '    pending: g.pending,',
+    a:  '    pending: true,',
+  },
+  {
+    // Anotar el tramo a mano se lleva puesto el contexto: la fila pasa de dato a
+    // reconstrucción por haber contestado una pregunta que no tiene que ver.
+    // Anotar el tramo a mano se lleva puesto el contexto: escribir la ficha
+    // entera donde había que mergear sobre lo previo. La fila pasa de dato a
+    // reconstrucción por haber contestado una pregunta que no tiene que ver.
+    nombre: 'anotar el tramo a mano borra el contexto de la ficha',
+    archivo: 'bridge/engine.js',
+    de: '    mergeVersionMeta(metaPath, { sequenceName: body.sequenceName, markerSlug, marker });',
+    a:  '    writeVersionMeta(metaPath, { sequenceName: body.sequenceName, markerSlug, marker });',
+  },
+  {
+    // El caso que hay que decir y no mezclar: una versión vieja no guardó nada, y
+    // los archivos de hoy se muestran como si fueran lo que recibió. El editor
+    // rediseña mirando un contexto inventado.
+    nombre: 'una reconstrucción se presenta como lo que se mandó',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '    var guardado = !!m.prompts;',
+    a:  '    var guardado = true;',
+  },
+  {
+    // Del otro lado: el motor rellena lo que no se guardó con los archivos de hoy,
+    // así que el panel ya no tiene con qué distinguirlo.
+    nombre: 'el motor rellena el contexto que no se guardó con los archivos de hoy',
+    archivo: 'bridge/engine.js',
+    de: '        prompts: pos.prompts,',
+    a:  "        prompts: pos.prompts || { course: ahora.projectText || '', sequence: ahora.sequenceText || '', objective: '' },",
+  },
+  {
+    // Guardar para todo el curso deja de preguntar: la acción que le cambia el
+    // estilo a un curso entero se dispara con un clic y sin decir a quién le llega.
+    nombre: 'guardar para todo el curso no pregunta nada',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '      HPWidgets.confirmOverlay(o.saveTitle, function (body) {',
+    a:  '      (function (t, f, l, ok) { return ok(); })(o.saveTitle, function (body) {',
+  },
+  {
+    // EL bug de la 1.5.1, reintroducido: guardar el del curso vuelve a afirmar que
+    // el de la clase está vacío sin haber leído su archivo. La cola le cree
+    // —ensureGeneralPrompt saltea la lectura cuando dice estar leído— y la próxima
+    // generación de esa clase sale sin su prompt de secuencia. No falla nada a la
+    // vista: el recurso sale con el estilo del curso a secas.
+    nombre: 'guardar el del curso fabrica que la clase ya se leyó',
+    archivo: 'cep/js/general-prompt.js',
+    de: '      if (scope === "project") {\n        var pKey = String(projectPath || "");',
+    a:  '      if (scope === "project") {\n        var pKey = String(projectPath || "");\n' +
+        '        var kf = claveDe(projectPath, sequenceName);\n' +
+        '        if (!seqCache[kf]) { var vf = seqVacia(); vf.loaded = true; seqCache[kf] = vf; }',
+  },
+  {
+    // La otra punta, y la peor: guardar el de la clase afirma que el proyecto no
+    // tiene estilo, así que la generación sale SIN el prompt del curso. Es
+    // textualmente el bug que la 1.5.0 vino a matar.
+    nombre: 'guardar el de la clase fabrica que el del curso ya se leyó',
+    archivo: 'cep/js/general-prompt.js',
+    de: '        var sKey = claveDe(projectPath, sequenceName);\n        var previa = seqCache[sKey] || seqVacia();',
+    a:  '        var sKey = claveDe(projectPath, sequenceName);\n        var previa = seqCache[sKey] || seqVacia();\n' +
+        '        var pkf = String(projectPath || "");\n' +
+        '        if (!cursoCache[pkf]) { var cf = cursoVacio(); cf.loaded = true; cursoCache[pkf] = cf; }',
+  },
+  {
+    // La misma fabricación un escalón más arriba: alcanza con haber leído UNO de
+    // los dos niveles para que el contexto entero diga estar leído.
+    nombre: 'alcanza con leer un nivel para que el contexto diga estar leído',
+    archivo: 'cep/js/general-prompt.js',
+    de: '      loaded: curso.loaded && seq.loaded,',
+    a:  '      loaded: curso.loaded || seq.loaded,',
+  },
+  {
+    // BLOQUEANTE 3: el texto se vuelve a leer cuando se APRIETA el botón y no
+    // cuando el editor acepta. Si tocó el campo mientras leía la confirmación de
+    // cinco renglones, al archivo va el texto viejo y el campo muestra otro.
+    nombre: 'guardar un nivel escribe el texto de antes de la confirmación',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '      var c = campos[o.key];\n      var esCurso = o.scope === "project";',
+    a:  '      var c = { ta: { value: campos[o.key].ta.value } };\n      var esCurso = o.scope === "project";',
+  },
+  {
+    // Y la segunda mitad del mismo bloqueante: después de guardar se fuerza
+    // "no ajustado" sin volver a comparar, así que el campo puede mostrar X, el
+    // archivo tener Y, y el pedido salir con Y sin que nada lo diga.
+    nombre: 'después de guardar se da por hecho que el campo dejó de estar ajustado',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '            marcar(o.key);\n            pintarBoton(o);',
+    a:  '            tocado[o.key] = false;\n            pintarBoton(o);',
+  },
+  {
+    // La ficha deja de anotar CUÁL nivel se ajustó a mano, que es el único dato
+    // con el que el panel distingue "el archivo cambió" de "esto nunca salió del
+    // archivo". Sin él vuelve a echarle la culpa a un archivo que nadie tocó.
+    nombre: 'la ficha no anota qué nivel se ajustó a mano',
+    archivo: 'bridge/engine.js',
+    de: '    rec.adjusted = { course: a.course, sequence: a.sequence, objective: a.objective };',
+    a:  '    rec.adjusted = { course: a.course, sequence: a.sequence };',
+  },
+  {
+    // Y del lado del panel: se dice siempre que el archivo cambió, que era la
+    // misatribución. El texto se muestra igual, así que solo se ve leyéndolo.
+    nombre: 'el panel le echa la culpa al archivo de un ajuste hecho a mano',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '        partes.push(ajustadoEntonces[o.key]',
+    a:  '        partes.push(false',
+  },
+
+  // --- 1.5.1: los dos botones de la caja de feedback, debajo del campo ---
+  //
+  // Las cuatro son la misma familia de regresión: el rediseño se deshace de a
+  // pedacitos y la caja vuelve a tener los botones al costado, o pierde la
+  // jerarquía entre los dos. Ninguna rompe el comportamiento (refinar sigue
+  // avisando con el cuadro vacío, desde cero sigue preguntando), y por eso hacen
+  // falta: son las que solo se ven mirando.
+
+  {
+    // El estado de la captura: los dos botones en la misma fila que el campo, en
+    // dos columnas angostas, y el cuadro de texto en 57 px con el panel en 320.
+    nombre: 'los botones vuelven al costado del campo',
+    archivo: 'cep/js/queue-view.js',
+    de: '    acciones.appendChild(go);',
+    a:  '    inRow.appendChild(go);',
+  },
+  {
+    // Sin el reparto, cada botón vale su etiqueta: "↻ Aplicar el ajuste" queda en su etiqueta
+    // pegado a la izquierda y "⟲ Regenerar desde cero" al lado, o sea otra vez
+    // dos botones sueltos en vez de dos renglones.
+    nombre: 'las acciones dejan de repartirse el ancho y valen su etiqueta',
+    archivo: 'cep/css/style.css',
+    de: '.qj-fb-actions .qbtn-react {\n  flex: 1 1 100%;',
+    a:  '.qj-fb-actions .qbtn-react {',
+  },
+  {
+    // Los dos iguales: se pierde la única señal de que uno descarta el trabajo
+    // hecho y el otro no.
+    nombre: 'desde cero se ve igual de grande que Refinar',
+    archivo: 'cep/css/style.css',
+    de: '  font-size: 10.5px; padding: 4px 10px;\n  color: var(--text-secondary); border-color: var(--hairline);',
+    a:  '  font-size: 12px; padding: 8px 14px;\n  color: var(--text-secondary); border-color: var(--hairline);',
+  },
+  {
+    // El `align-self: stretch` que hacía las dos columnas altas. Si vuelve, con
+    // los botones ya abajo lo que se estira es el renglón, pero es la regla que
+    // no tiene que estar y el test la busca donde vivía.
+    nombre: 'la fila del campo vuelve a estirar los botones a su alto',
+    archivo: 'cep/css/style.css',
+    de: '.qj-fb-input:focus { outline: none; border-color: var(--accent); }',
+    a:  '.qj-fb-input:focus { outline: none; border-color: var(--accent); }\n.qj-feedback .qbtn-react { align-self: stretch; }',
+  },
+
   // --- 1.5.0: refina el proveedor elegido, y el semáforo se acuerda del cupo ---
 
   {
@@ -316,7 +552,7 @@ const MUTACIONES = [
   {
     nombre: 'refinar con el cuadro vacío vuelve a rediseñar sin avisar',
     archivo: 'cep/js/queue-view.js',
-    de: '      if (!t) {\n        deps.setOutput("Escribí qué ajustar para refinar, o usá “Regenerar desde cero”.", true);\n        return;\n      }',
+    de: '      if (!t) {\n        deps.setOutput("Escribí qué ajustar, o usá “Regenerar desde cero”.", true);\n        return;\n      }',
     a:  '      if (false) { return; }',
   },
   {
@@ -334,8 +570,8 @@ const MUTACIONES = [
   {
     nombre: 'rediseñar desde cero arrastra la versión previa',
     archivo: 'cep/js/queue.js',
-    de: '        delete j.payload.previousHtml;\n        delete j.payload.adjustment;\n        delete j.payload.stillsSend;\n        j.payload.mode = "regen";',
-    a:  '        j.payload.mode = "regen";',
+    de: '        delete j.payload.previousHtml;\n        delete j.payload.adjustment;\n        delete j.payload.stillsSend;\n',
+    a:  '',
   },
   {
     nombre: 'al reencolar queda ofreciéndose el “Colocar” del render viejo',
@@ -398,14 +634,17 @@ const MUTACIONES = [
   {
     nombre: 'el panel vuelve a avisar cuando todavía no sabe nada (el bug original)',
     archivo: 'cep/js/config-ui.js',
-    de: '    if (p === "claude-cli" && currentSession === "no") { ok = false; warn = currentSessionWarn; }',
-    a:  '    if (p === "claude-cli" && currentSession !== "si") { ok = false; warn = currentSessionWarn; }',
+    // Reapuntada de paso: la condición dejó de nombrar al proveedor a mano
+    // (ahora es `esCli`), pero la regla que fija es la misma.
+    de: '    if (esCli && currentSession === "no") { ok = false; warn = currentSessionWarn; }',
+    a:  '    if (esCli && currentSession !== "si") { ok = false; warn = currentSessionWarn; }',
   },
   {
     nombre: 'sin token guardado el panel arranca dando por hecho que falta la sesión',
     archivo: 'cep/js/config-ui.js',
-    de: '    currentSession = cfg.hasSession ? "si" : "?";',
-    a:  '    currentSession = cfg.hasSession ? "si" : "no";',
+    // Reapuntada de paso: la línea quedó en el `else` de la rama de Cursor.
+    de: '    else currentSession = cfg.hasSession ? "si" : "?";',
+    a:  '    else currentSession = cfg.hasSession ? "si" : "no";',
   },
   // ── La imagen de referencia que el modelo no miró ──────────────────
   // El modo de falla más mudo del proyecto: la composición sale presentable y
@@ -515,10 +754,12 @@ const MUTACIONES = [
     a:  "  const seqDir = sequenceName ? ensureOutputDir(projectPath, sequenceName) : '';",
   },
   {
+    // Reapuntada: vaciar dejó de tener una rama por nivel (los dos borran), así
+    // que la mutación va contra el borrado único.
     nombre: 'vaciar el de una secuencia deja el archivo vacío diciendo que la clase agrega algo',
     archivo: 'bridge/store/project-fs.js',
-    de: '        removeIfPresent(file);\n        removeIfPresent(files.sequenceLegacy);\n        return { ok: true, path: file, scope, removed: true };',
-    a:  '        fs.mkdirSync(path.dirname(file), { recursive: true });\n        fs.writeFileSync(file, "", "utf8");\n        return { ok: true, path: file, scope, removed: true };',
+    de: '      removeIfPresent(file);\n      if (scope === \'sequence\') removeIfPresent(files.sequenceLegacy);\n      return { ok: true, path: file, scope, removed: true, created: false };',
+    a:  '      fs.mkdirSync(path.dirname(file), { recursive: true });\n      fs.writeFileSync(file, "", "utf8");\n      return { ok: true, path: file, scope, removed: true, created: false };',
   },
   // ── La combinación de los dos niveles generales ─────────────────
   // Hasta la 1.4.51 el de la secuencia REEMPLAZABA al del curso, y la razón que
@@ -528,8 +769,8 @@ const MUTACIONES = [
   {
     nombre: 'el prompt de la secuencia vuelve a REEMPLAZAR al del curso',
     archivo: 'bridge/prompt/build-context.js',
-    de: '  return { course: solo, sequence, unknown: viejo && !!solo && !ctx.generalSource };',
-    a:  '  return { course: sequence ? \'\' : solo, sequence, unknown: false };',
+    de: '    : { course: solo, sequence, unknown: viejo && !!solo && !ctx.generalSource };',
+    a:  '    : { course: sequence ? \'\' : solo, sequence, unknown: false };',
   },
   {
     nombre: 'el del curso viaja pero el de la secuencia se queda afuera',
@@ -591,10 +832,11 @@ const MUTACIONES = [
     a:  "    if (false) removeIfPresent(files.sequenceLegacy);",
   },
   {
+    // Reapuntada por lo mismo: el legacy se borra en el camino común de vaciar.
     nombre: 'vaciar el de una secuencia del formato viejo no lo borra, y el texto vuelve',
     archivo: 'bridge/store/project-fs.js',
-    de: '        removeIfPresent(file);\n        removeIfPresent(files.sequenceLegacy);',
-    a:  '        removeIfPresent(file);',
+    de: '      if (scope === \'sequence\') removeIfPresent(files.sequenceLegacy);\n      return { ok: true, path: file, scope, removed: true, created: false };',
+    a:  '      return { ok: true, path: file, scope, removed: true, created: false };',
   },
   {
     nombre: 'el archivo que cambió de nombre lo hace en silencio, sin dejar rastro en el log',
@@ -642,8 +884,9 @@ const MUTACIONES = [
   {
     nombre: 'guardar un campo se lleva puesto el otro nivel',
     archivo: 'cep/js/general-prompt.js',
-    de: "        projectText: scope === \"project\" ? t : previo.projectText,\n        sequenceText: scope === \"sequence\" ? (w.removed ? \"\" : t) : previo.sequenceText,",
-    a:  "        projectText: scope === \"project\" ? t : \"\",\n        sequenceText: scope === \"sequence\" ? (w.removed ? \"\" : t) : \"\",",
+    de: '      if (scope === "project") {\n        var pKey = String(projectPath || "");\n        var previo = cursoCache[pKey] || cursoVacio();',
+    a:  '      if (scope === "project") {\n        var pKey = String(projectPath || "");\n        var previo = cursoCache[pKey] || cursoVacio();\n' +
+        '        delete seqCache[claveDe(projectPath, sequenceName)];',
   },
   {
     nombre: 'los campos se cruzan: el del curso muestra el de la clase',
@@ -666,39 +909,109 @@ const MUTACIONES = [
   {
     nombre: 'el panel deja de avisar que los dos niveles viajan y quién manda',
     archivo: 'cep/js/general-prompt.js',
-    de: '      d.line = "Al modelo van los DOS: el del curso como base y el de esta secuencia encima, " +\n        "que MANDA donde se contradigan";',
-    a:  '      d.line = "Prompts generales";',
+    de: '      d.sequenceLine = "Al modelo van los DOS: el del curso (arriba) como base y éste encima, " +\n        "que MANDA donde se contradigan";',
+    a:  '      d.sequenceLine = "Prompt de esta secuencia";',
+  },
+
+  // ── Los dos bloques, separados y cada uno nombrando al otro ─────
+  //
+  // El del curso se fue arriba, con el Contexto de la clase, y el de la clase
+  // quedó adentro del área de marcadores. Lo que se pagó por separarlos es que
+  // la relación entre los dos ya no se ve sola: pegados alcanzaba con mirarlos.
+  // Estas tres son la misma familia de regresión —una caja que se lee como si
+  // fuera el único prompt que hay— y ninguna rompe nada que se note corriendo el
+  // panel: el texto se sigue guardando en su archivo y el modelo sigue
+  // recibiendo los dos niveles. Se ven mirando, o no se ven.
+  {
+    nombre: 'el bloque del curso deja de decir dónde se escribe lo de esta clase',
+    archivo: 'cep/js/general-prompt.js',
+    de: '    if (d.sequenceEnabled) {\n      d.courseLine += ". Lo de esta clase va abajo, en “" + TITULO_SECUENCIA + "”";\n    }',
+    a:  '    if (false) {\n      d.courseLine += ". Lo de esta clase va abajo, en “" + TITULO_SECUENCIA + "”";\n    }',
+  },
+  {
+    // El renglón manda al editor a una sección que en la pantalla se llama de
+    // otra manera. Nada falla; simplemente busca un rótulo que no existe.
+    nombre: 'el puntero de arriba nombra un bloque que ya no se llama así',
+    archivo: 'cep/js/general-prompt.js',
+    de: '  var TITULO_SECUENCIA = "Estilo de esta secuencia";',
+    a:  '  var TITULO_SECUENCIA = "Prompts generales";',
+  },
+  {
+    // La vista le pone data-hidden al <details> del bloque de la clase; sin la
+    // regla queda dibujado sin secuencia abierta, ofreciendo adjuntar
+    // referencias y escribir un prompt que no tienen dónde guardarse.
+    nombre: 'sin secuencia abierta el bloque de la clase se queda en pantalla',
+    archivo: 'cep/css/style.css',
+    de: '.general-section[data-hidden="true"] { display: none; }',
+    a:  '.general-section[data-hidden="false"] { display: none; }',
   },
   {
     nombre: 'sin motor se da por hecho que no hay estilo (el bug original, otra vez)',
     archivo: 'cep/js/general-prompt.js',
-    de: '      st.projectText = local;',
-    a:  "      st.projectText = '';",
+    de: '        cursoCache[pKey] = { text: local, hasFile: false, path: "", loaded: false, failed: true };',
+    a:  '        cursoCache[pKey] = { text: "", hasFile: false, path: "", loaded: false, failed: true };',
   },
   // ── La cola, que relee al momento de generar ────────────────────
   {
     nombre: 'leer los prompts generales vuelve a migrar por su cuenta',
     archivo: 'cep/js/queue.js',
-    de: '    return HPGeneral.load(job.projectPath, seq).then(function () {}).catch(function () {});',
-    a:  '    return HPGeneral.migrate(job.projectPath, seq).then(function () {}).catch(function () {});',
+    de: '    var p = HPGeneral.load(job.projectPath, seq).catch(function () {})',
+    a:  '    var p = HPGeneral.migrate(job.projectPath, seq).catch(function () {})',
   },
   {
     nombre: 'la cola se queda con el prompt viejo pegado al job',
     archivo: 'cep/js/queue.js',
-    de: '        if (g.loaded || g.projectText || g.sequenceText) {',
-    a:  '        if (!job.payload.generalInstruction) {',
+    de: '      if (hayEnDisco || (g.loaded && !trajoResuelto)) {',
+    a:  '      if (!dest.generalInstruction) {',
   },
   {
     nombre: 'un proyecto ilegible vacía el estilo con el que se iba a generar',
     archivo: 'cep/js/queue.js',
-    de: '        if (g.loaded || g.projectText || g.sequenceText) {',
-    a:  '        if (true) {',
+    de: '      if (hayEnDisco || (g.loaded && !trajoResuelto)) {',
+    a:  '      if (true) {',
   },
   {
     nombre: 'la cola relee el del curso pero se queda con el de la clase que traía el job',
     archivo: 'cep/js/queue.js',
-    de: '          job.payload.sequenceInstruction = g.sequenceText;',
-    a:  '          job.payload.sequenceInstruction = job.payload.sequenceInstruction || g.sequenceText;',
+    de: '        dest.sequenceInstruction = g.sequenceText;',
+    a:  '        dest.sequenceInstruction = dest.sequenceInstruction || g.sequenceText;',
+  },
+  {
+    // LA de esta tanda: la cola vuelve a creerle a la caché del panel. El caso
+    // que se pierde es el único que la caché no puede ver —el .md cambiado por
+    // AFUERA, sin que ningún save() la refresque— y no falla nada: el reintento
+    // sale con el texto viejo justo cuando el editor está arreglando el estilo.
+    nombre: 'la cola vuelve a leer una vez por sesión en vez de por job',
+    archivo: 'cep/js/queue.js',
+    de: '    if (leyendoGeneral[clave]) return leyendoGeneral[clave];',
+    a:  '    if (leyendoGeneral[clave]) return leyendoGeneral[clave];\n' +
+        '    if (HPGeneral.state(job.projectPath, seq).loaded) return Promise.resolve();',
+  },
+  {
+    // La otra forma de lo mismo: la entrada "en vuelo" sobrevive a la lectura y
+    // se convierte en la caché que no queríamos.
+    nombre: 'la lectura en vuelo se queda cacheada para siempre',
+    archivo: 'cep/js/queue.js',
+    de: '      delete leyendoGeneral[clave];',
+    a:  '      if (false) delete leyendoGeneral[clave];',
+  },
+  {
+    // El precio de releer por job, si nadie lo cubre: un parpadeo del disco en
+    // medio de un lote borra lo que ya se había leído bien y los marcadores que
+    // faltan salen sin el prompt de su clase.
+    nombre: 'una lectura fallida borra la que había salido bien',
+    archivo: 'cep/js/general-prompt.js',
+    de: '      if (!seqCache[sKey] || !seqCache[sKey].loaded) {',
+    a:  '      if (true) {',
+  },
+  {
+    // Un job de antes de la 1.5.0 trae un solo texto ya resuelto. Una lectura que
+    // sale bien y no encuentra NADA —el proyecto no migró— se lo pisaba con el
+    // vacío, y el log no miente: dice "prompt general no".
+    nombre: 'el proyecto que no migró le borra el prompt a un job viejo',
+    archivo: 'cep/js/queue.js',
+    de: '      var trajoResuelto = !!dest.generalInstruction && typeof dest.sequenceInstruction === "undefined";',
+    a:  '      var trajoResuelto = false;',
   },
   {
     nombre: 'la cola no va a buscar los prompts generales del proyecto antes de generar',
@@ -711,6 +1024,69 @@ const MUTACIONES = [
     archivo: 'cep/js/main.js',
     de: '      generalInstruction: genTxt.projectText, sequenceInstruction: genTxt.sequenceText,',
     a:  '      generalInstruction: genTxt.sequenceText || genTxt.projectText,',
+  },
+
+  // ── Vaciar un campo: en los dos niveles, y en los cuatro ─────────
+  //
+  // Vaciar es un ajuste, no "no dije nada". Las dos de acá son la misma familia
+  // por dos puertas: el encargo que se borra y viaja el anterior, y el prompt
+  // del curso que se borra y deja un archivo de cero bytes al lado del .prproj.
+  {
+    nombre: 'vaciar el encargo de la corrección manda el anterior',
+    archivo: 'cep/js/corrections.js',
+    de: '        instruction: encargo === null ? (m.instruction || text) : encargo,',
+    a:  '        instruction: encargo || m.instruction || text,',
+  },
+  {
+    nombre: 'el encargo vaciado se pierde antes de salir de la fila',
+    archivo: 'cep/js/corrections-contexto.js',
+    de: '        if (!tocado.instruction) return null;',
+    a:  '        if (!tocado.instruction || !campos.instruction.ta.value.trim()) return null;',
+  },
+  {
+    nombre: 'vaciar el prompt del curso deja un archivo de cero bytes en el proyecto',
+    archivo: 'bridge/store/project-fs.js',
+    de: "      removeIfPresent(file);\n      if (scope === 'sequence') removeIfPresent(files.sequenceLegacy);\n" +
+        "      return { ok: true, path: file, scope, removed: true, created: false };",
+    a:  "      if (scope === 'sequence') {\n        removeIfPresent(file);\n        removeIfPresent(files.sequenceLegacy);\n" +
+        "        return { ok: true, path: file, scope, removed: true };\n      }\n" +
+        "      if (!fs.existsSync(file)) return { ok: true, path: file, scope, created: false };",
+  },
+
+  // ── El semáforo de tokens ────────────────────────────────────────
+  //
+  // Las dos veces que se rompió es la misma: alguien arma A MANO el cuerpo que
+  // estima, y ese cuerpo se queda atrás de lo que de verdad viaja. No falla
+  // nada; el número queda corto (medido: 47%) y siempre para el mismo lado.
+  {
+    nombre: 'la tarjeta vuelve a armar a mano el cuerpo que estima',
+    archivo: 'cep/js/main.js',
+    de: '      hpCall("estimateTokens", buildMarkerPayload(marker, modoDeGeneracion()))',
+    a:  '      var d = HPStore.getMarkerData(markerKey);\n' +
+        '      hpCall("estimateTokens", { objective: HPStore.getObjective(), instruction: d.instruction || "",\n' +
+        '        stills: d.stills || [], resources: d.resources || [] })',
+  },
+  {
+    nombre: 'la Cola estima el payload como está guardado, sin resolver',
+    archivo: 'cep/js/queue-view.js',
+    de: '      return HPQueue.payloadForEstimate(j).then(function (body) {\n' +
+        '        return HPEngine.call("estimateTokens", body);\n' +
+        '      }).then(function (r) {',
+    a:  '      return HPEngine.call("estimateTokens", j.payload).then(function (r) {',
+  },
+  {
+    nombre: 'el cuerpo del estimado se contesta sin el material ni el estilo',
+    archivo: 'cep/js/queue.js',
+    de: '      try { aplicarContexto(copia, job); } catch (e) {}',
+    a:  '      try { if (false) aplicarContexto(copia, job); } catch (e) {}',
+  },
+  {
+    // Estimar no puede escribirle nada al job: lo que ese job mande se resuelve
+    // cuando le toca el turno, con el material de ESE momento.
+    nombre: 'estimar deja el contexto pegado al job que sigue en cola',
+    archivo: 'cep/js/queue.js',
+    de: '      try { aplicarContexto(copia, job); } catch (e) {}\n      return copia;',
+    a:  '      try { aplicarContexto(job.payload, job); } catch (e) {}\n      return job.payload;',
   },
   // ── El `flex` de los botones ─────────────────────────────────────────
   //
@@ -1451,10 +1827,13 @@ const MUTACIONES = [
 const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz',
   'rescate-composicion', 'contador-uso', 'colocar-secuencia-no-encontrada',
   'marcadores-frameio', 'cola-mirar-y-rehacer', 'correcciones-encolar',
+  'correcciones-listar',
   'claude-session', 'panel-cartel-sesion', 'panel-cartel-cursor',
   'provider-salud', 'imagen-de-referencia',
   'selector-pensamiento', 'ventana-de-contexto', 'prompt-general-proyecto',
+  'estimado-tokens', 'cola-feedback-otra-secuencia',
   'panel-cartel-preparar-motor', 'panel-encabezado-microfono', 'panel-botones-flex',
+  'panel-caja-feedback',
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga'];
 

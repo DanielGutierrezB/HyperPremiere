@@ -45,6 +45,15 @@ Las imágenes de referencia se dibujan al vuelo (un PNG de color con el nombre
 escrito encima), así que en `datos.js` una imagen es una etiqueta y dos colores;
 no hay binarios que versionar.
 
+Un campo que vale la pena conocer: el `contexto` de cada recurso de
+`correcciones`. Es lo que la ficha `.meta.json` guardó de los tres niveles cuando
+ese recurso se generó, y decide cuál de los dos casos muestra la fila. Con un
+objeto (aunque sea `{ curso: null, secuencia: null, objetivo: null }`, que es el
+atajo para "lo mismo que dicen los archivos hoy") la fila dice **lo que se mandó**;
+con `contexto: null` dice **reconstruido**, que es el recurso generado antes de que
+la ficha lo anotara. `contextoDeVersion` es de qué versión salió ese registro, y es
+lo que hace que la fila pueda decir "al generar la v4" y no "al generar" a secas.
+
 ## Escenarios
 
 Estados que no se pueden ver a la vez. Se eligen por la URL, sin tocar código, y
@@ -58,6 +67,7 @@ se combinan con coma (`?e=whisper,otra-secuencia`):
 | `?e=whisper` | falta el Whisper local (badge en ámbar + oferta de instalarlo) |
 | `?e=otra-secuencia` | a los 4 s Premiere se mueve a otra secuencia y salta el cartel amarillo |
 | `?e=conflicto` | el prompt general de esta máquina no coincide con el del proyecto (la migración del `localStorage`, que sigue existiendo aunque el botón de destino se haya ido en la 1.5.0) |
+| `?e=sin-secuencia` | Premiere sin ninguna secuencia al frente: **Estilo del curso** se dibuja solo, sin mandar a un bloque que no está, y **Estilo de esta secuencia** no se ofrece entero (ni el campo ni las referencias: no hay carpeta donde guardarlos) |
 | `?e=mic-perdido` | el micrófono elegido ya no está enchufado: el desplegable del encabezado se pone en ámbar, la fila de ⚙ avisa y el 🎙 dice cuál usa en su lugar |
 | `?e=mic-mudo` | "Probar micrófono" termina en silencio digital (el dispositivo abre pero entrega ceros) |
 | `?e=sin-dictado` | no se puede dictar (Windows, sin ffmpeg, sin Whisper) **pero sí refinar**: el encabezado no dibuja el desplegable de micrófono, el 🎙 se ve apagado con su motivo y el ✨ de refinar lo escrito a mano queda **prendido** |
@@ -95,11 +105,22 @@ el menú del micrófono antes de medir.
 node test/manual/panel-demo/medir-botones.js
 ```
 
-Lo mismo pero para el panel entero: recorre **15 vistas** —las tres pestañas, ⚙,
+Lo mismo pero para el panel entero: recorre **22 vistas** —las tres pestañas, ⚙,
 la ayuda, el feedback y el editor de HTML de la cola, el medidor del micrófono y
-los ocho escenarios— por los seis anchos, y para cada botón visible compara su
-ancho real contra el que **necesita su contenido**. Son ~7600 mediciones y tarda
-unos diez minutos.
+los escenarios— por los seis anchos, y para cada botón visible compara su
+ancho real contra el que **necesita su contenido**. Son ~12000 mediciones y tarda
+unos catorce minutos.
+
+La vista `prompts-generales` abre **los dos** bloques de estilo a la vez —el del
+curso arriba y el de la secuencia adentro del área de marcadores— cerrando las
+tarjetas de marcador, porque el acordeón de `main.js` los pliega a los dos al
+abrir una. Es la foto que dice si el panel desborda con todo desplegado.
+
+La vista `corrections-contexto` despliega *Lo que recibió este marcador* en cada
+fila **y teclea de verdad** en el campo del curso, porque el botón *Guardar para
+todo el curso* no existe hasta que hay algo que guardar: en `corrections` no se
+mide nunca. Es el único botón nuevo de esa fila y el más largo, así que es la vista
+que dice si entra a 320 px (entra: pide 154 px y vive en un renglón propio).
 
 El ancho necesario no se estima: se clona el botón como hermano suyo (así los
 selectores por descendencia siguen aplicando) con `width: max-content` y se lo

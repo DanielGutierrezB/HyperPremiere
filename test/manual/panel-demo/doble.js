@@ -46,6 +46,18 @@
     D.correcciones.fuentes = [];
     D.uso = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costUsd: 0, costGenerations: 0, costInputTokens: 0, generations: 0, rule: 2, legacyMix: false };
   }
+  // Premiere abierto sin ninguna secuencia al frente. Es el estado en el que el
+  // bloque "Estilo de esta secuencia" NO se ofrece —no hay carpeta donde guardar
+  // ni el texto ni las referencias— y el del curso, que sí se dibuja siempre, se
+  // queda solo arriba y deja de mandar a un bloque que no está.
+  if (esc("sin-secuencia")) {
+    D.secuenciaEnPremiere = "";
+    D.secuenciaAbierta = "";
+    D.marcadores = [];
+    D.marcadoresFrameIo = [];
+    D.transcript = [];
+    D.promptGeneral.secuencia = "";
+  }
   // El cartel amarillo de "estás en otra secuencia" no lo dispara el arranque
   // sino el vigía (seq-watch), cuando ve que Premiere se movió DESPUÉS de que
   // el panel cargó. Por eso se cambia unos segundos más tarde, no de entrada.
@@ -222,6 +234,36 @@
   function movDe(seq, slugMarcador, v, modelo, conFondo) {
     return carpetaDe(seq) + "/" + slugMarcador + " v" + v + " [" + (modelo || "claude-sonnet-5") + "]" +
       (conFondo ? ".mp4" : ".mov");
+  }
+
+  /**
+   * Con qué contexto se generó un recurso de correcciones, como lo devolvería la
+   * ficha. `null` en `datos.js` = de ese recurso no se puede saber (se generó
+   * antes de que la ficha lo anotara), y ahí el panel tiene que decir que lo que
+   * muestra es una reconstrucción de los archivos de hoy.
+   *
+   * Un nivel en `null` dentro del contexto es un atajo de la maqueta: significa
+   * "el mismo que dice el archivo hoy", para no tener que copiar tres párrafos en
+   * cada recurso que se generó con el estilo actual.
+   *
+   * `ajustadoEntonces` son los niveles que en AQUELLA corrección se ajustaron a
+   * mano. Es lo único con lo que la fila distingue "el archivo cambió desde
+   * entonces" de "esto nunca salió del archivo", así que la maqueta lo tiene que
+   * poder decir: si no, el panel se mira siempre con la primera de las dos
+   * explicaciones puesta.
+   */
+  function contextoDe(r) {
+    if (!r.contexto) return null;
+    var c = r.contexto;
+    var aj = r.ajustadoEntonces;
+    return {
+      course: c.curso == null ? (D.promptGeneral.curso || "") : c.curso,
+      sequence: c.secuencia == null ? (D.promptGeneral.secuencia || "") : c.secuencia,
+      objective: c.objetivo == null ? (D.objetivo || "") : c.objetivo,
+      adjusted: aj ? {
+        course: !!aj.curso, sequence: !!aj.secuencia, objective: !!aj.objetivo
+      } : undefined
+    };
   }
 
   // ── Siembra del estado del panel ──────────────────────────────────────
@@ -782,7 +824,15 @@
         }));
       }
       D.promptGeneral.curso = body ? (body.text || "") : "";
-      return luego(ok({ path: D.carpetaSalida + "/prompt-general.md" }));
+      // Vaciar BORRA el archivo, en los dos niveles: no queda un prompt-general.md
+      // de cero bytes al lado del .prproj viajando a las demás máquinas. Por eso
+      // este nivel también contesta `removed` y `created: false`, que es lo que el
+      // panel anota como "el proyecto no tiene el del curso".
+      return luego(ok({
+        path: D.carpetaSalida + "/prompt-general.md",
+        removed: !D.promptGeneral.curso,
+        created: !!D.promptGeneral.curso
+      }));
     },
 
     // — cola —
@@ -850,13 +900,25 @@
         baseDir: carpetaDe(fuente),
         guessed: !pedida && C.elegidoPorNosotros,
         sources: (C.fuentes || []).map(function (f) { return { slug: slug(f.seq), sequenceName: f.seq, count: f.cantidad }; }),
+        // Los dos prompts generales COMO ESTÁN HOY. No son "lo que recibió"
+        // ningún recurso: son los archivos de este momento, y son lo único que se
+        // le puede ofrecer a las filas cuya ficha no guardó nada.
+        promptsNow: {
+          course: D.promptGeneral.curso || "",
+          sequence: D.promptGeneral.secuencia || "",
+          failed: false
+        },
         markers: (C.recursos || []).map(function (r) {
           return {
             slug: r.slug, markerName: r.nombre, markerGuid: "",
             start: r.start, duration: r.duration, timeSource: r.fuenteTramo,
             latestVersion: r.ultima, model: r.modelo,
             versions: r.versiones.map(function (v) { return { version: v, model: r.modelo }; }),
-            instruction: r.encargo, background: !!r.conFondo
+            instruction: r.encargo, background: !!r.conFondo,
+            // Con qué contexto se generó, si su ficha lo guardó. `null` = no se
+            // puede saber, y la fila tiene que decirlo.
+            prompts: contextoDe(r),
+            promptsVersion: r.contexto ? (r.contextoDeVersion || r.ultima) : 0
           };
         })
       }));

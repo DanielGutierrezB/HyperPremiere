@@ -440,69 +440,123 @@
     });
   }
 
+  /**
+   * Completa `dest` con el material y el contexto de este job: lo pesado que no
+   * se guarda en queue.json (stills, transcript, recursos) y los niveles del
+   * estilo, que salen del proyecto.
+   *
+   * Está aparte de rehydratePayload porque tiene DOS lectores y uno de ellos no
+   * puede tocar el job: el que arma el estimado de tokens de la vista, que
+   * necesita saber qué va a viajar sin hacer que viaje (ver payloadForEstimate).
+   * Mientras el estimado se hacía sobre el payload crudo, una corrección recién
+   * encolada se estimaba sin ningún nivel de contexto y sin sus imágenes: el
+   * número mentía hasta que el job arrancaba.
+   */
+  function aplicarContexto(dest, job) {
+    // `storeSeqName` = de qué secuencia salen las imágenes de referencia y el
+    // transcript. Es la misma que `seqName` salvo al corregir algo generado en
+    // otro corte de la clase: ahí el material del marcador vive en la vieja, y
+    // leer la nueva devolvería un marcador sin imágenes — o sea, un rediseño
+    // sin la referencia que hizo bueno al original.
+    HPStore.withContext(job.projectPath, job.storeSeqName || job.seqName, function () {
+      var segments = HPStore.getTranscript() || [];
+      var md = HPStore.getMarkerData(job.markerKey) || {};
+      // Las imágenes del prompt general siguen viviendo contra la secuencia
+      // (ver el README: por ahora no viajan). El TEXTO ya no: sale del disco.
+      var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {};
+      // Si esa secuencia no tiene transcript acá, NO se pisa lo que el payload
+      // ya trajera: rehidratar existe para completar, no para vaciar. Pasa al
+      // corregir algo de otro corte en una máquina donde ese corte nunca se
+      // abrió, y quedarse sin el fragmento del marcador es perder el guion del
+      // tramo (el modelo deja de saber qué se está diciendo ahí).
+      if (segments.length || !dest.markerTranscript) {
+        dest.transcript = segments;
+        dest.markerTranscript = HPTranscript.sliceForMarker(
+          segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
+      }
+      // Stills (visión) + assets (a incrustar) = marcador + generales.
+      dest.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
+      // Las imágenes viajan en TODA generación, también al refinar: el modelo no
+      // recuerda la llamada anterior, así que una imagen que no se manda es una
+      // imagen que no existe para él. Lo único que se respeta es que el editor
+      // apague alguna a mano en la caja de feedback (stillsSend = índices en los
+      // stills DEL MARCADOR); las del prompt general van siempre, son la marca.
+      if (dest.mode === "adjust" && Array.isArray(dest.stillsSend)) {
+        var _all = md.stills || [];
+        dest.stills = dest.stillsSend
+          .map(function (ix) { return _all[ix]; })
+          .filter(function (s) { return !!s; })
+          .concat(gen.stills || []);
+      } else {
+        dest.stills = (md.stills || []).concat(gen.stills || []);
+      }
+      dest.resources = (md.resources || []).concat(gen.resources || []);
+      // Los dos niveles del estilo se releen del proyecto y no se confía en lo
+      // que el job traiga: si el editor lo arregló porque las animaciones
+      // salían mal, reintentar tiene que salir con el arreglado. La relectura la
+      // hace ensureGeneralPrompt, por cada job y contra el disco; acá se pasa a
+      // limpio lo que contestó.
+      //
+      // Dos cosas NO se hacen. Una: vaciarlos por no haber podido leer —el
+      // proyecto puede estar en un disco desmontado— porque un recurso generado
+      // sin la marca no falla, sale distinto y se descubre viendo el video; si
+      // no se pudo leer, solo se completa con lo que haya quedado en esta
+      // máquina. La otra: pisar con el vacío el texto que un job ANTERIOR A LA
+      // 1.5.0 trae ya resuelto. Esos jobs traen un solo texto y no conocen el
+      // nivel de la secuencia, así que un proyecto que todavía no migró —no hay
+      // archivos, la lectura sale bien y no encuentra nada— los dejaba sin el
+      // estilo que ya tenían decidido. Un proyecto que SÍ tiene los archivos les
+      // gana, como a cualquier otro job.
+      //
+      // Van los dos juntos o ninguno: mezclar el curso releído con el de la
+      // secuencia que traía el job es un contexto que nunca existió.
+      var g = HPGeneral.state(job.projectPath, job.storeSeqName || job.seqName);
+      var hayEnDisco = !!(g.projectText || g.sequenceText);
+      var trajoResuelto = !!dest.generalInstruction && typeof dest.sequenceInstruction === "undefined";
+      if (hayEnDisco || (g.loaded && !trajoResuelto)) {
+        dest.generalInstruction = g.projectText;
+        dest.sequenceInstruction = g.sequenceText;
+      }
+      // El ajuste que trae una corrección (`promptOverride`) NO se toca acá, y
+      // por eso sigue valiendo: se aplica en el motor, encima de esta relectura
+      // (ver build-context). Si se resolviera acá habría que elegir entre releer
+      // y respetar el ajuste; así valen las dos cosas, y lo ajustado a mano gana
+      // solo en el nivel que el editor efectivamente tocó.
+      if (!dest.objective) dest.objective = HPStore.getObjective();
+      if (typeof dest.background !== "boolean") dest.background = !!md.background;
+    });
+  }
+
   // Rehidrata lo pesado del payload (stills/transcript/recursos/objetivo) desde
   // HPStore justo antes de correr. Necesario para jobs restaurados de queue.json
   // (que se guardan livianos); en jobs frescos es idempotente.
   function rehydratePayload(job) {
     if (!job.payload) return;
     try {
-      // `storeSeqName` = de qué secuencia salen las imágenes de referencia y el
-      // transcript. Es la misma que `seqName` salvo al corregir algo generado en
-      // otro corte de la clase: ahí el material del marcador vive en la vieja, y
-      // leer la nueva devolvería un marcador sin imágenes — o sea, un rediseño
-      // sin la referencia que hizo bueno al original.
-      HPStore.withContext(job.projectPath, job.storeSeqName || job.seqName, function () {
-        var segments = HPStore.getTranscript() || [];
-        var md = HPStore.getMarkerData(job.markerKey) || {};
-        // Las imágenes del prompt general siguen viviendo contra la secuencia
-        // (ver el README: por ahora no viajan). El TEXTO ya no: sale del disco.
-        var gen = HPStore.getMarkerData(HPStore.GENERAL_KEY) || {};
-        // Si esa secuencia no tiene transcript acá, NO se pisa lo que el payload
-        // ya trajera: rehidratar existe para completar, no para vaciar. Pasa al
-        // corregir algo de otro corte en una máquina donde ese corte nunca se
-        // abrió, y quedarse sin el fragmento del marcador es perder el guion del
-        // tramo (el modelo deja de saber qué se está diciendo ahí).
-        if (segments.length || !job.payload.markerTranscript) {
-          job.payload.transcript = segments;
-          job.payload.markerTranscript = HPTranscript.sliceForMarker(
-            segments, job.markerStart, job.markerStart + job.markerDuration, HPStore.getTranscriptOffset());
-        }
-        // Stills (visión) + assets (a incrustar) = marcador + generales.
-        job.payload.assets = HPStore.getMarkerAssets(job.markerKey).concat(HPStore.getMarkerAssets(HPStore.GENERAL_KEY));
-        // Las imágenes viajan en TODA generación, también al refinar: el modelo no
-        // recuerda la llamada anterior, así que una imagen que no se manda es una
-        // imagen que no existe para él. Lo único que se respeta es que el editor
-        // apague alguna a mano en la caja de feedback (stillsSend = índices en los
-        // stills DEL MARCADOR); las del prompt general van siempre, son la marca.
-        if (job.payload.mode === "adjust" && Array.isArray(job.payload.stillsSend)) {
-          var _all = md.stills || [];
-          job.payload.stills = job.payload.stillsSend
-            .map(function (ix) { return _all[ix]; })
-            .filter(function (s) { return !!s; })
-            .concat(gen.stills || []);
-        } else {
-          job.payload.stills = (md.stills || []).concat(gen.stills || []);
-        }
-        job.payload.resources = (md.resources || []).concat(gen.resources || []);
-        // Los dos niveles del estilo se releen del proyecto y no se confía en lo
-        // que el job traiga: si el editor lo arregló porque las animaciones
-        // salían mal, reintentar tiene que salir con el arreglado. Lo único que
-        // no se hace es VACIARLOS por no haber podido leer —el proyecto puede
-        // estar en un disco desmontado— porque un recurso generado sin la marca
-        // no falla, sale distinto y se descubre viendo el video. De ahí las dos
-        // mitades: si se leyó el disco manda el disco (aunque diga que no hay),
-        // y si no se pudo, solo se completa con lo que haya quedado en esta
-        // máquina. Van los dos juntos o ninguno: mezclar el curso releído con el
-        // de la secuencia que traía el job es un contexto que nunca existió.
-        var g = HPGeneral.state(job.projectPath, job.storeSeqName || job.seqName);
-        if (g.loaded || g.projectText || g.sequenceText) {
-          job.payload.generalInstruction = g.projectText;
-          job.payload.sequenceInstruction = g.sequenceText;
-        }
-        if (!job.payload.objective) job.payload.objective = HPStore.getObjective();
-        if (typeof job.payload.background !== "boolean") job.payload.background = !!md.background;
-      });
+      aplicarContexto(job.payload, job);
     } catch (e) { hpLog("rehydratePayload falló [" + job.label + "]: " + ((e && e.message) || e), "WARN"); }
+  }
+
+  /**
+   * El payload de este job COMO VA A VIAJAR, sin tocarlo: lo que la vista tiene
+   * que estimar. Devuelve una copia, así estimar no deja nada escrito en un job
+   * que todavía está en cola (y que se rehidrata de nuevo, con el material de
+   * ese momento, cuando le toque el turno).
+   */
+  function payloadForEstimate(job) {
+    if (!job || !job.payload) return Promise.resolve({});
+    // El guion del tramo pesa en el prompt y puede estar en el disco y no en el
+    // panel (una corrección de un corte que nunca se abrió acá). Es la misma
+    // recuperación que va a hacer el job antes de correr, así que estimar sin
+    // ella sería estimar otro pedido.
+    return Promise.all([ensureTranscript(job), ensureGeneralPromptCached(job)]).then(function () {
+      var copia = {};
+      for (var k in job.payload) {
+        if (Object.prototype.hasOwnProperty.call(job.payload, k)) copia[k] = job.payload[k];
+      }
+      try { aplicarContexto(copia, job); } catch (e) {}
+      return copia;
+    });
   }
 
   /**
@@ -540,13 +594,40 @@
       });
   }
 
+  // Lecturas del prompt general EN VUELO, por contexto. Solo mientras duran: si
+  // la entrada sobreviviera a la lectura volvería a ser una caché, que es
+  // justamente lo que acá no se quiere. Sirve para que los tres diseños que
+  // arrancan juntos (modelCap) de la misma clase lean el disco una vez y no tres.
+  var leyendoGeneral = {};
+
   /**
-   * Deja en la caché los dos prompts generales de la secuencia de la que sale el
+   * Trae del disco los dos prompts generales de la secuencia de la que sale el
    * material de este job: el del curso —marca, paleta, tipografía— y el de esa
    * clase. Viven al lado del .prproj, no en este panel: un job restaurado de otra
    * sesión, o una corrección de un corte que nunca se abrió acá, igual tiene que
    * salir con ellos. Nunca frena ni lanza: si no se pueden leer, se genera con lo
    * que haya y HPGeneral lo dice en el log.
+   *
+   * SIEMPRE relee, aunque la caché diga que este contexto ya se leyó. La caché de
+   * HPGeneral es para los lectores SINCRÓNICOS —las tarjetas, las filas de
+   * Corrections, los badges—, que no pueden esperar al disco; la cola sí puede, y
+   * es la única que paga caro equivocarse. El caso que este nivel vino a servir es
+   * el .md cambiando POR AFUERA del panel (otro editor sincroniza el .prproj, o
+   * éste lo abre en un editor de texto): ahí no hay ningún `save()` que refresque
+   * nada, así que una caché que se llena una vez por sesión sale con el texto
+   * viejo justo cuando el editor está arreglando el estilo porque las animaciones
+   * salen mal.
+   *
+   * Lo que cuesta: una llamada al motor —que corre EN PROCESO, no hay HTTP ni
+   * IPC— que lee dos archivos de texto de unos pocos kB, una vez por job. Medido
+   * en esta máquina con un prompt de curso de 7 kB: 20 lecturas = 1,3 ms, contra
+   * los varios minutos de modelo y render que cada job va a gastar igual, y
+   * contra una generación entera tirada si sale con el estilo equivocado.
+   * Releer al arrancar la cola, en cambio,
+   * no alcanza: un lote de veinte marcadores corre más de una hora y el archivo
+   * puede cambiar en el medio; y releer solo al reencolar tras un fallo deja
+   * afuera el caso normal, que es el compañero sincronizando el proyecto mientras
+   * la cola avanza.
    *
    * `load` y NUNCA `migrate`: acá se leen secuencias que el editor no tiene
    * adelante, y migrar desde este camino significaba que encolar una corrección
@@ -556,8 +637,26 @@
    */
   function ensureGeneralPrompt(job) {
     var seq = job.storeSeqName || job.seqName;
+    var clave = String(job.projectPath || "") + "::" + String(seq || "");
+    if (leyendoGeneral[clave]) return leyendoGeneral[clave];
+    var p = HPGeneral.load(job.projectPath, seq).catch(function () {}).then(function () {
+      delete leyendoGeneral[clave];
+    });
+    leyendoGeneral[clave] = p;
+    return p;
+  }
+
+  /**
+   * Lo mismo, pero para el ESTIMADO de la vista: alcanza con lo que haya en la
+   * caché y solo se lee si este contexto no se leyó nunca. Es un número que se
+   * dibuja al pie de la cola, no lo que se le manda al modelo, y hacer una
+   * lectura por cada job pendiente cada vez que se redibuja la cola sería pagar
+   * la frescura donde no cambia ninguna decisión.
+   */
+  function ensureGeneralPromptCached(job) {
+    var seq = job.storeSeqName || job.seqName;
     if (HPGeneral.state(job.projectPath, seq).loaded) return Promise.resolve();
-    return HPGeneral.load(job.projectPath, seq).then(function () {}).catch(function () {});
+    return ensureGeneralPrompt(job);
   }
 
   function startModel(job) {
@@ -787,6 +886,13 @@
       return n;
     },
 
+    /**
+     * El payload de un job EN COLA como va a viajar, para estimarlo. Ver
+     * payloadForEstimate(): la vista no puede armar ese cuerpo por su cuenta
+     * sin volver a escribir —y desincronizar— lo que la cola resuelve al correr.
+     */
+    payloadForEstimate: payloadForEstimate,
+
     // Estimación de la cola (auto-calibrada con el uso real).
     timing: {
       calibrated: function () { return TIMING.modelJobs > 0 || TIMING.renderCompSec > 0; },
@@ -962,6 +1068,12 @@
         delete j.payload.previousHtml;
         delete j.payload.adjustment;
         delete j.payload.stillsSend;
+        // El ajuste de prompts que traía una corrección tampoco: "desde cero" es
+        // con la instrucción y el MATERIAL DE HOY, y el material de hoy son los
+        // archivos del proyecto. Es además la salida cuando un ajuste quedó viejo:
+        // sin esto, un job encolado con un prompt de otro día se rediseñaría con
+        // ese prompt para siempre, aunque el editor ya lo hubiera arreglado.
+        delete j.payload.promptOverride;
         j.payload.mode = "regen"; j.kind = "feedback";
         resetForRequeue(j, "Reencolado para rediseñar desde cero, esperando turno…");
         break;

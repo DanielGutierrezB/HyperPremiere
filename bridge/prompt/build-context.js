@@ -13,7 +13,8 @@
 //   generalInstruction: string,                    // prompt general del CURSO (todas las clases)
 //   sequenceInstruction: string,                   // prompt de ESTA secuencia
 //   instruction: string,                           // qué pidió el editor para este recurso
-//   stillsCount: number                            // stills que van como imágenes aparte
+//   stillsCount: number,                           // stills que van como imágenes aparte
+//   promptOverride: { course?, sequence?, objective? }  // ajuste local de UNA corrección (ver promptLevels)
 // }
 //
 // Los tres últimos son los TRES NIVELES de lo que escribe el editor, del más
@@ -69,8 +70,21 @@ function formatMarkerTranscript(markerTranscript, markerStart) {
   return lines.length ? lines.join('\n') : '(sin transcript dentro del marcador)';
 }
 
+// Los TRES niveles que escribe el editor, y las claves del ajuste local de una
+// corrección. Están en una lista porque la normalización es la misma para los
+// tres —vino la clave manda sobre hay texto— y escribirla una vez por nivel es
+// cómo el objetivo terminó viajando por una función paralela, en un módulo que
+// se documenta como "los TRES NIVELES".
+const NIVELES = ['course', 'sequence', 'objective'];
+
 /**
- * Qué niveles generales trae este pedido, normalizados y por separado.
+ * Los tres niveles de este pedido: normalizados, con el ajuste local ya
+ * aplicado, y diciendo cuáles se ajustaron.
+ *
+ * Devuelve `{ course, sequence, objective, unknown, adjusted: {...} }`. Es el
+ * único lugar donde el contexto que escribe el editor se decide, así que de acá
+ * salen las tres cosas que tienen que coincidir: el texto que se manda, la
+ * etiqueta del log y la ficha de la versión.
  *
  * `unknown` es la compatibilidad con los jobs encolados por un panel anterior a
  * la 1.5.0: mandaban UN solo texto ya resuelto —el del curso o el de la clase,
@@ -78,18 +92,58 @@ function formatMarkerTranscript(markerTranscript, markerStart) {
  * se respeta; sin origen no se puede saber a qué nivel corresponde y se dice que
  * no se sabe. Inventarle un nivel sería mentir en el único dato por el que se
  * mira el log de una generación.
+ *
+ * **El ajuste** es lo que el editor escribió EN LA FILA DE CORRECCIONES, para
+ * ese pedido y ninguno más. Se aplica acá, en el último lugar donde el prompt se
+ * decide, y por eso se puede prometer que llega al modelo sin romper nada de lo
+ * de abajo: la cola sigue releyendo los dos archivos del proyecto justo antes de
+ * generar —de eso depende que arreglar el estilo y reintentar salga con el
+ * arreglado— y este ajuste se pone encima de esa relectura, nivel por nivel. Lo
+ * que el editor no tocó lo sigue diciendo el disco.
+ *
+ * Un nivel presente y VACÍO es un ajuste válido ("esta corrección va sin el
+ * estilo del curso"), así que la pregunta es si vino la clave, no si trae texto.
+ * Con el objetivo eso no es un detalle: la cola lo completa cuando el payload no
+ * trae ninguno, así que un ajuste que solo pisara el campo se rellenaría solo
+ * antes de generar y sería decorativo.
+ *
+ * Lo que NO hace, a propósito: escribir los archivos. El prompt del curso lo
+ * comparten todas las clases y viaja en el .prproj a las máquinas de los demás
+ * editores; que se reescriba desde una fila donde uno está pensando en un clip
+ * suelto es cómo se le cambia el estilo a un curso entero sin querer. Guardarlo
+ * para siempre es otra acción, explícita, y vive en el panel.
  */
-function generalPromptLevels(ctx) {
+function promptLevels(ctx) {
   ctx = ctx || {};
   const solo = String(ctx.generalInstruction || '').trim();
   const sequence = String(ctx.sequenceInstruction || '').trim();
   // El panel de la 1.5.0 en adelante manda SIEMPRE los dos campos, vacíos
   // incluidos; que falte el de la secuencia es lo que delata a un job viejo.
   const viejo = ctx.sequenceInstruction === undefined;
-  if (viejo && solo && ctx.generalSource === 'sequence') {
-    return { course: '', sequence: solo, unknown: false };
-  }
-  return { course: solo, sequence, unknown: viejo && !!solo && !ctx.generalSource };
+  const levels = (viejo && solo && ctx.generalSource === 'sequence')
+    ? { course: '', sequence: solo, unknown: false }
+    : { course: solo, sequence, unknown: viejo && !!solo && !ctx.generalSource };
+  levels.objective = String(ctx.objective || '').trim();
+
+  const ov = ctx.promptOverride;
+  const adjusted = { course: false, sequence: false, objective: false };
+  NIVELES.forEach((nivel) => {
+    if (!ov || typeof ov !== 'object' || typeof ov[nivel] !== 'string') return;
+    levels[nivel] = ov[nivel].trim();
+    adjusted[nivel] = true;
+  });
+  // Un ajuste explícito deja de ser "no se sabe de qué nivel es": el editor
+  // acaba de decir que ese texto es el del curso.
+  if (adjusted.course) levels.unknown = false;
+  levels.adjusted = adjusted;
+  return levels;
+}
+
+/** Si el objetivo entró, y si el que entró es el de la clase o uno ajustado a mano. */
+function objectiveLabel(ctx) {
+  const levels = promptLevels(ctx);
+  if (!levels.adjusted.objective) return levels.objective ? 'sí' : 'NO';
+  return levels.objective ? 'sí (ajustado para esta corrección)' : 'NO (vaciado para esta corrección)';
 }
 
 /**
@@ -129,7 +183,11 @@ function styleBlocks(levels) {
  * arriba.
  */
 function generalPromptLabel(ctx) {
-  const levels = generalPromptLevels(ctx);
+  const levels = promptLevels(ctx);
+  return nivelesLabel(levels) + ajusteLabel(levels);
+}
+
+function nivelesLabel(levels) {
   if (levels.unknown) return 'sí (origen desconocido)';
   if (levels.course && levels.sequence) {
     return 'del curso + de esta secuencia (si se contradicen, manda la secuencia)';
@@ -139,11 +197,24 @@ function generalPromptLabel(ctx) {
   return 'no';
 }
 
+/**
+ * Que el texto que viajó no sea el que dice el archivo tiene que estar en el
+ * log, porque es lo primero que se va a mirar cuando un recurso salga con un
+ * estilo que no se parece al del resto. Y se aclara que el archivo NO se tocó:
+ * es la mitad del contrato de este ajuste.
+ */
+function ajusteLabel(levels) {
+  const a = levels.adjusted || {};
+  if (!a.course && !a.sequence) return '';
+  const cual = a.course && a.sequence ? 'los dos' : (a.course ? 'el del curso' : 'el de la secuencia');
+  return ' · ajustado a mano para esta corrección (' + cual +
+    '; los archivos del proyecto no se tocaron)';
+}
+
 // Arma el prompt de usuario completo. Devuelve un string listo para enviar
 // como único mensaje de usuario junto con los stills adjuntos como imágenes.
 function buildUserPrompt(ctx) {
   const {
-    objective,
     transcriptSegments,
     marker,
     markerTranscript,
@@ -152,7 +223,7 @@ function buildUserPrompt(ctx) {
     lean, // refinamiento: omitir el transcript completo de la clase (ahorro de tokens)
   } = ctx || {};
 
-  const levels = generalPromptLevels(ctx);
+  const levels = promptLevels(ctx);
 
   const markerStart = Number(marker && marker.start) || 0;
   const duration = Number(marker && marker.duration) || 0;
@@ -161,7 +232,7 @@ function buildUserPrompt(ctx) {
   const parts = [];
 
   parts.push('## Objetivo de la clase');
-  parts.push((objective || '').trim() || '(sin objetivo declarado)');
+  parts.push(levels.objective || '(sin objetivo declarado)');
 
   // En refinamiento (lean) NO reenviamos el transcript completo de la clase: el
   // modelo ya tiene el diseño previo (HTML) y el fragmento del marcador; reenviar
@@ -223,4 +294,6 @@ function buildUserPrompt(ctx) {
   return parts.join('\n');
 }
 
-module.exports = { buildUserPrompt, generalPromptLevels, generalPromptLabel };
+module.exports = {
+  buildUserPrompt, promptLevels, generalPromptLabel, objectiveLabel,
+};

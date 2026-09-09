@@ -67,11 +67,12 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    una (Premiere exporta el audio de la secuencia abierta, así que el panel la abre
    y después **te devuelve a la que estabas**). Las secuencias que ya están listas
    **no esperan**: se van generando mientras otra se transcribe.
-   Al final, el
-   **Prompt general** lleva estilo/marca/tipografía/colores que aplican a TODO el curso, y
-   el **Prompt de secuencia** lo que sea propio de esa clase (no lo repetís en cada
-   marcador). Los dos viajan juntos al modelo y, donde se contradigan, manda el de la
-   secuencia.
+   Arriba de todo, en
+   **Estilo del curso**, el **Prompt general** lleva estilo/marca/tipografía/colores que
+   aplican a TODO el curso; abajo, en **Estilo de esta secuencia** (dentro del área de
+   marcadores), el **Prompt de secuencia** lleva lo que sea propio de esa clase (no lo
+   repetís en cada marcador). Los dos viajan juntos al modelo y, donde se contradigan,
+   manda el de la secuencia.
 3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa**
    (📸) y arrastrar **imágenes / PDFs / referencias** (drag & drop).
 4. La IA diseña una animación **HyperFrames**, se **renderiza** y se **coloca sobre el
@@ -216,6 +217,18 @@ costo, que son las únicas donde están las dos mitades de la cuenta. Y la líne
 la cola dice lo que de verdad estima —**el prompt que mandamos nosotros**—, porque el
 contexto del agente no lo podemos prever.
 
+**Los dos estimados de antes de gastar cuentan el pedido entero.** El `≈ N tokens de
+entrada` de la tarjeta del marcador y el del pie de la Cola se arman con **el mismo cuerpo
+que se le manda al modelo**: los dos prompts generales —el del curso y el de la clase—, el
+objetivo, el encargo, el guion del tramo, el ajuste de una corrección y **todas** las
+imágenes que viajan, las del marcador y las del prompt general. Antes cada uno se lo
+armaba por su cuenta y se quedaban atrás: con un prompt de curso de 7 kB y dos imágenes de
+marca, la tarjeta decía ≈4.875 y se mandaban ≈9.207 —**47% corto**, y siempre para el mismo
+lado—, y en la Cola una corrección recién encolada se estimaba sin ningún nivel de contexto
+hasta que el job arrancaba. Sigue siendo un estimado (el prompt del sistema y la respuesta
+no se pueden saber de antemano), pero ya no es el de otro pedido. Y **refinar se estima
+como refinar**: ese prompt es más chico y el número lo dice.
+
 ## La cola
 
 - **Pipeline de 2 carriles (modelo ↔ render):** el **modelo (LLM)** corre **varios en
@@ -317,9 +330,14 @@ contexto del agente no lo podemos prever.
   donde está el recurso**, y nada más. Es para mirarlo: el panel se queda en la Cola. (A
   la pestaña Marcadores se llega con **✎ Editar HTML**, que es el que la necesita.)
 - **✎ Feedback** abre la ronda ahí mismo, con las **dos salidas** de la tarjeta del
-  marcador: **↻ Refinar** ajusta sobre la última versión con lo que escribiste, y
+  marcador: **↻ Aplicar el ajuste** trabaja sobre la última versión con lo que escribiste, y
   **⟲ Regenerar desde cero** la descarta y vuelve a diseñar con la instrucción y el
-  material de hoy. Refinar **con el cuadro vacío avisa** en vez de rediseñar por su cuenta,
+  material de hoy. Las dos van **debajo del campo, a lo ancho** (v1.5.1): el ajuste
+  destacado, porque es la de todos los días, y desde cero chico y gris, porque descarta
+  trabajo hecho. No dice "Refinar" a propósito: el **✨ Refinar** del dictado queda a
+  seis píxeles y hace otra cosa —reescribe el texto del pedido, no la animación—, y
+  además "aplicar el ajuste" se lee como lo contrario de "desde cero", que es lo que son.
+  El ajuste **con el cuadro vacío avisa** en vez de rediseñar por su cuenta,
   y desde cero **pregunta siempre** —están pegados y las dos palabras se parecen, así que
   errarle es esperable y un clic de más tiraría una animación que estaba bien—, aclarando
   además que el feedback escrito ahí no se usa.
@@ -353,11 +371,19 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
   parado en otro corte: es lo que hizo bueno al original y tiene que seguir viajando.
   Lo mismo con el resto del contexto: viaja **el encargo original** del recurso (lo que
   pediste cuando lo generaste, que la fila te muestra debajo del nombre) **además** de tu
-  corrección, el **objetivo de la clase**, el **prompt general** y el **tramo del guion**
-  del corte donde nació (si no está en el panel, se recupera de su carpeta). Es la
+  corrección, el **objetivo de la clase**, los **dos prompts generales** —el del curso y el
+  de la clase, los mismos tres niveles de siempre— y el **tramo del guion** del corte donde
+  nació (si no está en el panel, se recupera de su carpeta). Es la
   diferencia entre pedir "subí el título" sobre un gráfico que el modelo entiende y
   pedírselo a ciegas. Y **no se transcribe nada** para corregir: el corte viejo puede ya
   no existir en el proyecto, así que se usa lo que haya y la cola nunca se frena por eso.
+- **▸ Lo que recibió este marcador**: el contexto con el que se generó, plegado en un solo
+  renglón. Abierto son cuatro campos —**Prompt general · todo el curso**, **Prompt de
+  secuencia · solo "<clase>"**, **Objetivo de la clase** y **Encargo de este marcador**— con
+  el texto que viajó, editables. Está plegado porque la fila ya tiene bastante y esto es
+  algo que se mira cuando hace falta, no siempre; lo que se necesita saber sin abrirlo está
+  en el renglón del resumen. Ver el detalle abajo, en *Lo que recibió, y qué se puede saber
+  de una versión vieja*.
 - **＋ Enviar a la cola** (al lado de Regenerar): la misma corrección, pero **en espera**.
   Sirve para revisar la clase entera —ir fila por fila escribiendo qué está mal— y largar
   todo junto con **Iniciar cola**, en vez de que la primera arranque mientras todavía estás
@@ -374,6 +400,93 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
 - El clip corregido llega en **amarillo** y en una **pista nueva**, para verlo de un golpe
   entre los que ya estaban. Es la **única** etiqueta de color que el panel pone: lo que se
   genera normalmente entra sin pintar.
+
+### Lo que recibió, y qué se puede saber de una versión vieja
+
+Corregir es rediseñar, y para rediseñar hay que saber con qué se diseñó. Así que
+**la ficha `.meta.json` guarda ahora los tres niveles y el objetivo** de cada versión —el
+prompt del curso, el de la clase, el objetivo de la clase y el encargo del marcador—, y
+`▸ Lo que recibió este marcador` los muestra tal como viajaron. Se guardan al preparar la
+generación y se vuelven a escribir al terminar el render; el **render manual** (editar el
+HTML a mano y renderizarlo) **no los guarda**, y no es un olvido: ahí no hubo modelo al que
+mandarle nada, y una ficha que dijera lo contrario mentiría.
+
+**Y por eso hay dos casos, que se dicen distinto.** El renglón del resumen es el único lugar
+donde se dice cuál de los dos estás mirando:
+
+| Lo que dice | Qué significa |
+| --- | --- |
+| `· lo que se mandó al generar la v4` (verde) | es un dato: salió de la ficha de esa versión, palabra por palabra |
+| `· no quedó guardado: reconstruido` (ámbar) | de esa versión **no se puede saber** qué se mandó: se generó antes de que la ficha lo anotara. Lo de abajo son los archivos del proyecto **como están hoy**, que pueden haber cambiado desde entonces |
+| `· ajustado para esta corrección` (ámbar) | lo tocaste vos, acá, y así va a viajar |
+
+Cuando lo que se muestra **no coincide** con lo que el archivo del proyecto dice hoy, el pie
+del campo dice **por qué**, y son dos motivos opuestos: o el archivo cambió desde entonces
+(*"El archivo del proyecto dice otra cosa hoy: esto es lo que se mandó entonces"*), o ese
+texto **nunca salió del archivo** porque se ajustó a mano para aquella corrección (*"Esto no
+salió del archivo: se ajustó a mano para aquella corrección"*). El dato que los distingue lo
+guarda la ficha, nivel por nivel, y por eso se puede decir cuál de los dos es: mientras se
+decía siempre el primero, el panel le echaba la culpa a un archivo que nadie había tocado.
+
+De una versión vieja, entonces, se puede saber **qué se le pidió** (el encargo ya se
+guardaba) y **nada más**: si el prompt del curso decía otra cosa hace un mes, no hay dónde
+mirarlo. La reconstrucción se ofrece igual porque es útil para escribir la corrección, pero
+con el cartel puesto y en ámbar. La versión de al lado del mismo recurso puede estar en el
+otro caso, y se ve: el rótulo nombra la versión (`al generar la v4`), no el recurso. El
+renglón de estado de la pestaña lo cuenta de entrada: *"6 recurso(s) generados en … · 2 sin
+el contexto guardado (se reconstruye)"*.
+
+Lo que pesa, medido antes de decidir y no estimado: una ficha terminada pasa de **832 B** a
+**1,4 kB** con un prompt de curso normal, y a **6,8 kB** con uno largo de 5,5 kB de texto. Un
+proyecto de 20 recursos con 4 versiones cada uno son 80 fichas: **~530 kB** en el peor caso,
+al lado de los `.mov` de decenas de MB que están en la misma carpeta. El texto se guarda
+entero y sin recortar, porque una ficha con el prompt cortado a la mitad no sirve para lo
+único que se le pide.
+
+### Editar los prompts desde una corrección
+
+Los cuatro campos se editan, y **lo que escribís ahí vale para esa corrección y nada más**:
+el archivo del proyecto no se toca. Cada campo lo dice debajo en cuanto lo tocás —*"Ajustado
+para esta corrección. El archivo del curso NO se toca"*—. El ajuste viaja con **ese** pedido
+de regeneración, encima de lo que los archivos digan al momento de generar: la cola sigue
+releyendo el estilo del proyecto (así que arreglar el prompt y reintentar sale con el
+arreglado), y el ajuste se aplica después, solo sobre los niveles que tocaste. `⟲ Regenerar
+desde cero` lo descarta, que es lo que quiere decir "desde cero".
+
+No es una decisión de comodidad. El prompt del curso lo comparten **todas** las clases y
+viaja en el `.prproj` a las máquinas de los demás editores; que se reescriba desde una fila
+de correcciones —donde uno está pensando en un clip puntual— es la manera de cambiarle el
+estilo a un curso entero sin darse cuenta. Ya pagamos un bug de esa familia (vaciar el campo
+de una clase reescribía la base de todos, más arriba) y no se reintroduce por otra puerta.
+
+Si el cambio tiene que quedar, hay una acción **aparte**, que aparece recién cuando hay algo
+que guardar y en el mismo ámbar que Regenerar: **Guardar para todo el curso** debajo del
+campo del curso, **Guardar para esta secuencia** debajo del de la clase. Pregunta antes, y
+la pregunta dice a quién le llega: *"Pasa a ser el Prompt general del curso: lo van a usar
+TODAS las clases de este proyecto y le va a llegar a cualquiera que abra el .prproj (el
+archivo viaja al lado del proyecto). Se reemplaza lo que diga hoy."* Y abajo, la salida:
+*"Si solo querés que valga para esta corrección, cancelá: el ajuste ya viaja con este pedido
+sin guardar nada."* Cuando lo que tenés en pantalla salió de una ficha vieja y el archivo
+dice **otra cosa hoy**, el aviso lo agrega: guardarlo pisa el texto actual, con los cambios
+que le haya hecho otro editor. El texto que se guarda es el que el campo dice **cuando
+aceptás**, no el que decía cuando apretaste el botón: la confirmación son cinco renglones y
+en el medio se sigue pudiendo escribir.
+
+Guardado, el archivo del proyecto cambió, así que **todo lo que lo estaba mostrando se pone
+al día solo**: el bloque de estilo del encabezado, el resto de las clases del proyecto y las
+**otras filas de la lista** que estaban reconstruyendo con ese archivo (las que muestran lo
+que su propia versión recibió no se tocan —eso es historia, no una copia del archivo—, pero
+su comparación con el archivo de hoy sí cambia de respuesta). Nada de recargar el panel.
+
+El **Objetivo de la clase** y el **Encargo de este marcador** no tienen botón de guardar, y
+por motivos opuestos. El objetivo se escribe en la pestaña Marcadores y ahí queda; ajustarlo
+acá no lo cambia. El encargo es de **este recurso y de ningún otro**, así que no hay a quién
+avisarle: la versión nueva nace con lo que dejaste escrito, como pasaba siempre. Y
+**dejarlo vacío también es un ajuste**, igual que en los otros tres niveles: si el encargo
+original ya no describe lo que querés —el gráfico cambió de idea y lo que sobra es la
+descripción vieja—, borrás el campo y la versión nueva sale **sin encargo**, guiada por tu
+corrección y el resto del contexto. Un campo vacío que **no tocaste** es otra cosa y sigue
+funcionando como antes: ahí no dijiste nada, así que viaja el encargo original del recurso.
 
 Si un recurso es **anterior** a que existiera la ficha, el tramo se busca en la cola
 guardada (`queue.json`) y, si no, en el `data-duration` del HTML —que da la duración pero
@@ -1195,16 +1308,67 @@ máquina y a vos no te llegó*, que es justo la ambigüedad que hizo falta desen
 Ahora el estilo está en el proyecto, así que `no` es una sola cosa: no hay estilo escrito en
 ningún lado.
 
+### Queda anotado qué se mandó
+
+El log dice **cuáles** viajaron; la **ficha** dice **qué decían**. Cada versión guarda en su
+`.meta.json` los tres niveles con los que se generó, más el objetivo de la clase, y
+Corrections los muestra al abrir el recurso —ver *Lo que recibió, y qué se puede saber de una
+versión vieja*—. Sin eso, "lo que recibió este marcador" solo se podía adivinar mirando los
+archivos de hoy, que son justamente los que el editor está por cambiar. Con esto, un gráfico
+que salió raro se puede rediseñar sabiendo con qué salió raro.
+
+Es de acá en adelante, y se dice: de una versión **anterior** a este cambio no hay ficha con
+los prompts, así que lo que se muestra es una reconstrucción de los archivos actuales, con el
+cartel puesto. Lo único que de esas versiones sí se sabe es el **encargo del marcador**, que
+ya se guardaba desde antes.
+
 ### Dos campos, dos archivos, y ninguna duda de dónde estás escribiendo
 
-En el panel los dos niveles se ven y se editan a la vez: **Prompt general · todo el curso**
-arriba, y debajo **Prompt de secuencia · solo "<nombre de la clase>"**, con una guía de
-color al costado que lo marca como el más acotado de los dos. El rótulo nombra la secuencia
-porque nombrar el alcance en abstracto —"esta secuencia"— obliga a mirar otra parte del
-panel para saber cuál es. Abajo, una línea dice qué está pasando de verdad: *"Al modelo van
-los DOS: el del curso como base y el de esta secuencia encima, que MANDA donde se
-contradigan"*. Sin secuencia abierta el segundo campo se deshabilita y lo dice, en vez de
-aceptar texto que no tendría dónde guardarse.
+En el panel los dos niveles se editan en **dos bloques separados**, cada uno en el lugar
+que le corresponde por alcance. **Estilo del curso** va arriba de todo, pegado a *Contexto
+de la clase*: adentro está **Prompt general · TODO el curso**. **Estilo de esta secuencia**
+va abajo del rótulo *Marcadores*, arriba de las tarjetas: adentro está **Prompt de
+secuencia · solo "<nombre de la clase>"**, con la guía de color al costado que lo marca
+como el más acotado de los dos, y las **referencias**. El rótulo nombra la secuencia porque
+nombrar el alcance en abstracto —"esta secuencia"— obliga a mirar otra parte del panel para
+saber cuál es. Sin secuencia abierta el bloque de abajo **no se ofrece**, entero: no hay
+carpeta donde guardar ni el texto ni las referencias.
+
+Vivieron juntos, en una sola caja llamada *Prompts generales*, y estaban abajo del rótulo
+*Marcadores* los dos. Juntos tenían algo bueno que se perdió: la relación entre los niveles
+—que los dos viajan y que el de la clase manda donde se contradigan— se leía de un vistazo,
+un campo abajo del otro y un renglón entre medio. Lo malo era peor: el prompt del **curso
+entero** quedaba adentro del área de los marcadores de **esta** clase, que es exactamente lo
+que no es. Y leyéndolo de arriba a abajo, el panel ahora va del alcance más ancho al más
+angosto: el curso, esta clase, los marcadores de esta clase.
+
+Lo que sostiene la relación ahora que las cajas están lejos son **los dos renglones**, y
+está repartido a propósito para no escribir el mismo párrafo dos veces. El de arriba dice
+qué alcance tiene lo suyo y **dónde está el otro**: *"El mismo en todas las clases del
+curso. Viaja con el .prproj. Lo de esta clase va abajo, en 'Estilo de esta secuencia'"*. El
+de abajo dice **quién manda**, que es lo único que cambia lo que uno escribe: *"Al modelo
+van los DOS: el del curso (arriba) como base y éste encima, que MANDA donde se
+contradigan"*. La precedencia se dice una sola vez, en el bloque que gana. Los dos rótulos
+salen de un solo lugar en el código (`HPGeneral.TITULOS`) y hay un test que los compara con
+el HTML: un renglón que mande a una sección que se llama distinto es peor que no decir nada.
+
+Cada bloque tiene además **su propio badge**, que es todo lo que se ve plegado, y dice de su
+nivel y no del otro: *"✓ del curso"* arriba, *"✓ MANDA sobre el del curso · 3 adj."* abajo.
+
+Las **referencias** (capturas, logos, PDFs) se quedaron del lado de la secuencia. Son una
+sola bolsa para los dos niveles y no se partieron —eso es un cambio de datos y de migración,
+no de layout—, pero se guardan **por secuencia y en esta máquina**, que es el alcance del
+bloque de abajo y no el del curso. Arriba, en la caja que promete *"viaja con el .prproj"*,
+habrían sido la excepción muda a esa promesa: la misma clase de falsedad que costó el bug
+del prompt general. El rótulo lo dice con todas las letras, *"Referencias de esta secuencia"*.
+
+El **cartel de conflicto** —el de la migración del `localStorage`, más abajo— vive en el
+bloque del curso. Puede hablar de cualquiera de los dos niveles, y por eso su lugar lo
+decide otra cosa: es el único bloque que se dibuja **siempre** (sin secuencia abierta el
+otro no existe, y ahí el cartel quedaría inalcanzable), y de sus tres respuestas la cara
+reemplaza justo ese archivo, el que comparten los dos editores. Cuando hay algo sin decidir,
+el bloque de abajo lo dice y señala dónde: *"Ese texto puede ser el de esta clase: se decide
+arriba, en 'Estilo del curso'"*. Su comportamiento y sus tres respuestas no cambiaron.
 
 Cada campo escribe en su propio archivo y en ninguno más. Eso, que suena obvio, es la
 regresión que más caro salió: con un solo campo que editaba uno u otro archivo según un
@@ -1215,8 +1379,13 @@ existe**: con los dos campos a la vista no hay ningún destino que elegir, cada 
 suyo escrito en el HTML. La disciplina sí sigue, y hay tests que la fijan en la forma nueva:
 vaciar un campo no toca el archivo del otro, ni al guardar ni en lo que queda en pantalla.
 
-Vaciar el **Prompt de secuencia** borra su archivo, que es la manera de no dejar uno vacío
-que después parece una decisión: mientras no esté, esa clase usa el del curso y nada más.
+Vaciar **cualquiera de los dos** borra su archivo, que es la manera de no dejar uno vacío
+que después parece una decisión: mientras no esté el de la secuencia, esa clase usa el del
+curso y nada más. Los dos niveles se comportan igual a propósito. Vaciar el del curso dejaba
+un `prompt-general.md` de **cero bytes** en la raíz del proyecto: no rompía nada —se lee
+como "no hay estilo del curso", que es lo que el editor quiso decir— pero es un archivo que
+**viaja al lado del `.prproj`** y le aparece a todos los demás editores sin querer decir
+nada. Si el archivo no está, tampoco está la duda.
 
 ### Los proyectos que ya existen
 
@@ -1250,7 +1419,23 @@ Todo lo que arma un pedido al modelo lee ahora de los mismos dos archivos: la ge
 normal por marcador, los reintentos y el feedback de la cola —que releen al momento de
 generar, así que arreglar el estilo y reintentar sale con el arreglado, no con el que tenía
 pegado el job—, la pestaña de correcciones y la estimación de costo, que cuenta los tokens
-del prompt que se va a mandar de verdad.
+del prompt que se va a mandar de verdad. La única cosa que se les pone **encima** de lo leído
+es el ajuste local de una fila de Corrections, y solo en los niveles que se tocaron y solo
+para ese pedido: no escribe ninguno de los dos archivos.
+
+**Releer quiere decir releer el disco, no la memoria del panel.** La cola va a los archivos
+**antes de cada job**, aunque ya los haya leído en esta sesión. La caché del panel sirve
+para lo que se dibuja —las tarjetas, las filas de Corrections, los badges—, que no puede
+esperar a un archivo, pero no ve el caso que este nivel vino a servir: el `.md` cambiando
+**por afuera del panel**, cuando otro editor sincroniza el `.prproj` o vos lo abrís en un
+editor de texto. Ahí no hay ningún guardado del panel que refresque nada, y un lote de
+veinte marcadores corre más de una hora: el archivo puede cambiar en el medio, y el marcador
+número doce tiene que salir con lo que el archivo diga **en su momento**. Lo que cuesta es
+una lectura de dos archivos de pocos kB por job, en proceso, medido en 1,3 ms cada veinte,
+contra los minutos de modelo y render que ese job va a gastar igual —y contra una generación
+entera tirada por salir con el estilo viejo—. Los diseños que arrancan juntos leen **una
+sola vez** si son de la misma clase, y un parpadeo de lectura en el medio del lote no borra
+lo que ya se había leído bien: se sigue con eso y el ⬇ Log lo dice.
 
 Lo que **quedó afuera** son las imágenes de referencia del prompt general, que tienen el
 mismo problema: las que se arrastran al panel se guardan como data URL en el mismo
@@ -1772,6 +1957,18 @@ nada), que un job viejo con el campo `draft` colgado en su payload se coloque ig
 campo ya no lo lee nadie—, y que la marca de corrección **sobreviva** a reiniciar el
 panel. Las
 **tres pestañas** se prueban aparte: exactamente una vista visible, siempre.
+
+De *Lo que recibió este marcador*, las dos mitades que se pueden romper sin que nada falle.
+La **honestidad**: que la ficha guarde los tres niveles al preparar y al terminar el render y
+que el render **manual** no los guarde; que una versión sin ellos vuelva del motor en `null`
+—y no rellenada con los archivos de hoy, que es la mentira barata— y se muestre en pantalla
+como reconstrucción, dicho con esas palabras. Y que el ajuste local **no sea decorativo**:
+que se muestre y **viaje** al modelo, solo en los niveles tocados, dejando los demás como los
+lea el disco; que no escriba ninguno de los dos archivos del proyecto; que `desde cero` lo
+descarte; que sin ajuste la relectura siga intacta (arreglar el prompt del proyecto y
+reintentar sale con el arreglado); y del lado del guardado explícito, que **pregunte** antes,
+que escriba el archivo que dice y ninguno más, y que guardar el del curso deje al día a las
+demás clases del proyecto sin pisarles el suyo.
 
 Y el caso de la clase **re-cortada**, que es el que apareció en producción: que estando
 parado en "…_105875_02" se encuentren los recursos de "…_105875" y se **avise** que la
