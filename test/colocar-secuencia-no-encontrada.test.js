@@ -209,6 +209,11 @@ function montarCola(opts) {
       getTranscript: function () { return []; },
       getMarkerData: function () { return { stills: [], resources: [] }; },
       getMarkerAssets: function () { return []; },
+      // Los dos que describen QUIÉN es cada adjunto (de qué nivel salió y cómo se
+      // llama): es con lo que una mención escrita en la instrucción se traduce al
+      // número que le toca en este pedido. Ver bridge/prompt/menciones.js.
+      getMarkerStillRefs: function () { return []; },
+      getMarkerDocs: function () { return []; },
       getTranscriptOffset: function () { return 0; },
       getObjective: function () { return 'objetivo'; },
       // El prompt general de esta cola sale del disco (HPGeneral), no de acá.
@@ -257,7 +262,7 @@ function montarCola(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  ['util.js', 'general-prompt.js', 'refs.js', 'queue.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'general-prompt.js', 'refs.js', 'queue.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, 'js', f), 'utf8'), ctx, { filename: f });
   });
   return { ctx: ctx, espia: espia };
@@ -403,4 +408,34 @@ test('la posibilidad de colocarlo sobrevive a cerrar el panel', async function (
   ok(guardado.notPlaced, 'con la marca');
   eq(guardado._movPath, '/p/HyperPremiere/clase-23/Marcador 3 v3.mov', 'y con el archivo');
   eq(guardado._placeColor, -1, 'y con el color que le tocaba (ninguno: no es una corrección)');
+});
+
+// Lo que TARDÓ también tiene que sobrevivir al archivo, y desde la 1.6.0 no es un
+// lujo: el encabezado del trabajo terminado muestra el tiempo y nada más —el
+// resto del detalle se fue al cuerpo—, así que un total que no se guarda deja la
+// fila muda después de reiniciar el panel. Y se nota SÓLO al reiniciar, que es
+// cuando nadie está mirando: el defecto vive un día entero antes de que alguien
+// lo vea.
+//
+// Se mide sobre lo que se ESCRIBE, no sobre el job en memoria, porque el que se
+// perdía era el del archivo.
+test('lo que tardó el recurso se guarda en la cola, no sólo sus etapas', async function () {
+  const c = montarCola({});
+  c.ctx.HPQueue.add(job());
+  await dejarCorrer();
+  await new Promise(function (r) { setTimeout(r, 1100); }); // el guardado va con debounce
+
+  ok(c.espia.guardado, 'se guardó la cola');
+  const g = c.espia.guardado.jobs[0];
+  eq(g.status, 'done', 'el trabajo terminó');
+  // Se mide que el CAMPO viaje, y no que traiga un número mayor que cero: acá el
+  // trabajo entero es de mentira y termina en menos de un milisegundo, así que el
+  // total puede ser 0 de forma legítima. Un `> 0` hace que el test dependa de la
+  // granularidad del reloj — pasaba solo y fallaba en la suite completa, que es la
+  // peor forma de fallar porque parece contaminación entre tests y no es.
+  // Y el campo es exactamente lo que se perdía: `serializeJob` guardaba las etapas
+  // y no el total.
+  ok('_totalMs' in g, 'el total viaja al archivo: es lo que el encabezado muestra');
+  // Con las etapas al lado, que son las que le dan el desglose al cuerpo.
+  ok('_modelMs' in g && '_renderMs' in g, 'y las etapas, para el desglose de adentro');
 });

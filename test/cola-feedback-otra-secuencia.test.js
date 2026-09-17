@@ -29,7 +29,7 @@ function elemento(tag) {
     querySelectorAll: function () { return []; },
     buscar: function (clase) {
       for (const h of this.children) {
-        if (h.className === clase) return h;
+        if (String(h.className || "").split(" ").indexOf(clase) !== -1) return h;
         const hit = h.buscar && h.buscar(clase);
         if (hit) return hit;
       }
@@ -81,12 +81,18 @@ function dibujar(job) {
       fbInit: function () {},
       fbClear: function () {},
       fbCollect: function () { return [0]; },
-      createControl: function (markerKey, opts) {
+      // Desde la 1.6.x la ronda de feedback dibuja la TIRA de referencias (la
+      // misma que una ficha de marcador) y no la caja completa con su zona de
+      // arrastre, que ya no existe. Lo que se fija sigue siendo lo mismo: sobre
+      // qué secuencia trabaja.
+      crearTira: function (markerKey, opts) {
         espia.controles.push({ markerKey: markerKey, opts: opts });
         const el = elemento('div');
-        el.className = 'marker-stills';
-        return el;
+        el.className = 'hp-tira-propia';
+        return { el: el, estado: elemento('div'), refrescar: function () {}, cuantasImagenes: function () { return 0; } };
       },
+      inventario: function () { return []; },
+      capturar: function () {}, ingerir: function () {},
     },
     HPQueue: {
       jobs: function () { return [job]; },
@@ -102,13 +108,16 @@ function dibujar(job) {
     },
     document: {
       createElement: elemento,
+      // El campo de prompt arma nodos de TEXTO: desde la 1.6.x es un
+      // `contenteditable` que pinta las menciones como chips, no un `<textarea>`.
+      createTextNode: function (t) { const n = elemento('#text'); n.textContent = t; return n; },
       getElementById: function (id) { return nodos[id] || null; },
     },
   };
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -131,7 +140,7 @@ function terminado(extra) {
 
 /** Abre la caja de feedback como el editor: ✎ Feedback y se redibuja. */
 function abrirFeedback(d) {
-  const btn = d.panel.porTexto('✎ Feedback');
+  const btn = d.panel.porTexto('Feedback');
   ok(btn, 'el job terminado ofrece dar feedback');
   btn.click();
   return d.panel;
@@ -141,7 +150,7 @@ test('el feedback de un job de otra secuencia ofrece las imágenes igual', funct
   const d = dibujar(terminado({ storeSeqName: 'Clase 14' }));
   abrirFeedback(d);
 
-  ok(d.panel.buscar('marker-stills'), 'el control de imágenes está en la caja');
+  ok(d.panel.buscar('hp-tira-propia'), 'la tira de referencias del marcador está en la ronda');
   const t = d.panel.texto();
   ok(t.indexOf('abrí su secuencia') < 0, 'y no el cartel que mandaba a otra pestaña');
   has(t, 'las imágenes se envían otra vez', 'con la aclaración de que viajan de nuevo');
@@ -169,8 +178,14 @@ test('regenerar manda los índices de las imágenes que quedaron activas', funct
   abrirFeedback(d);
   const ta = d.panel.buscar('qj-fb-input');
   ok(ta, 'hay dónde escribir el ajuste');
-  ta.listeners.input[0]({ target: { value: 'subí el título' } });
-  d.panel.porTexto('↻ Aplicar el ajuste').click();
+  // Se le pone el texto y después se emite el `input`, que es el orden del
+  // navegador. Antes alcanzaba con emitir el evento con un `target` de mentira,
+  // porque el handler leía `e.target.value`; desde que el campo es un
+  // `contenteditable` con chips (cep/js/campo.js) su `value` sale de lo que tiene
+  // adentro, así que el texto tiene que estar EN el campo.
+  ta.value = 'subí el título';
+  ta.listeners.input.forEach(function (f) { f({}); });
+  d.panel.porTexto('Aplicar el ajuste').click();
 
   eq(d.espia.regenerados.length, 1);
   eq(d.espia.regenerados[0].texto, 'subí el título');

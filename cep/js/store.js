@@ -136,6 +136,10 @@
    * puesto y conviene conservarlo (dice de qué marcador y de qué momento salió).
    * Una imagen arrastrada es un data URL pelado: el nombre del archivo original
    * no se guardó nunca, así que lo único honesto es numerarla.
+   *
+   * Desde la 1.6.0 el nombre SÍ se guarda al agregar (ver `stillNames`), así que
+   * esto es el camino de vuelta: lo que quedó guardado antes de eso, y cualquier
+   * still que llegue por un camino que no lo nombre.
    */
   function nombreDeStill(s, i) {
     var v = String(s || '');
@@ -147,6 +151,40 @@
     var m = /^data:image\/([a-z0-9.+-]+);/i.exec(v);
     var ext = m ? (m[1] === 'jpeg' ? 'jpg' : m[1].replace(/[^a-z0-9]/gi, '')) : 'png';
     return 'referencia-' + (i + 1) + '.' + (ext || 'png');
+  }
+
+  /**
+   * El nombre de cada still del marcador, y que NO SE REPITA ninguno.
+   *
+   * El nombre es la identidad de una referencia cuando la instrucción la
+   * menciona (`@[marcador/captura.png]`, ver cep/js/menciones.js): dos stills que
+   * se llamen igual son una mención que apunta a dos imágenes, o sea a ninguna.
+   * Se desempata con un sufijo `-2`, que es lo mismo que hace la carpeta de
+   * referencias del proyecto (`nombreLibre` en bridge/store/references.js) y lo
+   * que hace cualquier carpeta de descargas.
+   *
+   * Se resuelve al LEER y no al escribir, y eso es a propósito: lo que quedó
+   * guardado antes de la 1.6.0 no tiene nombres, y dos capturas del mismo día
+   * derivan el mismo. Resolviéndolo acá, un marcador viejo se lee igual de bien
+   * que uno nuevo sin migrar nada.
+   */
+  function nombresDeStills(entry) {
+    var stills = isArray(entry && entry.stills) ? entry.stills : [];
+    var puestos = isArray(entry && entry.stillNames) ? entry.stillNames : [];
+    var vistos = {};
+    var out = [];
+    for (var i = 0; i < stills.length; i++) {
+      var base = (typeof puestos[i] === 'string' && puestos[i]) ? puestos[i] : nombreDeStill(stills[i], i);
+      var punto = base.lastIndexOf('.');
+      var raiz = punto > 0 ? base.slice(0, punto) : base;
+      var ext = punto > 0 ? base.slice(punto) : '';
+      var intento = base;
+      var n = 1;
+      while (vistos[intento.toLowerCase()]) { n += 1; intento = raiz + '-' + n + ext; }
+      vistos[intento.toLowerCase()] = true;
+      out.push(intento);
+    }
+    return out;
   }
 
   // Quién quiere enterarse de que el acumulado de la sesión cambió. Ver
@@ -287,12 +325,15 @@
       var entry = state.markers[String(markerKey)];
       if (!entry || typeof entry !== 'object') {
         // Misma forma que la rama con datos: los callers nunca ven undefined.
-        return { instruction: '', stills: [], stillUse: [], resources: [], generated: false, background: false, timings: null };
+        return { instruction: '', stills: [], stillNames: [], stillUse: [], resources: [], generated: false, background: false, timings: null };
       }
       // stillUse[i]: true = "recurso a usar/incrustar", false/ausente = "referencia".
       return {
         instruction: typeof entry.instruction === 'string' ? entry.instruction : '',
         stills: isArray(entry.stills) ? entry.stills : [],
+        // stillNames[i]: con qué nombre se menciona esa imagen en la instrucción.
+        // Siempre viene completo y sin repetidos, aunque lo guardado no lo tenga.
+        stillNames: nombresDeStills(entry),
         stillUse: isArray(entry.stillUse) ? entry.stillUse : [],
         resources: isArray(entry.resources) ? entry.resources : [],
         generated: Boolean(entry.generated),
@@ -314,6 +355,33 @@
         if (d.stillUse[i]) out.push(d.stills[i]);
       }
       return out;
+    },
+
+    /**
+     * Cada imagen del marcador descrita como la ve una MENCIÓN: de qué nivel es,
+     * cómo se llama y si está marcada ✓ usar. Va PARALELO a `stills` (mismo
+     * índice) y así viaja en el payload, porque un still es un string y lo fue
+     * siempre: convertirlo en objeto obligaría a migrar el `localStorage` de cada
+     * máquina, el `queue.json` de cada proyecto y los jobs a medio encolar.
+     */
+    getMarkerStillRefs: function (markerKey) {
+      var d = this.getMarkerData(markerKey);
+      var out = [];
+      for (var i = 0; i < d.stills.length; i++) {
+        out.push({ scope: 'marker', name: d.stillNames[i], use: !!d.stillUse[i] });
+      }
+      return out;
+    },
+
+    /**
+     * Los documentos del marcador como van en el payload: con su nivel puesto, que
+     * es lo que deja mencionarlos sin ambigüedad (`@[marcador/manual.pdf]`) cuando
+     * el curso tiene otro documento con el mismo nombre.
+     */
+    getMarkerDocs: function (markerKey) {
+      return this.getMarkerData(markerKey).resources.map(function (r) {
+        return { name: r.name, dataUrl: r.dataUrl, mediaType: r.mediaType, scope: 'marker' };
+      });
     },
 
     /** Marca un still como "recurso a usar" (true) o "referencia" (false). */
@@ -371,12 +439,34 @@
       writeState(state);
     },
 
-    /** Agrega un still (data URL) al marcador. */
-    addMarkerStill: function (markerKey, dataUrl) {
+    /**
+     * Agrega un still (data URL o ruta) al marcador, con el nombre con el que la
+     * instrucción lo va a poder mencionar.
+     *
+     * `name` es opcional y lo pone quien tiene el archivo en la mano: el que
+     * arrastra sabe cómo se llamaba (`file.name`) y el que captura, cómo quedó el
+     * archivo en `_capturas`. Sin nombre se deriva de lo que haya (ver
+     * `nombreDeStill`), que es lo que pasaba antes de que esto existiera.
+     */
+    addMarkerStill: function (markerKey, dataUrl, name) {
       var state = readState();
       var entry = ensureMarker(state, markerKey);
+      if (!isArray(entry.stillNames)) entry.stillNames = [];
+      // Los nombres se alinean por índice, así que hay que rellenar los huecos de
+      // los stills que se agregaron antes de la 1.6.0: sin esto, el nombre del
+      // nuevo se guardaría en la posición 0.
+      while (entry.stillNames.length < entry.stills.length) entry.stillNames.push('');
       entry.stills.push(String(dataUrl));
+      entry.stillNames.push(String(name == null ? '' : name));
       writeState(state);
+    },
+
+    /**
+     * El nombre de cada imagen del marcador, sin repetidos: con eso la
+     * instrucción la menciona (`@[marcador/<nombre>]`).
+     */
+    getMarkerStillNames: function (markerKey) {
+      return this.getMarkerData(markerKey).stillNames;
     },
 
     /** Quita el still en `index` del marcador; ignora indices invalidos. */
@@ -389,6 +479,7 @@
       }
       entry.stills.splice(i, 1);
       if (isArray(entry.stillUse) && i < entry.stillUse.length) entry.stillUse.splice(i, 1);
+      if (isArray(entry.stillNames) && i < entry.stillNames.length) entry.stillNames.splice(i, 1);
       writeState(state);
     },
 
@@ -471,7 +562,7 @@
       var i;
       for (i = 0; i < d.stills.length; i++) {
         out.push({
-          name: nombreDeStill(d.stills[i], i),
+          name: d.stillNames[i] || nombreDeStill(d.stills[i], i),
           dataUrl: d.stills[i],
           mediaType: '',
           use: !!d.stillUse[i]

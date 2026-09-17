@@ -399,8 +399,19 @@
       S.setMarkerGenerated(key, !!m.generado);
       if (m.timings) S.setMarkerTimings(key, m.timings);
       (m.imagenes || []).forEach(function (img, i) {
-        S.addMarkerStill(key, pngFalso(img.etiqueta, img.color, img.fondo));
+        // El NOMBRE se siembra igual que lo guardaría el panel de verdad: es la
+        // identidad de la referencia cuando la instrucción la menciona
+        // (`@[marcador/logo-nova.png]`), así que las menciones de las
+        // instrucciones de `datos.js` tienen que caer sobre estos nombres.
+        S.addMarkerStill(key, pngFalso(img.etiqueta, img.color, img.fondo), img.name || img.etiqueta);
         if (img.usar) S.setMarkerStillUse(key, i, true);
+      });
+      (m.documentos || []).forEach(function (doc) {
+        S.addMarkerResource(key, {
+          name: doc.name, mediaType: doc.mediaType || "",
+          // Un data URL cualquiera: el panel no lo abre, solo lo lista y lo manda.
+          dataUrl: "data:" + (doc.mediaType || "application/octet-stream") + ";base64,aGkK"
+        });
       });
     });
 

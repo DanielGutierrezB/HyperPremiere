@@ -35,7 +35,7 @@ function elemento(tag) {
     querySelectorAll: function () { return []; },
     buscar: function (clase) {
       for (const h of this.children) {
-        if (h.className === clase) return h;
+        if (String(h.className || "").split(" ").indexOf(clase) !== -1) return h;
         const hit = h.buscar && h.buscar(clase);
         if (hit) return hit;
       }
@@ -56,6 +56,10 @@ function elemento(tag) {
       return t;
     },
   };
+  // La MISMA lista que `children`, y acá alcanza: en el DOM de verdad la diferencia
+  // es que `childNodes` también trae los nodos de texto, y eso es lo que el campo de
+  // prompt recorre desde que pinta las menciones como chips (cep/js/campo.js).
+  el.childNodes = el.children;
   el.classList = {
     add: function (c) { el.className = (el.className ? el.className + ' ' : '') + c; },
     remove: function (c) {
@@ -110,16 +114,23 @@ function montar(opts) {
     },
     document: {
       createElement: elemento,
+      // El campo de prompt arma nodos de TEXTO: desde la 1.6.x es un
+      // `contenteditable` que pinta las menciones como chips, no un `<textarea>`.
+      createTextNode: function (t) { const n = elemento('#text'); n.textContent = t; return n; },
       getElementById: function (id) { return (opts.nodos || {})[id] || null; },
     },
   };
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'stills.js']) {
+  for (const f of ['util.js', 'iconos.js', 'store.js', 'stills.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
-  ctx.HPStills.init({ onGeneralChanged: function () {} });
+  espia.material = [];
+  ctx.HPStills.init({
+    onGeneralChanged: function () {},
+    onMaterialChanged: function (k) { espia.material.push(k); },
+  });
   return { ctx: ctx, espia: espia };
 }
 
@@ -132,7 +143,18 @@ function conImagen(ctx, seq, markerKey, ruta) {
 
 const OTRA = { projectPath: '/p/Clases.prproj', sequenceName: 'Clase 14' };
 
-/** El botón 📤 de una miniatura (su clase lleva el estado pegado). */
+/**
+ * La TIRA de referencias de un marcador: lo que dibujan las tres pestañas desde
+ * la 1.6.x. Antes acá se montaba `createControl`, que era la caja completa —con
+ * su botón «📸 Capturar del programa» de ancho completo y su zona de arrastre de
+ * 52 px—; esa caja ya no la usa nadie y se fue. Lo que se mide es lo mismo: qué
+ * miniaturas se dibujan, de qué secuencia salen y qué pasa al tocarlas.
+ */
+function tiraDe(ctx, markerKey, opts) {
+  return ctx.HPStills.crearTira(markerKey, opts).el;
+}
+
+/** El botón de reenvío de una miniatura (su clase lleva el estado pegado). */
 function botonEnvio(thumb) {
   return thumb.children.filter(function (c) {
     return String(c.className).indexOf('still-send') === 0;
@@ -146,7 +168,7 @@ test('el control muestra las imágenes de la secuencia que se le pide', function
   ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02'); // el editor está en el corte nuevo
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/vieja.png');
 
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
   eq(control.buscar('still-thumbs').children.length, 1, 'la imagen del corte donde nació el recurso');
 });
 
@@ -157,7 +179,7 @@ test('sin decir la secuencia, sigue siendo la abierta', function () {
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/a.png');
   conImagen(ctx, 'Clase 14_02', 'Marcador 3', '/ref/b.png');
 
-  const control = ctx.HPStills.createControl('Marcador 3');
+  const control = tiraDe(ctx, 'Marcador 3');
   eq(control.buscar('still-thumbs').children.length, 1);
 });
 
@@ -168,21 +190,26 @@ test('el marcador homónimo de la clase abierta no se mezcla', function () {
   conImagen(ctx, 'Clase 14_02', 'Marcador 3', '/ref/nueva-1.png');
   conImagen(ctx, 'Clase 14_02', 'Marcador 3', '/ref/nueva-2.png');
 
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
   eq(control.buscar('still-thumbs').children.length, 1, 'una, la de la secuencia pedida');
 });
 
 // ── Escribir en el marcador correcto ─────────────────────────────────
 
-test('una imagen arrastrada se guarda en la secuencia del marcador', function () {
+test('una imagen arrastrada se guarda en la secuencia del marcador', async function () {
   const { ctx } = montar();
   ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02');
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
-
-  // El <input type=file> es el último hijo antes del estado; se dispara su change.
-  const input = control.children.filter(function (c) { return c.tagName === 'input'; })[0];
-  input.files = [{ name: 'logo.png', type: 'image/png' }];
-  (input.listeners.change || []).forEach(function (f) { f(); });
+  // Lo que se suelta sobre el CAMPO entra por acá (`soltar` de la ficha) y lo que
+  // se elige con el clip también: la zona de arrastre no existe más.
+  ctx.HPStills.ingerir([{ name: 'logo.png', type: 'image/png' }], 'Marcador 3',
+    Object.assign({ fbJobId: 'j1' }, OTRA));
+  // Desde la 1.6.0 la ingesta va DE A UNA Y EN ORDEN, con una promesa por archivo,
+  // y por eso hay que esperar un turno. El motivo es el NOMBRE: es la identidad de
+  // una referencia cuando la instrucción la menciona, y el desempate de dos
+  // «captura.png» se resuelve contra las que ya están. Con cinco FileReader
+  // sueltos, el orden en que terminan es el orden en que el disco los entrega, así
+  // que soltar cinco juntas dejaba los nombres en cualquier orden.
+  await new Promise(function (r) { setTimeout(r, 0); });
 
   const enOrigen = ctx.HPStore.withContext('/p/Clases.prproj', 'Clase 14', function () {
     return ctx.HPStore.getMarkerData('Marcador 3').stills;
@@ -199,7 +226,7 @@ test('quitar una imagen la quita de la secuencia del marcador', function () {
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/a.png');
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/b.png');
 
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
   control.buscar('still-thumbs').children[0].buscar('still-remove').click();
 
   const quedan = ctx.HPStore.withContext('/p/Clases.prproj', 'Clase 14', function () {
@@ -209,12 +236,61 @@ test('quitar una imagen la quita de la secuencia del marcador', function () {
   has(quedan[0], 'b.png', 'se fue la que se pidió');
 });
 
+// El bug que el editor reportó así: "si elimino la imagen, sigue apareciendo
+// referenciada normal. Si la elimino de arriba debería de borrarse y corregir en
+// las siguientes".
+//
+// Un chip guarda el NOMBRE pero muestra el NÚMERO, y el número es la posición
+// entre las que viajan. Sacar la imagen 1 deja colgada a la mención que la
+// nombraba y corre un lugar a todas las de atrás: si el campo no se entera, lo
+// que el editor LEE deja de ser lo que el modelo RECIBE. Es el modo de falla que
+// todo el mecanismo de menciones vino a matar, así que el aviso es parte del
+// contrato de la tira y no un detalle de la vista.
+//
+// Se mide el AVISO y no el repintado porque acá no hay ficha montada; que el
+// aviso repinte lo fija `panel-ficha-marcador`, y que main lo cablee, el test de
+// abajo.
+test('sacar o sumar material AVISA, que es de lo que dependen los números de los chips', function () {
+  const { ctx, espia } = montar();
+  ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02');
+  conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/a.png');
+  conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/b.png');
+
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  eq(espia.material.length, 0, 'dibujar la tira no es un cambio');
+
+  control.buscar('still-thumbs').children[0].buscar('still-remove').click();
+  eq(espia.material.length, 1, 'quitar una imagen avisa');
+  eq(espia.material[0], 'Marcador 3', 'y dice de qué marcador');
+
+  // Pasar a ✓ usar también mueve la cuenta: cambia lo que se incrusta.
+  control.buscar('still-thumbs').children[0].buscar('still-tag').click();
+  eq(espia.material.length, 2, 'marcar «usar» también avisa');
+});
+
+test('quitar un DOCUMENTO avisa igual que quitar una imagen', function () {
+  // Éste no avisaba ni siquiera al nivel general: el renglón de abajo cuenta los
+  // documentos y el prompt los nombra, así que sacarlos también mueve lo que el
+  // campo tiene que decir.
+  const { ctx, espia } = montar();
+  ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02');
+  ctx.HPStore.withContext('/p/Clases.prproj', 'Clase 14', function () {
+    ctx.HPStore.addMarkerResource('Marcador 3', { name: 'guia.pdf', dataUrl: 'data:application/pdf;base64,QQ==' });
+  });
+
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  const chip = control.buscar('resource-list').children[0];
+  ok(chip, 'el documento está en la tira');
+  chip.buscar('resource-remove').click();
+  eq(espia.material.length, 1, 'quitar un documento avisa');
+});
+
 test('marcar "usar" se anota en la secuencia del marcador', function () {
   const { ctx } = montar();
   ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02');
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/logo.png');
 
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
   const thumb = control.buscar('still-thumbs').children[0];
   eq(thumb.buscar('still-tag').textContent, 'referencia', 'por defecto no se incrusta');
   thumb.buscar('still-tag').click();
@@ -230,8 +306,10 @@ test('la captura del programa se guarda en la carpeta del marcador', function ()
   // en la carpeta de la secuencia DEL RECURSO: es ahí donde el motor lo busca.
   const { ctx, espia } = montar();
   ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02');
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
-  control.buscar('btn-add-still').click();
+  // El 📸 es un botón de la barra de controles de la ficha y llama acá: el botón
+  // de ancho completo que vivía adentro de la caja de imágenes ya no existe.
+  ctx.HPStills.capturar('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA),
+    elemento('button'), elemento('div'));
 
   const call = espia.guardados[0];
   eq(call.metodo, 'saveCapture');
@@ -253,16 +331,19 @@ test('por defecto viajan todas las del marcador pedido', function () {
   eq(JSON.stringify(idx), '[0,1]', 'las dos de la secuencia pedida, ni una de la abierta');
 });
 
-test('el 📤 apaga una imagen y esa no viaja', function () {
+test('el toggle de reenvío apaga una imagen y esa no viaja', function () {
   const { ctx } = montar();
   ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14_02');
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/a.png');
   conImagen(ctx, 'Clase 14', 'Marcador 3', '/ref/b.png');
 
   ctx.HPStills.fbInit('j1');
-  const control = ctx.HPStills.createControl('Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
+  const control = tiraDe(ctx, 'Marcador 3', Object.assign({ fbJobId: 'j1' }, OTRA));
   const thumbs = control.buscar('still-thumbs');
-  eq(botonEnvio(thumbs.children[0]).textContent, '📤 reenviar', 'arranca activa');
+  // El 📤 pasó a ser un icono de trazo (ver cep/js/iconos.js); la etiqueta es la
+  // misma palabra y el `textContent` de un botón sigue siendo su etiqueta, porque
+  // un `<svg>` no aporta texto.
+  eq(botonEnvio(thumbs.children[0]).textContent, 'reenviar', 'arranca activa');
   botonEnvio(thumbs.children[0]).click();
 
   const idx = ctx.HPStills.fbCollect('j1', 'Marcador 3', Object.assign({}, OTRA));
@@ -270,4 +351,55 @@ test('el 📤 apaga una imagen y esa no viaja', function () {
   const redibujada = control.buscar('still-thumbs').children[0];
   ok(/fb-off/.test(redibujada.className), 'y se ve apagada');
   eq(botonEnvio(redibujada).textContent, 'no se envía');
+});
+
+// ── El inventario que miran los chips del campo ───────────────────────
+//
+// Lo consumen los TRES lugares donde se le escribe al modelo sobre un marcador
+// —su ficha, esta ronda de feedback y la fila de Corrections— más los dos bloques
+// de estilo, y tiene que salir de un solo lugar: de ahí sale el número de cada
+// chip, su estado y la miniatura de su hover. Si cada vista armara su fila, el
+// chip de un bloque de estilo podría numerar distinto que el de la ficha de un
+// marcador sobre la misma referencia.
+
+test('el inventario DICE de qué tipo es cada referencia, no lo deja adivinar', function () {
+  // Antes se deducía de la extensión del nombre allá donde hacía falta, y
+  // alcanzaba mientras la única pregunta era numerar. Con los chips hay que
+  // decidir además si el hover muestra una miniatura o el icono de un documento, y
+  // una imagen llamada «captura.pdf.png» no puede quedar del lado equivocado por
+  // un regex. Acá se sabe sin adivinar: son dos listas distintas.
+  const { ctx } = montar();
+  ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14');
+  ctx.HPStore.addMarkerStill('Marcador 3', '/ref/captura.pdf.png', 'captura.pdf.png');
+  ctx.HPStore.addMarkerResource('Marcador 3', { name: 'guia', dataUrl: 'data:text/plain,x' });
+
+  const inv = ctx.HPStills.inventario('Marcador 3');
+  eq(inv.length, 2);
+  eq(inv[0].tipo, 'imagen', 'el `.pdf` del medio no la vuelve un documento');
+  eq(inv[1].tipo, 'documento', 'y un documento sin extensión sigue siéndolo');
+});
+
+test('y trae de dónde sale la miniatura del hover, ya convertida', function () {
+  // Las del marcador son data URLs y las de los dos niveles generales son rutas en
+  // disco; en Windows una ruta hay que CONVERTIRLA a `file:///C:/…`, no
+  // concatenarla. El inventario la trae hecha, por la misma función que las
+  // miniaturas de la tira: si el preview del chip armara la URL por su cuenta, en
+  // Windows se vería una y no la otra.
+  const { ctx } = montar();
+  ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14');
+  ctx.HPStore.addMarkerStill('Marcador 3', 'data:image/png;base64,AAA', 'pegada.png');
+  ctx.HPStore.addMarkerStill('Marcador 3', 'C:\\Users\\ed\\captura.png', 'captura.png');
+
+  const inv = ctx.HPStills.inventario('Marcador 3');
+  eq(inv[0].src, 'data:image/png;base64,AAA', 'una data URL va tal cual');
+  eq(inv[1].src, 'file:///C:/Users/ed/captura.png', 'y una ruta de Windows convertida');
+  eq(inv[0].src, ctx.HPStills.stillThumbSrc('data:image/png;base64,AAA'),
+    'y sale de la misma función que la miniatura de la tira');
+});
+
+test('un documento no trae miniatura: el hover muestra el icono de su tipo', function () {
+  const { ctx } = montar();
+  ctx.HPStore.setContext('/p/Clases.prproj', 'Clase 14');
+  ctx.HPStore.addMarkerResource('Marcador 3', { name: 'manual.pdf', dataUrl: 'data:application/pdf,x' });
+  eq(ctx.HPStills.inventario('Marcador 3')[0].src, '');
 });

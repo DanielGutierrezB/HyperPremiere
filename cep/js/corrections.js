@@ -14,6 +14,27 @@
  * Cada fila es una ronda de feedback completa, como la de la Cola: instrucción,
  * imágenes nuevas, qué imágenes viajan y qué versión se toma como base.
  *
+ * ── La fila, desde la 1.6.x ───────────────────────────────────────────
+ *
+ * Es una TARJETA con la misma anatomía que la ficha de un marcador y que un
+ * trabajo de la Cola (ver la sección 9 del CSS): un encabezado de 32 px que se
+ * puede barrer —nombre · tramo · versiones · estado— y, plegado adentro, el
+ * CUERPO DE FICHA compartido (`HPPromptCard`) con la corrección, su tira de
+ * referencias, su barra de controles y su pie.
+ *
+ * Antes la fila estaba toda desplegada y medía ~490 px, con su propio layout:
+ * campo, barra de micrófono, un botón «📸 Capturar del programa» de ancho
+ * completo, una zona de arrastre de 52 px y dos acciones al pie. O sea el layout
+ * que la etapa 2 había sacado de la ficha del marcador, vivo acá. Con seis
+ * recursos generados —una clase normal— eso son casi 3.000 px de scroll para
+ * encontrar el que hay que corregir, y para encontrarlo alcanzan el nombre y el
+ * segundo en que entra.
+ *
+ * Lo que se gana de arriba y no estaba: los chips que muestran las menciones, el
+ * aviso de la mención colgada y la canonización del ✨. El motor traduce las
+ * menciones del campo `adjustment` igual que las de `instruction`, así que un
+ * `@[curso/logo.svg]` escrito acá ya viajaba traducido y el panel no lo pintaba.
+ *
  * Tampoco depende de estar parado en la secuencia correcta: la clase suele
  * volver de la revisión re-cortada y con otro nombre ("_02"), así que se elige
  * de qué carpeta leer y se dice a qué secuencia se va a colocar.
@@ -41,14 +62,10 @@
   var formatTime = HPUtil.formatTime;
   var fmtDuration = HPUtil.fmtDuration;
 
-  /**
-   * El micrófono del dictado, si esta máquina lo tiene. Devuelve el elemento o
-   * `null`.
-   *
-   * El dictado es un AGREGADO al campo, nunca un requisito: sin él, esta fila se
-   * dibuja igual y la corrección se escribe a mano. La guarda está en HPUtil.
-   */
-  var micOpcional = HPUtil.micOpcional;
+  // El micrófono de la corrección ya no se pide acá: la barra de controles de la
+  // fila la arma HPPromptCard, que es la que tiene la guarda de "esta máquina no
+  // puede dictar" (HPUtil.micOpcional) y dibuja la misma barra con los controles
+  // solos cuando no se puede. El dictado es un agregado, nunca un requisito.
 
   var deps = null;
   var listEl = null;
@@ -292,45 +309,93 @@
     });
   }
 
-  function buildRow(m) {
-    var row = document.createElement("div");
-    row.className = "corr-row" + (m.start == null ? " is-unknown" : "");
-
-    var line = document.createElement("div");
-    line.className = "corr-line";
-    var name = document.createElement("span");
-    name.className = "corr-name";
-    name.textContent = m.slug + (m.markerName && m.markerName !== m.slug ? " · " + m.markerName : "");
-    var when = document.createElement("span");
+  /**
+   * El encabezado plegado de una fila, con la misma anatomía que el de una ficha
+   * de marcador y el de un trabajo de la Cola (ver la sección 9 del CSS).
+   *
+   * A la izquierda lo que identifica al recurso: su nombre —que lleva el cursor
+   * de Premiere a ese punto— y el tramo, que es EL dato de esta pestaña (es lo
+   * que reemplaza al marcador que ya no está). A la derecha lo que confirma: las
+   * versiones y de dónde sale lo que se muestra.
+   *
+   * `estado` es la pastilla, y acá dice algo distinto de lo que dice en la Cola:
+   * no hay trabajo en curso, así que lo que hace falta saber sin abrir la fila es
+   * si de esta versión se PUEDE saber con qué se generó. Eso estaba sólo adentro
+   * del desplegable del contexto, o sea que para enterarse había que abrir seis
+   * filas de una en una.
+   */
+  function buildSummary(m, puedeAbrir) {
+    var line = document.createElement(puedeAbrir ? "summary" : "div");
+    line.className = "corr-line hp-sumario" + (puedeAbrir ? "" : " sin-abrir");
     // El nombre lleva al timeline. Es lo primero que se quiere hacer con una fila
     // —ver qué hay ahí antes de escribir la corrección— y más todavía cuando el
     // segundo viene de otro corte y hay que confirmar que sigue sirviendo.
-    if (m.start != null) {
-      name.className = "corr-name is-link";
-      name.title = "Llevar el cursor de Premiere a este punto de “" + destino + "”.";
-      name.addEventListener("click", function () {
-        HPHost.openSequenceAndSeek(destino, m.start, function () {});
-      });
-    }
-    when.className = "corr-when";
-    when.textContent = whenText(m) + sourceText(m);
+    //
+    // Va por `nombreQueLleva` y no a mano: lo clickeable tiene que ser las
+    // PALABRAS y no la caja elástica, o el clic en el hueco del encabezado deja de
+    // abrir la tarjeta y mueve el cursor de Premiere sin avisar (está contado
+    // entero allá).
+    var name = HPUtil.nombreQueLleva(
+      m.slug + (m.markerName && m.markerName !== m.slug ? " · " + m.markerName : ""),
+      {
+        clase: "corr-name",
+        titulo: m.start != null ? "Llevar el cursor de Premiere a este punto de “" + destino + "”." : "",
+        alHacerClic: m.start == null ? null : function () {
+          HPHost.openSequenceAndSeek(destino, m.start, function () {});
+        }
+      }
+    );
+    line.appendChild(name);
+
+    var der = document.createElement("span");
+    der.className = "hp-sumario-der";
+    var when = document.createElement("span");
+    when.className = "corr-when hp-dato";
+    when.textContent = whenText(m);
+    when.title = whenText(m) + sourceText(m) +
+      ". De acá sale el segundo en que vuelve el clip corregido y cuánto dura.";
+    der.appendChild(when);
     var meta = document.createElement("span");
-    meta.className = "corr-meta";
+    meta.className = "corr-meta hp-dato";
     meta.textContent = "v" + m.latestVersion + (m.model ? " [" + m.model + "]" : "") +
       " · " + m.versions.length + (m.versions.length === 1 ? " versión" : " versiones");
-    line.appendChild(name); line.appendChild(when); line.appendChild(meta);
-    row.appendChild(line);
-
-    // El encargo con el que nació el recurso, tal como quedó en su ficha. Se
-    // muestra porque es lo que el modelo va a recibir junto con la corrección, y
-    // porque al mes uno ya no se acuerda de qué le pidió a ese gráfico.
-    if (m.instruction) {
-      var brief = document.createElement("div");
-      brief.className = "corr-brief";
-      brief.textContent = "Se pidió: " + m.instruction;
-      brief.title = m.instruction;
-      row.appendChild(brief);
+    meta.title = "La última versión de este recurso y con qué modelo se hizo. Adentro se elige " +
+      "sobre cuál rediseñar.";
+    der.appendChild(meta);
+    var pastilla = document.createElement("span");
+    pastilla.className = "hp-estado";
+    if (m.start == null) {
+      pastilla.textContent = "sin tramo";
+      pastilla.title = "No sé dónde iba este recurso, así que todavía no se puede corregir: abrí la fila y decime el segundo.";
+    } else if (!m.prompts) {
+      pastilla.textContent = "reconstruido";
+      pastilla.title = "De esta versión no quedó guardado qué contexto recibió: lo que se muestra adentro " +
+        "son los archivos del proyecto como están HOY.";
+    } else {
+      pastilla.textContent = "listo";
+      pastilla.title = "Tiene su tramo anotado y la ficha guardó con qué contexto se generó.";
     }
+    der.appendChild(pastilla);
+    line.appendChild(der);
+    return line;
+  }
+
+  function buildRow(m) {
+    // La fila sin tramo hace UNA sola pregunta (dónde iba) y no puede mandar nada
+    // a ninguna parte, así que no se pliega: no hay ronda de feedback que
+    // esconder, y esconder la pregunta sería esconder lo único que la desbloquea.
+    var puedeAbrir = m.start != null;
+    var row = document.createElement(puedeAbrir ? "details" : "div");
+    // `is-unknown` se conserva: es el estado crudo de la fila. `es-atencion` es la
+    // guarda de estado compartida con las otras dos pestañas, y `es-quieto` es
+    // "nada que atender acá" (ver la sección 9 del CSS).
+    row.className = "corr-row hp-tarjeta " +
+      (m.start == null ? "es-atencion is-unknown" : (m.prompts ? "es-quieto" : "es-atencion"));
+    row.appendChild(buildSummary(m, puedeAbrir));
+
+    var cuerpo = document.createElement("div");
+    cuerpo.className = "hp-cuerpo";
+    row.appendChild(cuerpo);
 
     var state = document.createElement("div");
     state.className = "corr-state";
@@ -342,7 +407,7 @@
       warn.className = "corr-warn";
       warn.textContent = "No encontré dónde iba este recurso (la versión es anterior a que se guardara la ficha). " +
         "Decime el segundo de entrada y la duración y lo dejo anotado.";
-      row.appendChild(warn);
+      cuerpo.appendChild(warn);
 
       var fix = document.createElement("div");
       fix.className = "corr-fix";
@@ -356,8 +421,8 @@
       var save = document.createElement("button");
       save.type = "button"; save.className = "qbtn"; save.textContent = "Guardar el tramo";
       fix.appendChild(inStart); fix.appendChild(inDur); fix.appendChild(save);
-      row.appendChild(fix);
-      row.appendChild(state);
+      cuerpo.appendChild(fix);
+      cuerpo.appendChild(state);
 
       save.addEventListener("click", function () {
         var ctx = deps.context();
@@ -378,25 +443,36 @@
       return row;
     }
 
-    // Lo que el marcador recibió, plegado. Va acá —antes del campo de
-    // corrección— porque es contexto: es lo que se consulta ANTES de escribir
-    // qué está mal, igual que el "Se pidió:" de arriba, del que es la versión
-    // completa. En la fila sin tramo no se dibuja: esa fila hace una sola
-    // pregunta (dónde iba) y no puede mandar nada a ninguna parte.
-    var prompts = contextoDe(m, state);
-    row.appendChild(prompts.el);
+    // El encargo con el que nació el recurso, tal como quedó en su ficha. Se
+    // muestra porque es lo que el modelo va a recibir junto con la corrección, y
+    // porque al mes uno ya no se acuerda de qué le pidió a ese gráfico.
+    var antes = [];
+    if (m.instruction) {
+      var brief = document.createElement("div");
+      brief.className = "corr-brief";
+      brief.textContent = "Se pidió: " + m.instruction;
+      brief.title = m.instruction;
+      antes.push(brief);
+    }
 
-    var box = document.createElement("textarea");
-    box.className = "corr-input";
-    box.rows = 2;
-    box.placeholder = "Qué hay que corregir. Ej: “el título tapa la cara, subilo”, “falta la fuente del dato”.";
-    row.appendChild(box);
-    // Corregir una clase entera es ir fila por fila diciendo qué está mal, que
-    // es exactamente el caso donde dictar gana. El texto de esta caja no se
-    // persiste en ningún lado (se lee al apretar Regenerar), así que el
-    // micrófono no tiene nada que avisarle a nadie.
-    var mic = micOpcional(box, { id: "correccion:" + m.slug });
-    if (mic) row.appendChild(mic);
+    // Lo que el marcador recibió, plegado. Va arriba del campo de corrección
+    // porque es contexto: es lo que se consulta ANTES de escribir qué está mal,
+    // igual que el "Se pidió:" de arriba, del que es la versión completa.
+    var prompts = contextoDe(m, state);
+    antes.push(prompts.el);
+
+    // Al corregir las imágenes viajan otra vez, y el 📤 es para dejar alguna
+    // afuera a propósito. El renglón va arriba de la tira porque explica lo que
+    // se está por ver.
+    var hint = document.createElement("div");
+    hint.className = "qj-fb-hint";
+    hint.textContent = "Las imágenes viajan otra vez en cada corrección (el modelo no recuerda la anterior). " +
+      "Tocá “reenviar” en la que no querés mandar; ✓ usar se incrusta igual.";
+    antes.push(hint);
+
+    // El campo lo crea la ficha: es un `contenteditable` con chips de mención (ver
+    // cep/js/campo.js) y no un `<textarea>`, así que acá se le pasa cómo tiene que
+    // ser y se lo lee después en `ficha.campo`.
 
     // Una corrección es una ronda de feedback como las de la Cola, así que tiene
     // que traer lo mismo: mandar imágenes nuevas, decidir cuáles viajan y marcar
@@ -404,23 +480,23 @@
     // imágenes con las que se generó el recurso.
     var opts = stillsOpts(m);
     HPStills.fbInit(opts.fbJobId);
-    var hint = document.createElement("div");
-    hint.className = "qj-fb-hint";
-    hint.textContent = "Las imágenes viajan otra vez en cada corrección (el modelo no recuerda la anterior). " +
-      "📤 apaga la que no querés mandar; ✓ usar se incrusta igual.";
-    row.appendChild(hint);
-    row.appendChild(HPStills.createControl(m.slug, opts));
-
-    var actions = document.createElement("div");
-    actions.className = "corr-actions";
+    var ficha = null;
 
     // Selector de versión: solo si hay más de una para elegir. Va con el
     // desplegable propio porque Premiere no dibuja el popup de los <select>.
+    //
+    // Vive en la BARRA DE CONTROLES, con el 📸 y el clip, y no en el pie: es un
+    // parámetro del pedido y no una acción, que es exactamente lo que hace ahí el
+    // «Con fondo» de la ficha de un marcador. En el pie quedaba peor de lo que
+    // suena: el pie envuelve al revés (lo destructivo arriba, ver `.hp-acciones`),
+    // así que a 400 px el «sobre qué versión» terminaba DEBAJO de los dos botones
+    // que lo usan.
     var pickVersion = null;
+    var selRoot = null;
     if (m.versions.length > 1) {
-      var selRoot = document.createElement("div");
+      selRoot = document.createElement("div");
+      selRoot.className = "corr-pick-version";
       selRoot.title = "Sobre qué versión aplicar la corrección.";
-      actions.appendChild(selRoot);
       pickVersion = HPWidgets.select(selRoot);
       pickVersion.setOptions(m.versions.map(function (v) {
         return { value: String(v.version), label: "v" + v.version + (v.model ? " [" + v.model + "]" : "") };
@@ -429,42 +505,33 @@
 
     // Dos formas de mandar la misma corrección: dejarla EN ESPERA para revisar
     // toda la clase y largar la cola de una vez, o arrancarla ya. Es el mismo par
-    // que tienen las tarjetas de Marcadores ("＋ Enviar a la cola" / "Generar").
+    // que tienen las fichas de Marcadores ("Enviar a la cola" / "Generar") y va
+    // en el mismo lugar: la de todos los días en el vértice de abajo a la
+    // derecha, la otra a su izquierda.
     var stageBtn = document.createElement("button");
     stageBtn.type = "button"; stageBtn.className = "qbtn qbtn-stage";
-    stageBtn.textContent = "＋ Enviar a la cola";
+    stageBtn.textContent = "Enviar a la cola";
+    HPIconos.enBoton(stageBtn, "encolar");
     stageBtn.title = "Deja la corrección en espera, sin empezar a procesarla. Arranca cuando toques “Iniciar cola”.";
-    actions.appendChild(stageBtn);
 
     // El botón grande de la ronda de feedback, igual que en la Cola y en las
-    // tarjetas: es la acción de la fila, no un control más de la barra.
+    // fichas: es la acción de la fila, no un control más de la barra. Y lleva el
+    // dibujo de «aplicar el ajuste», que es lo que hace: rediseñar SOBRE la
+    // versión elegida con lo que se escribió. No es reintentar ni desde cero.
     var fixBtn = document.createElement("button");
     fixBtn.type = "button"; fixBtn.className = "qbtn qbtn-react";
-    fixBtn.textContent = "↻ Regenerar";
+    fixBtn.textContent = "Regenerar";
+    HPIconos.enBoton(fixBtn, "ajustar");
     fixBtn.title = "Rediseña YA sobre esa versión y devuelve el clip a " + formatTime(m.start) +
       " de “" + destino + "”, con la misma duración, en una pista nueva y en amarillo.";
-    actions.appendChild(fixBtn);
-    actions.appendChild(state);
-    row.appendChild(actions);
-
-    /** Los dos botones mandan lo mismo; cambia si la cola arranca o espera. */
-    function mandar(staged) {
-      var text = box.value.trim();
-      if (!text) {
-        state.className = "corr-state is-error";
-        state.textContent = "Escribí qué hay que corregir.";
-        return;
-      }
-      enqueueCorrection(m, chosenVersion(), text, state, staged, prompts);
-    }
-    stageBtn.addEventListener("click", function () { mandar(true); });
-    fixBtn.addEventListener("click", function () { mandar(false); });
 
     // El HTML de la versión, cargado del disco. Antes esto era una caja vacía
     // pidiendo que pegaras un HTML, lo cual no tenía sentido: la pestaña acaba de
     // encontrar todas las versiones y sabe leerlas. Sirve para mirar qué tiene el
     // recurso antes de escribir la corrección, para retocarlo a mano sin gastar
     // IA, y para pegar una versión de afuera encima si eso es lo que querés.
+    // Vive en "Avanzado", que es donde vive el editor de HTML de la ficha de un
+    // marcador: es la misma herramienta en el otro lugar.
     var htmlBox = document.createElement("details");
     htmlBox.className = "corr-html";
     var sum = document.createElement("summary");
@@ -477,7 +544,50 @@
     renderBtn.textContent = "Renderizar y colocar";
     renderBtn.title = "Renderiza este HTML como versión nueva, sin llamar a la IA, y lo coloca en el tramo.";
     htmlBox.appendChild(renderBtn);
-    row.appendChild(htmlBox);
+
+    // Y el cuerpo, que es el MISMO que el de la instrucción de un marcador y el
+    // de la ronda de feedback de la Cola (cep/js/prompt-card.js). Lo que esta
+    // fila agrega es lo que sólo ella tiene: lo que se lee antes de escribir (el
+    // encargo original y el contexto que recibió la versión) y el selector de
+    // versión en el pie.
+    ficha = HPPromptCard.montar({
+      camposClase: "corr-input",
+      placeholder: "Qué hay que corregir. Ej: “el título tapa la cara, subilo”, “falta la fuente del dato”. " +
+        "Arrastrá una imagen acá para adjuntarla y mencionarla.",
+      micId: "correccion:" + m.slug,
+      // El texto de esta caja no se persiste en ningún lado (se lee al apretar
+      // Regenerar), así que el dictado no tiene nada que avisarle a nadie: sólo
+      // hay que repintar el resaltado de las menciones.
+      onChange: function () { ficha.revisar(); },
+      antes: antes,
+      // La tira, el inventario, el 📸, el clip, el arrastre y la canonización los
+      // arma la ficha (ver cep/js/prompt-card.js): son los mismos que en la ficha
+      // del marcador y en la ronda de la Cola. Lo único de acá es sobre qué
+      // secuencia trabaja —la de ORIGEN, donde están las imágenes con las que se
+      // generó el recurso— y eso ya lo dice `opts`.
+      stills: { clave: m.slug, opts: opts },
+      controles: [selRoot],
+      avanzado: [{ el: htmlBox }],
+      // Sin nada a la izquierda: en una corrección no hay acción destructiva —lo
+      // que descarta trabajo hecho es «Regenerar desde cero», y eso vive en la
+      // ronda de la Cola y en la ficha del marcador, no acá—.
+      acciones: { izquierda: [], derecha: [stageBtn, fixBtn] },
+      pie: [state]
+    });
+    cuerpo.appendChild(ficha.el);
+
+    /** Los dos botones mandan lo mismo; cambia si la cola arranca o espera. */
+    function mandar(staged) {
+      var text = ficha.campo.value.trim();
+      if (!text) {
+        state.className = "corr-state is-error";
+        state.textContent = "Escribí qué hay que corregir.";
+        return;
+      }
+      enqueueCorrection(m, chosenVersion(), text, state, staged, prompts);
+    }
+    stageBtn.addEventListener("click", function () { mandar(true); });
+    fixBtn.addEventListener("click", function () { mandar(false); });
 
     /** Qué versión está elegida en este momento. */
     function chosenVersion() {
@@ -513,6 +623,15 @@
         state.textContent = "No pude leer el HTML de la v" + v + ": " + ((e && e.message) || e);
       });
     }
+
+    // Acordeón, el mismo que la lista de marcadores: abrir una fila cierra las
+    // demás. Abierta, una fila mide ~490 px —es la más cargada del panel— así que
+    // con dos abiertas no se ve una lista, se ve un formulario largo.
+    row.addEventListener("toggle", function () {
+      if (!row.open || !listEl || !listEl.querySelectorAll) return;
+      var todas = listEl.querySelectorAll("details.corr-row");
+      for (var i = 0; i < todas.length; i++) if (todas[i] !== row) todas[i].open = false;
+    });
 
     htmlBox.addEventListener("toggle", function () { if (htmlBox.open) loadHtml(); });
     // Cambiar de versión con el editor abierto tiene que traer ESA versión: si no,

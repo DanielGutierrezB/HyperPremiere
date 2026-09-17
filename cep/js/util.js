@@ -31,6 +31,100 @@
     return (mm < 10 ? "0" + mm : mm) + ":" + (ss < 10 ? "0" + ss : ss);
   }
 
+  /**
+   * TODO lo que hay que saber de un estado para dibujarlo: la palabra, el color,
+   * el tooltip, y las tres preguntas que dirigen el dibujo.
+   *
+   * ── Por qué existe, y por qué existe UNA sola vez ────────────────────
+   *
+   * El mismo trabajo se muestra en dos pestañas: en la fila de la Cola y en la
+   * ficha de su marcador. Hasta la 1.6.0 cada una lo decía a su manera —la Cola
+   * pintando el título de verde/rojo/azul/ámbar/gris, que es color y nada más
+   * (WCAG 1.4.1) y obligaba a leer cada nombre para sacar el estado; la ficha con
+   * un glifo de 14 px (✓ ⏳ … ⚠)—. Dos redacciones del mismo dato envejecen
+   * distinto, y ya habían envejecido: "⏳" quería decir «está corriendo» en la
+   * ficha y «se quedó sin tokens» en la Cola.
+   *
+   * Ahora las dos piden la palabra acá. Y está en HPUtil y no en HPQueue —que es
+   * la dueña de la máquina de estados— porque esto no decide nada: es cómo se
+   * ESCRIBE un estado. Lo que sí es de la cola, «este terminó pero el clip no
+   * entró», se lo pregunta la vista a `HPQueue.needsPlacing` y se lo pasa.
+   *
+   * ── Y por qué contesta además `activo`, `pendiente` y `terminado` ────
+   *
+   * Porque la primera versión se quedó a mitad de camino: centralizó la palabra y
+   * el color, y dejó afuera las preguntas que dirigen el DIBUJO. ¿La fila se abre?
+   * ¿El detalle va arriba o abajo? ¿El reloj cuenta o dice cuánto tardó? ¿La plata
+   * va en el encabezado? ¿Los botones de la ficha quedan apagados? Eran veintiséis
+   * interrogaciones al estado sueltas en literales de string, y `status === "done"`
+   * se preguntaba seis veces bajo cuatro nombres distintos a diez líneas de
+   * distancia: dos vocabularios para el mismo hecho, y el segundo sin dueño.
+   *
+   * Y ya habían divergido: la ficha del marcador se escribía a mano su propia
+   * lista («queued», «modeling», «ready», «running») en vez de preguntarle a
+   * HPQueue, o sea dos pestañas pintando el mismo trabajo con dos listas
+   * mantenidas por separado.
+   *
+   * Los tres se le preguntan a HPQueue, que es la que se declara «un solo dueño»
+   * del vocabulario de estados (ver `isActive` en cep/js/queue.js). Esto sigue sin
+   * decidir nada: los trae junto con la palabra para que el que dibuja pregunte
+   * UNA vez. Que las dos respuestas no puedan separarse lo fija el test que las
+   * compara estado por estado (`tres-listas-una-gramatica`).
+   *
+   * `palabra` es corta a propósito: vive en el encabezado plegado, que a 320 px
+   * ya envuelve, y la frase entera está en el mensaje de la fila justo debajo.
+   * Lo que no puede pasar es que el estado sea sólo un color.
+   *
+   * `clase` es el vocabulario de la guarda izquierda (ver la sección 9 del CSS) y
+   * es de CINCO, no de siete: lo que cambia de color es qué PIDE el estado, no en
+   * qué etapa del pipeline está. Modelar y renderizar son dos etapas y un solo
+   * «está pasando ahora».
+   */
+  function estadoDeTrabajo(status, sinColocar) {
+    var e = comoSeEscribe(status, sinColocar);
+    e.activo = HPQueue.isActive(status);
+    e.pendiente = HPQueue.isPending(status);
+    e.terminado = status === "done";
+    return e;
+  }
+
+  /** La palabra, el color y el tooltip de cada estado. */
+  function comoSeEscribe(status, sinColocar) {
+    if (status === "done") {
+      // Terminado NO quiere decir que salió bien: el render puede estar hecho y
+      // el clip afuera del timeline, y esa fila llevaba la misma guarda verde que
+      // la que terminó bien (está escrito en el CSS de `.qj-msg`, que por eso no
+      // podía pintar el mensaje de color).
+      if (sinColocar) {
+        return { clase: "es-atencion", palabra: "sin colocar",
+          titulo: "El render está hecho y el clip NO entró al timeline: falta colocarlo." };
+      }
+      return { clase: "es-listo", palabra: "listo", titulo: "Terminado y colocado." };
+    }
+    if (status === "error") {
+      return { clase: "es-falla", palabra: "falló",
+        titulo: "Se cayó: mirá el mensaje y probá «Reintentar»." };
+    }
+    if (status === "waiting") {
+      return { clase: "es-atencion", palabra: "sin cupo",
+        titulo: "Se quedó sin tokens. Cuando se reinicie tu uso, «Reactivar»." };
+    }
+    if (status === "modeling") {
+      return { clase: "es-andando", palabra: "diseñando",
+        titulo: "El modelo está diseñando la animación." };
+    }
+    if (status === "running") {
+      return { clase: "es-andando", palabra: "rindiendo",
+        titulo: "Se está renderizando el video." };
+    }
+    if (status === "ready") {
+      return { clase: "es-quieto", palabra: "por rendir",
+        titulo: "El diseño ya está: espera su carril de render." };
+    }
+    return { clase: "es-quieto", palabra: "en cola",
+      titulo: "En espera de que la cola lo tome." };
+  }
+
   /** Duración legible: "45s" o "1m 12s". */
   function fmtDuration(sec) {
     sec = Math.max(0, Math.round(Number(sec) || 0));
@@ -114,6 +208,10 @@
       return {
         line: dic.corta || 'sin generaciones todavía',
         detail: 'Uso acumulado en esta sesión' + dic.larga,
+        // El monto es lo único que queda en el encabezado (el detalle vive en
+        // ⚙). Sin generaciones no hay costo informado, así que va vacío y la
+        // pastilla no se dibuja.
+        monto: '',
       };
     }
     var cache = (u.cacheReadTokens || 0) + (u.cacheCreationTokens || 0);
@@ -157,7 +255,10 @@
         'Tocá "reiniciar" para empezar a medir limpio.';
     }
     detail += dic.larga;
-    return { line: line, detail: detail };
+    // El monto, solo: es lo que el encabezado muestra desde la v1.6.0 para no
+    // perder el aviso de que estás gastando. Es EL MISMO número que la línea,
+    // formateado igual, para que no puedan separarse nunca.
+    return { line: line, detail: detail, monto: u.costUsd > 0 ? '$' + u.costUsd.toFixed(2) : '' };
   }
 
   // ── Cuánto le entra al modelo, y cuánto le metemos de verdad ──────────
@@ -527,17 +628,115 @@
    * Vive acá y no repetida en cada vista porque los cuatro archivos que la
    * usan ya dependen de HPUtil sin preguntar (debounce, formatTime,
    * fmtDuration): tenerla acá no agrega ningún modo de falla que no exista ya.
+   *
+   * `opts.extras` viaja tal cual: desde la 1.6.0 la barra del micrófono ES la
+   * barra de controles del campo (📸, el clip), así que el que devuelve null tiene
+   * que armar la barra por su cuenta con esos mismos extras. Lo hace
+   * HPPromptCard, en un solo lugar; acá la guarda sigue contestando lo único que
+   * sabe: si en esta máquina hay dictado o no.
    */
   function micOpcional(ta, opts) {
     if (typeof HPDictado === "undefined" || !HPDictado || typeof HPDictado.attachMic !== "function") return null;
     try { return HPDictado.attachMic(ta, opts).el; } catch (e) { return null; }
   }
 
+  /**
+   * El nombre de una tarjeta, cuando además LLEVA a algún lado.
+   *
+   * ── El bug que esto arregla ──────────────────────────────────────────
+   *
+   * El nombre vive adentro del `<summary>` y es elástico (`flex: 1 1 80px`, para
+   * poder recortar con tres puntos cuando no entra), así que se lleva TODO el
+   * hueco del encabezado: el vacío que se ve entre el nombre y los datos de la
+   * derecha está adentro del nombre. Y como llevar al timeline obliga a frenar el
+   * despliegue nativo del `<details>` —si no, ir a mirar un clip abría o cerraba
+   * la fila de paso—, ese `preventDefault` se estaba comiendo el clic de medio
+   * encabezado. Resultado: la tarjeta no se abría haciendo clic en ella, y encima
+   * el clic en el vacío MOVÍA el cursor de Premiere sin que nada lo insinuara. El
+   * editor lo reportó como "me toca dar clic en el botón de la izquierda para
+   * desplegarlo".
+   *
+   * ── La forma de arreglarlo ───────────────────────────────────────────
+   *
+   * La caja elástica sigue siendo elástica, porque el recorte con tres puntos la
+   * necesita, pero deja de ser la que escucha: adentro va un `<span>` que mide lo
+   * que miden las palabras, y ÉSE es el que lleva al timeline. Todo lo que sobra
+   * en el encabezado vuelve a ser del `<summary>`, o sea que abre y cierra la
+   * tarjeta como cualquier otra del panel.
+   *
+   * Y el subrayado se muda con el clic, que es lo que lo vuelve honesto: lo que
+   * se ve subrayado es exactamente lo que responde.
+   *
+   * Vive acá porque el patrón es de la GRAMÁTICA de tarjeta, no de una pestaña:
+   * lo tenían igual la Cola y Corrections, con el mismo bug, y la ficha de
+   * marcador va a querer lo mismo el día que su nombre lleve a algún lado.
+   * Devuelve la caja de afuera, que es la que se cuelga del encabezado.
+   */
+  function nombreQueLleva(texto, opts) {
+    var o = opts || {};
+    var caja = document.createElement("span");
+    caja.className = "hp-nombre" + (o.clase ? " " + o.clase : "");
+    var txt = document.createElement("span");
+    txt.className = "hp-nombre-txt";
+    txt.textContent = String(texto == null ? "" : texto);
+    caja.appendChild(txt);
+    if (typeof o.alHacerClic !== "function") return caja;
+    txt.classList.add("is-link");
+    if (o.titulo) txt.title = o.titulo;
+    txt.addEventListener("click", function (e) {
+      // Sigue haciendo falta, y ahora sólo sobre las palabras: sin esto, ir a
+      // mirarlo al timeline abriría o cerraría la fila de paso.
+      if (e && e.stopPropagation) e.stopPropagation();
+      if (e && e.preventDefault) e.preventDefault();
+      o.alHacerClic(e);
+    });
+    return caja;
+  }
+
+  /**
+   * El globo del estimado de tokens de una ficha.
+   *
+   * ── Qué dice, y por qué las menciones van ACÁ ────────────────────────
+   *
+   * El globo cobra la promesa del renglón: si el estimado de verdad se arma con
+   * el mismo cuerpo que viaja, entonces acá se puede leer CON QUÉ NÚMERO le llega
+   * cada mención y cuál no le va a llegar. Es lo único que contesta "¿@Imagen_2 es
+   * la que creo?" antes de gastar la generación — el aviso de abajo del campo lo
+   * dice con lo que el panel tiene cacheado, y esto lo dice el que leyó el disco
+   * para contar.
+   *
+   * Va en el globo y no en un renglón nuevo a propósito: el aviso fuerte ya
+   * existe, sale con cada tecla y no espera al motor, así que un segundo renglón
+   * diciendo lo mismo 300 ms después sería el panel contradiciéndose solo (ver
+   * `explicar` en cep/js/menciones.js).
+   *
+   * ── Por qué es una función y no cuatro concatenaciones en la ficha ───
+   *
+   * Porque así se puede probar. Nadie ejecuta `main.js` en los tests —se lee como
+   * texto—, así que mientras esto vivía adentro de `createMarkerCard` lo único
+   * que se podía verificar era que el MOTOR produjera el campo; que el panel lo
+   * leyera no lo miraba nadie. Es exactamente el tipo de cable que se corta sin
+   * que nada falle: el globo simplemente deja de decir lo que sabe.
+   */
+  function tituloDelEstimado(r, extra) {
+    var e = Array.isArray(extra) ? extra : [];
+    var men = (r && r.menciones) || {};
+    return "Estimado de tokens de ENTRADA de este pedido: " +
+      fmtTokens(r && r.inputTokensEst) +
+      (e.length ? " · incluye " + e.join(" y ") : "") +
+      ". Se arma con el mismo cuerpo que se le manda al modelo." +
+      (men.nota ? "\nMenciones: " + men.nota + "." : "") +
+      (men.aviso ? "\nOJO: " + men.aviso + "." : "");
+  }
+
   global.HPUtil = {
     debounce: debounce,
     micOpcional: micOpcional,
+    nombreQueLleva: nombreQueLleva,
+    tituloDelEstimado: tituloDelEstimado,
     escapeHtml: escapeHtml,
     formatTime: formatTime,
+    estadoDeTrabajo: estadoDeTrabajo,
     fmtDuration: fmtDuration,
     addThousands: addThousands,
     fmtTokens: fmtTokens,

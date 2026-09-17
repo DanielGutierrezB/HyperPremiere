@@ -68,7 +68,7 @@ function cargarPanel() {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'store.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'store.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   return ctx;

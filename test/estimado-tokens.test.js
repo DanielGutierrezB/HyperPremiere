@@ -107,7 +107,7 @@ function montarPanel(proyecto, seqName) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
+  for (const f of ['util.js', 'iconos.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPStore.setContext(proyecto, seqName);
@@ -366,7 +366,7 @@ test('la vista de la Cola le pide el cuerpo a la cola, no manda el payload crudo
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -593,3 +593,45 @@ function nodo(tag) {
   });
   return el;
 }
+
+// ── El globo del estimado dice lo que el MOTOR sabe de las menciones ──
+//
+// El motor devuelve en `estimateTokens` con qué número le va a llegar cada
+// mención y cuál no le va a llegar, calculado sobre lo que leyó del disco. Eso es
+// lo único que contesta "¿@Imagen_2 es la que creo?" ANTES de gastar la
+// generación: el aviso de abajo del campo lo dice con lo que el panel tiene
+// cacheado, y éste lo dice el que contó de verdad.
+//
+// Se prueba la función y no la ficha porque nadie ejecuta `main.js` en los tests:
+// mientras la redacción vivía adentro de `createMarkerCard`, que el panel leyera
+// el campo no lo miraba nadie. Es el cable que se corta sin que nada falle — el
+// globo simplemente deja de decir lo que sabe.
+test('el globo del estimado dice el número con el que llega cada mención', function () {
+  const p = montarPanel(proyectoNuevo(), 'Clase 12');
+  const t = p.ctx.HPUtil.tituloDelEstimado({
+    ok: true, inputTokensEst: 16780,
+    menciones: { nota: 'logo.png → imagen 2', aviso: '' },
+  }, ['5 img']);
+  has(t, '17k', 'el número del estimado');
+  has(t, 'incluye 5 img', 'y qué lo compone');
+  has(t, 'logo.png → imagen 2', 'con qué número llega la mención');
+});
+
+test('y avisa de la que NO le va a llegar', function () {
+  const p = montarPanel(proyectoNuevo(), 'Clase 12');
+  const t = p.ctx.HPUtil.tituloDelEstimado({
+    ok: true, inputTokensEst: 900,
+    menciones: { nota: '', aviso: '«paleta.png» ya no está en la lista' },
+  }, []);
+  has(t, 'OJO');
+  has(t, 'paleta.png');
+});
+
+test('sin menciones, el globo es el de siempre y no inventa renglones', function () {
+  // El globo se lee en cada ficha: dos renglones vacíos abajo del texto útil
+  // serían ruido en el lugar donde se mira el costo antes de apretar Generar.
+  const p = montarPanel(proyectoNuevo(), 'Clase 12');
+  const t = p.ctx.HPUtil.tituloDelEstimado({ ok: true, inputTokensEst: 500 }, []);
+  ok(t.indexOf('\n') === -1, 'un solo renglón: ' + JSON.stringify(t));
+  ok(t.indexOf('Menciones') === -1 && t.indexOf('OJO') === -1);
+});

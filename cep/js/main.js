@@ -52,9 +52,58 @@
   var transcriptFileInput = document.getElementById("transcript-file");
   var transcriptStatus = document.getElementById("transcript-status");
 
-  function setOutput(text, isError) {
-    output.textContent = text;
-    output.classList.toggle("is-error", Boolean(isError));
+  // ── La línea de estado ───────────────────────────────────────────────
+  //
+  // La franja de `aria-live` estaba ocupada permanentemente: 47 px fijos arriba
+  // de todo, escritos siempre. Medido sobre los 23 avisos que la escriben, 20
+  // son informativos —y los informativos ya quedan en el ⬇ Log— y los que de
+  // verdad piden algo son tres: "no generé nada todavía, hay X", "no pude
+  // preparar el contexto" y "la secuencia no tiene marcadores".
+  //
+  // Desde la v1.6.0 la franja NO OCUPA LUGAR cuando no hay nada que atender, y
+  // hay tres clases de mensaje:
+  //
+  //   · informativo → se muestra un rato y se esconde solo. No desaparece del
+  //     todo a propósito: la mitad de estos mensajes son el acuse de un clic
+  //     ("7 marcadores cargados", "Cola vaciada") y uno trae un dato que hay
+  //     que leer una vez ("Log descargado en: <ruta>"). Un clic sin respuesta
+  //     visible se lee como un panel colgado, y además la región `aria-live`
+  //     solo anuncia lo que llega al DOM: no mostrarlos sería perderlos para un
+  //     lector de pantalla. El rato se calcula por largo del texto (4 s más
+  //     60 ms por carácter, tope 15 s), que es holgado contra las ~17
+  //     letras/segundo de lectura corrida.
+  //   · "accion" → el panel PARÓ y hay que decidir algo. Queda, en ámbar.
+  //   · error (`true`) → falló algo. Queda, en rojo.
+  //
+  // Todo lo que pasa por acá queda además en el ⬇ Log, incluido lo que se
+  // esconde solo: la franja es un aviso, el log es el registro.
+  var OUTPUT_MIN_MS = 4000;
+  var OUTPUT_POR_CARACTER_MS = 60;
+  var OUTPUT_MAX_MS = 15000;
+  var outputTimer = null;
+
+  function hideOutput() {
+    outputTimer = null;
+    output.textContent = "";
+    output.setAttribute("data-hidden", "true");
+  }
+
+  function setOutput(text, nivel) {
+    if (outputTimer) { clearTimeout(outputTimer); outputTimer = null; }
+    var txt = (text === null || text === undefined) ? "" : String(text);
+    var esError = (nivel === true || nivel === "error");
+    var esAccion = (nivel === "accion");
+    if (!txt) { hideOutput(); return; }
+    // Se muestra ANTES de escribir: la mutación tiene que pasar con la región
+    // visible o el `aria-live` no la anuncia.
+    output.setAttribute("data-hidden", "false");
+    output.textContent = txt;
+    output.classList.toggle("is-error", esError);
+    output.classList.toggle("is-warn", esAccion);
+    hpLog("Línea de estado: " + txt.replace(/\s*\n\s*/g, " · "), esError ? "ERROR" : "INFO");
+    if (esError || esAccion) return;
+    outputTimer = setTimeout(hideOutput,
+      Math.min(OUTPUT_MAX_MS, OUTPUT_MIN_MS + txt.length * OUTPUT_POR_CARACTER_MS));
   }
 
   // ---------------------------------------------------------------------
@@ -90,14 +139,28 @@
   }
 
   // ── Cableado de las vistas ───────────────────────────────────────────
-  HPStills.init({ onGeneralChanged: function () { HPGeneralView.refreshSummary(); } });
+  HPStills.init({
+    onGeneralChanged: function () { HPGeneralView.refreshSummary(); },
+    // Cambió el material de algún marcador: los chips de los campos abiertos
+    // muestran NÚMEROS, y el número de una imagen es su posición entre las que
+    // viajan. Sacar una corre a todas las de atrás y deja colgada a la que la
+    // nombraba, así que sin repintar el editor lee un número y el modelo recibe
+    // otro. Lo repinta la ficha, que es la que sabe hacerlo.
+    onMaterialChanged: function () { HPPromptCard.repintarTodas(); }
+  });
   // Las referencias de los dos bloques generales. `onChanged` repinta el bloque
   // entero y no solo el badge: agregar una del curso cambia también el cartel de
   // la migración y el estado de la otra caja, y dos caminos de repintado para el
   // mismo cambio es cómo se llega a que uno de los dos quede viejo.
   HPRefsView.init({
     context: function () { return { projectPath: currentProjectPath, sequenceName: currentSequenceName }; },
-    onChanged: function () { HPGeneralView.refresh(); }
+    // (Repintar las fichas abiertas cuando cambian las referencias lo hace
+    // `HPRefsView.repintar`, no este cableado: ver el porqué allá.)
+    onChanged: function () { HPGeneralView.refresh(); },
+    // Tocar una referencia de un bloque de estilo la MENCIONA en el campo de ese
+    // bloque. Quién sabe en cuál de los dos escribir es HPGeneralView, que es la
+    // dueña de los dos campos.
+    mencionar: function (scope, nombre) { HPGeneralView.mencionar(scope, nombre); }
   });
   HPQueueView.init({
     goToJobMarker: function (job, openEditor) { goToJobMarker(job, openEditor); },
@@ -380,7 +443,12 @@
       for (var k = 0; k < slice.length; k++) texts.push(slice[k].text);
       var sliceEl = c.querySelector(".transcript-slice");
       if (!sliceEl && texts.length) {
-        // La tarjeta nació sin transcript (se generó/cargó después): armar el bloque.
+        // La tarjeta nació sin transcript (se generó/cargó después): armar el
+        // bloque y meterlo ADENTRO de "Avanzado", que es donde vive desde la
+        // 1.6.0. Antes se colgaba antes de la fila de acciones, y esa fila ya no
+        // está en el medio de la ficha: está en el pie.
+        var adv = c.querySelector(".hp-avanzado-body");
+        if (!adv) continue;
         var tDetails = document.createElement("details");
         tDetails.className = "transcript-details";
         var tSum = document.createElement("summary");
@@ -389,9 +457,9 @@
         sliceEl.className = "transcript-slice";
         tDetails.appendChild(tSum);
         tDetails.appendChild(sliceEl);
-        var actionsEl = c.querySelector(".marker-actions");
-        if (actionsEl && actionsEl.parentNode) actionsEl.parentNode.insertBefore(tDetails, actionsEl);
-        else continue;
+        // Primero de los dos: el transcript se mira, el editor de HTML se usa.
+        if (adv.firstChild) adv.insertBefore(tDetails, adv.firstChild);
+        else adv.appendChild(tDetails);
       }
       if (!sliceEl) continue;
       sliceEl.textContent = texts.length ? texts.join(" ") : "(sin transcript en este rango — revisá el desfase)";
@@ -461,7 +529,10 @@
     if (transcribeProgress) transcribeProgress.setAttribute("data-hidden", show ? "false" : "true");
     if (transcribeFill && show) transcribeFill.style.width = "0%";
   }
-  var TRANSCRIBE_LABEL = "🎙 Transcribir esta secuencia";
+  // El icono va aparte del texto y se repone después de cada cambio de etiqueta
+  // (el botón pasa a "✕ Cancelar transcripción" y vuelve): `textContent` reemplaza
+  // los hijos, así que reescribir la etiqueta se llevaba el dibujo puesto.
+  var TRANSCRIBE_LABEL = "Transcribir esta secuencia";
 
   // ── Espejo del progreso en la pestaña Cola ───────────────────────────
   // Cuando la cola espera el transcript, el progreso vive en la sección Contexto
@@ -562,6 +633,7 @@
     if (btnTranscribe) {
       btnTranscribe.disabled = false;
       btnTranscribe.textContent = TRANSCRIBE_LABEL;
+      HPIconos.enBoton(btnTranscribe, "microfono", "btn-ico");
     }
     showTranscribeBar(false);
   }
@@ -693,7 +765,8 @@
   /**
    * Transcribe una secuencia de punta a punta y deja el transcript en su
    * namespace del store. Resuelve con los segmentos, o con null si lo cancelaste;
-   * rechaza con un Error cuyo mensaje ya es presentable. Lo usan el botón 🎙 y el
+   * rechaza con un Error cuyo mensaje ya es presentable. Lo usan el botón de
+   * transcribir la secuencia y el
    * paso previo obligatorio antes de generar (que puede pedir OTRA secuencia si
    * la cola tiene jobs de varias).
    *
@@ -1041,7 +1114,7 @@
           // Cancelaste la transcripción: no generamos a ciegas.
           setOutput("Cancelaste la transcripción, así que no generé nada.\nLos marcadores quedaron en la " +
             "pestaña Cola. Podés cargar un transcript con \"Cargar JSON\", o pulsar ▶ Iniciar cola otra vez " +
-            "para generar igual sin él.");
+            "para generar igual sin él.", "accion");
           return false;
         }
         if (!objectiveIsEmpty(projectPath, seqName)) return true;
@@ -1205,7 +1278,7 @@
           ? "contestá el cartel de “Referencias de esta secuencia” en el bloque Estilo de esta secuencia" +
             (seqName === currentSequenceName ? "" : " (abrí “" + seqName + "” en Premiere para verlo)")
           : "abrí “" + seqName + "” en Premiere una vez, que ahí se suben solas") +
-        ", o pulsá ▶ Iniciar cola otra vez para generar igual sin ellas.", true);
+        ", o pulsá ▶ Iniciar cola otra vez para generar igual sin ellas.", "accion");
       hpLog("Cola FRENADA antes de gastar tokens: " + queEs + ".", "WARN");
       return false;
     }
@@ -1305,9 +1378,14 @@
       // disco al armar la llamada (stillToDataUrl), así que un cuadro de 1,5 MB
       // no cruza el panel en cada pedido ni queda escrito en la cola.
       stills: (data.stills || []).concat(gen.images),
+      // Y quién es cada una: de qué nivel salió, cómo se llama y si se incrusta.
+      // Va PARALELO a `stills` y es lo que deja que una mención escrita en la
+      // instrucción (`@[curso/logo.svg]`) se traduzca al número correcto recién al
+      // mandar, contra las que de verdad viajan (ver bridge/prompt/menciones.js).
+      stillRefs: HPStore.getMarkerStillRefs(markerKey).concat(gen.refs),
       // assets = solo las marcadas "usar" → se INCRUSTAN en el gráfico (logo/icono/foto).
       assets: HPStore.getMarkerAssets(markerKey).concat(gen.assets),
-      resources: (data.resources || []).concat(gen.docs),
+      resources: HPStore.getMarkerDocs(markerKey).concat(gen.docs),
       background: !!data.background,
       markerSlug: markerKey, mode: mode
     };
@@ -1389,35 +1467,75 @@
     var markerKey = markerKeyFor(marker);
 
     var card = document.createElement("details");
-    card.className = "marker-card";
+    // `hp-tarjeta` es la caja que comparten las tres listas del panel (la de
+    // marcadores, la Cola y Corrections): recuadro, superficie, radio y la guarda
+    // izquierda de 3 px que dice EL ESTADO. Ver la sección 9 del CSS, donde está
+    // escrito por qué la guarda dejó de decir "esta ficha está abierta".
+    card.className = "marker-card hp-tarjeta";
 
+    // ── El encabezado: identificar a la izquierda, confirmar a la derecha ──
+    //
+    // Lleva las cuatro cosas que el editor quiso ver SIN desplegar la ficha: el
+    // nombre y lo que TARDÓ la última versión a la izquierda; el tramo, lo que va a
+    // COSTAR mandarla y el estado a la derecha. Los dos últimos vivían en un renglón
+    // del cuerpo, o sea que solo se veían con la ficha abierta y a cambio de una fila
+    // entera de alto — "esto debería estar en el cabecero […], no acá ocupando
+    // espacio vertical".
+    //
+    // Y va con ORDEN DE PRIORIDAD explícito, porque a 320 px no entra todo: el
+    // nombre y el estado no se caen nunca (son la identidad de la fila), el tramo
+    // cede después, y los tiempos y el estimado son los primeros en recortarse —son
+    // datos de confirmación, no de identificación—. Quién cede qué lo decide el CSS
+    // (ver `.hp-sumario` en la sección 9); acá solo se declara el orden.
     var summary = document.createElement("summary");
-    summary.className = "marker-summary";
+    summary.className = "marker-summary hp-sumario";
     var sName = document.createElement("span");
-    sName.className = "marker-name";
+    sName.className = "marker-name hp-nombre";
     sName.textContent = markerKey + (marker.name ? " · " + marker.name : "");
+    var times = document.createElement("div");
+    times.className = "marker-times hp-dato";
     var sMeta = document.createElement("span");
-    sMeta.className = "marker-meta";
+    sMeta.className = "marker-meta hp-dato";
     sMeta.textContent = formatTime(marker.start) + " · " + marker.duration.toFixed(1) + "s";
+    var estimate = document.createElement("div");
+    estimate.className = "marker-estimate hp-dato";
+    // El estado, en PALABRAS y en la misma pastilla que usan las otras dos
+    // pestañas. Era un glifo de 14 px (✓ ⏳ … ⚠) y eso lo dejaba a un paso de ser
+    // sólo color: los cuatro son grises salvo el ✓, así que lo que de verdad
+    // distinguía "listo" de "falló" era el dibujito. Las palabras las escribe
+    // `HPQueue.estadoDe`, que es la que las escribe para la Cola, así que las dos
+    // pestañas dicen lo mismo del mismo trabajo.
     var sBadge = document.createElement("span");
-    sBadge.className = "marker-badge";
+    sBadge.className = "marker-badge hp-estado";
+    sBadge.setAttribute("data-hidden", "true");
+    // El grupo de la derecha envuelve ENTERO cuando no cabe, y no de a una pieza:
+    // con las cuatro sueltas, a 320 px el estimado bajaba solo y el estado se quedaba
+    // arriba, así que la fila se leía como dos filas de cosas distintas.
+    var sDer = document.createElement("span");
+    sDer.className = "marker-summary-der hp-sumario-der";
+    sDer.appendChild(sMeta);
+    sDer.appendChild(estimate);
+    sDer.appendChild(sBadge);
     summary.appendChild(sName);
-    summary.appendChild(sMeta);
-    summary.appendChild(sBadge);
+    summary.appendChild(times);
+    summary.appendChild(sDer);
     // Al abrir/clicar el marcador, mover el playhead a ese punto.
     summary.addEventListener("click", function () {
       HPHost.seekTo(marker.start);
     });
     card.appendChild(summary);
 
-    var body = document.createElement("div");
-    body.className = "marker-body";
-
-    var instruction = document.createElement("textarea");
-    instruction.className = "marker-instruction";
+    // El CAMPO de la instrucción lo crea la ficha, más abajo: es un
+    // `contenteditable` que pinta las menciones como chips (ver cep/js/campo.js) y
+    // no un `<textarea>` que se pueda armar acá y pasar hecho. Lo que se decide en
+    // este punto es el texto con el que nace, y el resto —el valor, los dos
+    // oyentes— se le cuelga después de montar, sobre `ficha.campo`.
+    var instruction = null;
     // La segunda línea no es decorativa: nombrar un marcador ("como el Marcador 3")
     // le manda ese diseño entero al modelo, y no hay otra forma de enterarse.
-    instruction.placeholder = "¿Qué querés que haga la IA en este marcador?\nTip: “con el mismo diseño del Marcador 3” usa ese recurso como referencia.";
+    var PLACEHOLDER = "¿Qué querés que haga la IA en este marcador?\n" +
+      "Arrastrá una imagen acá para adjuntarla y mencionarla.\n" +
+      "Tip: “con el mismo diseño del Marcador 3” usa ese recurso como referencia.";
     // Si el marcador trae un comentario en Premiere y todavía no escribiste una
     // instrucción, lo usamos como punto de partida (y lo guardamos).
     var initialInstruction = HPStore.getMarkerData(markerKey).instruction;
@@ -1425,26 +1543,50 @@
       initialInstruction = marker.comment.trim();
       HPStore.setMarkerInstruction(markerKey, initialInstruction);
     }
-    instruction.value = initialInstruction;
-    instruction.addEventListener("input", debounce(function () {
-      HPStore.setMarkerInstruction(markerKey, instruction.value);
-    }, DEBOUNCE_MS));
-    body.appendChild(instruction);
-    // Micrófono de este marcador. Se guarda SIN debounce: lo que escribe el
-    // dictado no son pulsaciones, es el texto ya terminado, y esperar 300 ms
-    // para persistirlo es la ventana en la que se pierde si el editor cambia
-    // de pestaña justo ahí.
-    var mic = micOpcional(instruction, {
-      id: "marcador:" + markerKey,
-      onChange: function (texto) { HPStore.setMarkerInstruction(markerKey, texto); },
-    });
-    if (mic) body.appendChild(mic);
 
-    body.appendChild(HPStills.createControl(markerKey));
+    function guardarInstruccion(texto) {
+      HPStore.setMarkerInstruction(markerKey, texto === undefined ? instruction.value : texto);
+    }
+
+    // ── La tira de referencias de este pedido ─────────────────────────
+    //
+    // Muestra las CINCO cosas que le van a llegar al modelo por este marcador, en
+    // el orden en que le llegan: primero las propias (con su número, que acá SÍ es
+    // el que ve el modelo) y después las heredadas del curso y de la clase, como
+    // chips. El editor pidió verlas arriba del campo "para que se entienda que van
+    // con el prompt", y ver solo las propias era ver dos de cinco.
+    var tiraPropia = null;
+    var ficha = null;
+
+    // El inventario, el 📸, el clip, el arrastre y la canonización los arma la
+    // ficha a partir de `stills` (ver cep/js/prompt-card.js): son idénticos en las
+    // tres pestañas que le escriben al modelo sobre un marcador, y estuvieron
+    // copiados en las tres.
+    //
+    // Lo único que esta tira tiene de propio es que además dibuja lo HEREDADO, y
+    // por eso se pasa a mano: la ronda de feedback de la Cola y la fila de
+    // Corrections muestran sólo el material del marcador. El `mencionar` lo trae
+    // la ficha como segundo argumento, porque cuando la tira se dibuja —arriba del
+    // campo— el campo todavía no existe.
+    function dibujarTira(cont, mencionar) {
+      cont.innerHTML = "";
+      tiraPropia = HPStills.crearTira(markerKey, { mencionar: mencionar });
+      cont.appendChild(tiraPropia.el);
+      cont.appendChild(HPRefsView.crearHeredadas({
+        desde: tiraPropia.cuantasImagenes(),
+        mencionar: mencionar
+      }));
+    }
 
     // Toggle de fondo: con fondo → mp4 HD opaco; sin fondo → mov con alpha.
+    // La etiqueta se acortó a "Con fondo" y el resto se fue al tooltip: vive en la
+    // barra de controles, al lado de tres iconos, y el renglón entero ("Con fondo
+    // (mp4 HD opaco, temático) — sin fondo = alpha") mandaba todo lo demás al
+    // renglón de abajo a 400 px. Lo que hay que poder leer de un vistazo es si está
+    // marcado; qué formato sale de cada opción se lee una vez.
     var bgRow = document.createElement("label");
     bgRow.className = "bg-toggle";
+    bgRow.title = "Marcado: mp4 HD opaco con fondo minimalista temático. Sin marcar: .mov con alpha (overlay transparente).";
     var bgCheck = document.createElement("input");
     bgCheck.type = "checkbox";
     bgCheck.checked = !!HPStore.getMarkerData(markerKey).background;
@@ -1453,25 +1595,23 @@
       updateEstimate();
     });
     var bgLbl = document.createElement("span");
-    bgLbl.textContent = "Con fondo (mp4 HD opaco, temático) — sin fondo = alpha";
+    bgLbl.textContent = "Con fondo";
     bgRow.appendChild(bgCheck);
     bgRow.appendChild(bgLbl);
-    body.appendChild(bgRow);
 
-    // Transcript del marcador: colapsado (la herramienta ya lo tiene, es solo referencia).
+    // Transcript del marcador: adentro de "Avanzado" (la herramienta ya lo tiene,
+    // es solo referencia y se mira una vez cada tanto).
     var sliceEl = createTranscriptSlice(marker);
+    var tDetails = null;
     if (sliceEl) {
-      var tDetails = document.createElement("details");
+      tDetails = document.createElement("details");
       tDetails.className = "transcript-details";
       var tSum = document.createElement("summary");
       tSum.textContent = "Ver transcript del marcador";
       tDetails.appendChild(tSum);
       tDetails.appendChild(sliceEl);
-      body.appendChild(tDetails);
     }
 
-    var actions = document.createElement("div");
-    actions.className = "marker-actions";
     var genBtn = document.createElement("button");
     genBtn.type = "button";
     genBtn.className = "btn-generate";
@@ -1480,11 +1620,17 @@
     regenBtn.className = "btn-secondary";
     regenBtn.textContent = "Regenerar desde cero";
     regenBtn.title = "Descarta lo anterior y crea una versión nueva solo con la instrucción y recursos actuales";
+    // El icono NO es el mismo que el de "aplicar el ajuste" de la Cola, y eso es
+    // el arreglo: los dos eran una flecha en círculo (⟲ y ↻) y a 12 px son el
+    // mismo dibujo, para las dos acciones más distintas que hay acá — una sigue
+    // el diseño anterior y la otra lo tira. Ver cep/js/iconos.js.
+    HPIconos.enBoton(regenBtn, "desdeCero");
     var queueBtn = document.createElement("button");
     queueBtn.type = "button";
     queueBtn.className = "btn-secondary";
-    queueBtn.textContent = "＋ Enviar a la cola";
+    queueBtn.textContent = "Enviar a la cola";
     queueBtn.title = "Encola sin empezar a procesar (arrancá con Iniciar cola)";
+    HPIconos.enBoton(queueBtn, "encolar");
     var status = document.createElement("div");
     status.className = "marker-status";
     var buttons = [genBtn, regenBtn, queueBtn];
@@ -1492,18 +1638,63 @@
     // Lo que tardó la última versión de este marcador. Sale del store y no de
     // la cola: la cola se vacía, y la pregunta "¿cuánto me costó este recurso?"
     // aparece justamente días después, mirando el marcador.
+    /**
+     * Lo que tardó la última versión, en dos piezas.
+     *
+     * La CORTA (el total) no se cae nunca; el desglose por etapa vive en un `<span>`
+     * aparte que el CSS esconde en el panel angosto. Son dos nodos y no un texto con
+     * un recorte porque CSS no puede esconder media palabra de un nodo de texto —el
+     * mismo motivo por el que el ✨ tiene su emoji y su palabra separados—, y el
+     * dato que hay que conservar a 320 px es "cuánto tardó", no "cuánto de eso fue
+     * render".
+     */
     function syncTimes() {
       var t = HPStore.getMarkerData(markerKey).timings;
-      if (!t || !(t.totalMs > 0)) { times.textContent = ""; return; }
+      times.textContent = "";
+      if (!t || !(t.totalMs > 0)) { times.setAttribute("data-hidden", "true"); return; }
+      times.setAttribute("data-hidden", "false");
       var partes = [];
       if (t.modelMs > 0) partes.push("IA " + HPUtil.fmtDuration(t.modelMs / 1000));
       if (t.renderMs > 0) partes.push("render " + HPUtil.fmtDuration(t.renderMs / 1000));
-      times.textContent = "⏱ " + (t.version ? "v" + t.version + ": " : "") +
-        HPUtil.fmtDuration(t.totalMs / 1000) + (partes.length ? " · " + partes.join(" · ") : "");
+      var corto = document.createElement("span");
+      corto.className = "hp-dato-corto";
+      corto.textContent = (t.version ? "v" + t.version + ": " : "") + HPUtil.fmtDuration(t.totalMs / 1000);
+      times.appendChild(corto);
+      if (partes.length) {
+        var largo = document.createElement("span");
+        largo.className = "hp-dato-largo";
+        largo.textContent = " · " + partes.join(" · ");
+        times.appendChild(largo);
+      }
+      // El ⏱ era un emoji; el reloj de trazo hereda el color del renglón y mide lo
+      // mismo que los otros iconos de la ficha.
+      times.insertBefore(HPIconos.el("reloj"), times.firstChild);
+      times.title = "Lo que tardó la última versión de este marcador: " + corto.textContent +
+        (partes.length ? " (" + partes.join(" · ") + ")" : "");
+    }
+
+    /**
+     * El estado de la ficha, en sus dos canales: la GUARDA izquierda (color, la
+     * misma columna que en la Cola y en Corrections) y la PASTILLA con la palabra.
+     *
+     * Las dos cosas juntas y en una sola función porque son un solo dato dicho de
+     * dos maneras, y separarlas es cómo se llega a que la guarda diga una cosa y
+     * el texto otra. Sin palabra no hay pastilla: un marcador que nunca se generó
+     * no tiene ningún estado que mostrar, y "sin generar" en cada fila de una
+     * lista recién cargada es ruido en las siete.
+     */
+    function marcarEstado(clase, palabra, titulo) {
+      ["es-quieto", "es-andando", "es-listo", "es-atencion", "es-falla"].forEach(function (c) {
+        card.classList.remove(c);
+      });
+      if (clase) card.classList.add(clase);
+      sBadge.textContent = palabra || "";
+      sBadge.title = titulo || "";
+      sBadge.setAttribute("data-hidden", palabra ? "false" : "true");
     }
 
     // Refleja el estado: sin generar → solo "Generar"; ya generado → "Generar"
-    // (refina) + "Regenerar desde cero", y badge ✓.
+    // (refina) + "Regenerar desde cero", y la pastilla en verde.
     function syncUI() {
       var generated = HPStore.getMarkerData(markerKey).generated;
       syncTimes();
@@ -1512,7 +1703,8 @@
         ? "Ajusta sobre la última versión usando tu nueva instrucción (mantiene lo que funciona)"
         : "Genera el gráfico animado de este marcador con la IA y lo coloca en el timeline";
       regenBtn.style.display = generated ? "" : "none";
-      sBadge.textContent = generated ? "✓" : "";
+      if (generated) marcarEstado("es-listo", "listo", "Este marcador ya tiene una versión generada.");
+      else marcarEstado("", "", "");
     }
 
     // En qué modo saldría este marcador si lo mandaran ahora: la primera vez se
@@ -1527,8 +1719,37 @@
       enqueueMarkerGeneration(marker, modoDeGeneracion());
     }
     genBtn.addEventListener("click", doGenerate);
+    // SIEMPRE pregunta, igual que el de la caja de feedback de la Cola, y por el
+    // mismo motivo elevado al cuadrado: acá el botón vive en la MISMA fila que
+    // Generar. Están en las dos puntas —que es lo que se arregló en esta etapa— pero
+    // un clic de más sigue tirando una animación que estaba bien y arrancando una
+    // generación entera, con su costo y su espera. Que esté lejos ayuda a no
+    // elegirlo por error; lo que protege es la pregunta.
+    //
+    // Y la pregunta dice las mismas tres cosas que la de la Cola, no una versión
+    // resumida: que se descarta el diseño anterior, que es una generación completa
+    // con lo que cuesta, y —si hay algo escrito en el campo— que ese texto NO se usa,
+    // porque desde cero no parte de la versión previa. Ese tercer renglón es el que
+    // atrapa el error de puntería de verdad: el editor escribió el ajuste y apretó
+    // el botón de al lado.
     regenBtn.addEventListener("click", function () {
-      enqueueMarkerGeneration(marker, "regen");
+      var escrito = (instruction.value || "").trim();
+      HPWidgets.confirmOverlay("Regenerar desde cero", function (body) {
+        var p = document.createElement("p");
+        p.textContent = "¿Seguro querés generar esta animación desde cero? " +
+          "Se descarta el diseño anterior y se vuelve a diseñar con la instrucción del marcador " +
+          "y el material de hoy — es una generación completa, con su costo y su espera.";
+        body.appendChild(p);
+        if (escrito) {
+          var q = document.createElement("p");
+          q.textContent = "Lo que tenés escrito en el campo se usa como la instrucción de este " +
+            "marcador, pero NO como un ajuste sobre la versión anterior: desde cero no parte de " +
+            "ella. Si lo que querés es ajustar lo que ya salió, cerrá esto y dale “Generar (refinar)”.";
+          body.appendChild(q);
+        }
+      }, "Regenerar desde cero", function () {
+        enqueueMarkerGeneration(marker, "regen");
+      });
     });
     queueBtn.addEventListener("click", function () {
       enqueueMarkerGeneration(marker, modoDeGeneracion(), true); // staged: no arranca
@@ -1551,8 +1772,15 @@
       if (!job) return;
       // Cada emit reconstruye el status; paramos el reloj anterior para no dejar timers colgados.
       if (card._clockTimer) { clearInterval(card._clockTimer); card._clockTimer = null; }
-      var active = job.status === "queued" || job.status === "modeling" || job.status === "ready" || job.status === "running";
-      if (active) {
+      // El estado del job se escribe en un solo lugar y las dos pestañas lo piden
+      // ahí: el mismo trabajo no puede llamarse "⏳" acá y "sin cupo" en la Cola
+      // (ver `estadoDeTrabajo` en cep/js/util.js).
+      var est = HPUtil.estadoDeTrabajo(job.status, HPQueue.needsPlacing(job));
+      marcarEstado(est.clase, est.palabra, est.titulo);
+      // Y «todavía va a pasar algo con este trabajo» sale del mismo lugar. Acá
+      // estaba escrita a mano la lista de los cuatro estados que lo cumplen, o sea
+      // una segunda lista, mantenida aparte de la de HPQueue y en la otra pestaña.
+      if (est.pendiente) {
         setButtonsDisabled(buttons, true);
         status.className = "marker-status is-busy";
         status.textContent = "";
@@ -1561,19 +1789,27 @@
         fill.style.width = (job.pct || 0) + "%"; bar.appendChild(fill);
         var m = document.createElement("div"); m.className = "hp-bar-msg";
         var msgTxt = document.createElement("span"); msgTxt.textContent = job.msg || "";
+        // El reloj de la corrida, con el mismo dibujo que el de la Cola: es el
+        // mismo dato en la otra pestaña. El icono es un hermano del texto y no
+        // parte de él, porque el texto se reescribe una vez por segundo.
         var clk = document.createElement("span"); clk.className = "hp-bar-clock";
+        clk.setAttribute("data-hidden", "true");
+        clk.appendChild(HPIconos.el("reloj"));
+        var clkTxt = document.createElement("span");
+        clk.appendChild(clkTxt);
         m.appendChild(msgTxt); m.appendChild(clk);
         var actLine = document.createElement("div"); actLine.className = "qj-act";
         actLine.setAttribute("data-hidden", "true");
         status.appendChild(bar); status.appendChild(m); status.appendChild(actLine);
-        sBadge.textContent = (job.status === "running" || job.status === "modeling") ? "⏳" : "…";
         // Reloj en vivo: tiempo transcurrido junto a la barra + mensaje. En el
         // mismo tic va el estado del modelo, que llega demasiado seguido como
         // para redibujar la tarjeta cada vez (ver `act` en queue.js).
         card._activeJob = job;
         var tickClock = function () {
           var j = card._activeJob; if (!j) return;
-          clk.textContent = j.startedAt ? " · ⏱ " + HPUtil.fmtDuration((Date.now() - j.startedAt) / 1000) : "";
+          var llev = j.startedAt ? HPUtil.fmtDuration((Date.now() - j.startedAt) / 1000) : "";
+          clkTxt.textContent = llev;
+          clk.setAttribute("data-hidden", llev ? "false" : "true");
           var det = HPQueueView.activityLine(j);
           actLine.textContent = det;
           actLine.setAttribute("data-hidden", det ? "false" : "true");
@@ -1585,18 +1821,20 @@
         setButtonsDisabled(buttons, false);
         status.className = "marker-status is-ok";
         status.textContent = job.msg || "✓ Listo";
+        // `syncUI` vuelve a pintar el estado desde el store, y ahí el trabajo ya
+        // es "listo" — salvo que el render haya salido y el clip no haya entrado,
+        // que es lo que `estadoDe` distingue. Así que se repinta después.
         syncUI();
+        marcarEstado(est.clase, est.palabra, est.titulo);
       } else if (job.status === "waiting") {
         // Sin tokens / límite alcanzado: se reactiva desde la pestaña Cola.
         setButtonsDisabled(buttons, false);
         status.className = "marker-status is-warn";
         status.textContent = job.msg || "⏳ Sin tokens — reactivá desde la Cola cuando se reinicie tu uso";
-        sBadge.textContent = "⏳";
       } else if (job.status === "error") {
         setButtonsDisabled(buttons, false);
         status.className = "marker-status is-error";
         status.textContent = job.msg || "Error";
-        sBadge.textContent = "⚠";
       }
     };
     // Sin job asociado (ej. se borró de la cola): re-habilita los botones.
@@ -1609,42 +1847,43 @@
       syncUI();
     };
 
-    var estimate = document.createElement("div");
-    estimate.className = "marker-estimate";
-    var times = document.createElement("div");
-    times.className = "marker-times";
-
-    // Estima los tokens de entrada de este marcador (sin llamar al modelo).
-    //
-    // Sobre el MISMO pedido que armaría el botón de al lado, con el modo que le
-    // tocaría ahora (ver buildMarkerPayload): el prompt del curso, el de la
-    // clase, las imágenes del prompt general y el prompt lean del refinado
-    // cambian el número, y un semáforo que los omite se queda corto justo en los
-    // proyectos que más contexto mandan.
+    /**
+     * Estima los tokens de entrada de este marcador (sin llamar al modelo).
+     *
+     * Sobre el MISMO pedido que armaría el botón de al lado, con el modo que le
+     * tocaría ahora (ver buildMarkerPayload): el prompt del curso, el de la
+     * clase, las imágenes del prompt general y el prompt lean del refinado
+     * cambian el número, y un semáforo que los omite se queda corto justo en los
+     * proyectos que más contexto mandan.
+     *
+     * El número vive en el `<summary>` desde la 1.6.0, así que se pide una vez al
+     * dibujar la ficha y no solo al abrirla: si esperara la apertura, la ficha
+     * plegada mostraría un hueco donde tiene que haber un dato. Lo que se ve ahí
+     * son dos piezas —el número solo, que no se cae nunca, y el desglose de
+     * imágenes y documentos, que el CSS esconde en el panel angosto—.
+     */
     function updateEstimate() {
       hpCall("estimateTokens", buildMarkerPayload(marker, modoDeGeneracion()))
         .then(function (r) {
-          if (r && r.ok) {
-            var extra = [];
-            if (r.breakdown && r.breakdown.images) extra.push(r.breakdown.images + " img");
-            if (r.breakdown && r.breakdown.resources) extra.push(r.breakdown.resources + " rec");
-            estimate.textContent = "≈ " + HPUtil.fmtTokens(r.inputTokensEst) + " tokens de entrada" + (extra.length ? " (" + extra.join(", ") + ")" : "");
-          }
+          if (!r || !r.ok) return;
+          var extra = [];
+          if (r.breakdown && r.breakdown.images) extra.push(r.breakdown.images + " img");
+          if (r.breakdown && r.breakdown.resources) extra.push(r.breakdown.resources + " rec");
+          estimate.textContent = "";
+          estimate.setAttribute("data-hidden", "false");
+          var corto = document.createElement("span");
+          corto.className = "hp-dato-corto";
+          corto.textContent = "≈ " + HPUtil.fmtTokens(r.inputTokensEst);
+          estimate.appendChild(corto);
+          var largo = document.createElement("span");
+          largo.className = "hp-dato-largo";
+          largo.textContent = " tok" + (extra.length ? " (" + extra.join(", ") + ")" : "");
+          estimate.appendChild(largo);
+          estimate.title = HPUtil.tituloDelEstimado(r, extra);
         })
         .catch(function () {});
     }
     card._updateEstimate = updateEstimate;
-
-    // Recalcular el estimado cuando cambia la instrucción.
-    instruction.addEventListener("input", debounce(updateEstimate, DEBOUNCE_MS));
-
-    actions.appendChild(genBtn);
-    actions.appendChild(regenBtn);
-    actions.appendChild(queueBtn);
-    body.appendChild(actions);
-    body.appendChild(estimate);
-    body.appendChild(times);
-    body.appendChild(status);
 
     // ── Editor de HTML manual (elegir versión → Abrir → editar → Render) ──
     var editor = document.createElement("details");
@@ -1683,7 +1922,6 @@
     eBody.appendChild(renderBtn);
     eBody.appendChild(eStatus);
     editor.appendChild(eBody);
-    body.appendChild(editor);
 
     var verSel = HPWidgets.select(verMount);
 
@@ -1736,7 +1974,70 @@
     // Refrescar la lista de versiones al abrir el editor.
     editor.addEventListener("toggle", function () { if (editor.open) refreshVersions(); });
 
+    // ── Y el cuerpo, armado con la MISMA gramática que los dos bloques de
+    //    estilo (ver cep/js/prompt-card.js) ─────────────────────────────
+    //
+    // Los tres tienen tira de referencias arriba, campo alto y barra de controles
+    // abajo. Lo único que esta ficha agrega es lo que solo ella hace: el
+    // desplegable "Avanzado" con el transcript del tramo y el editor de HTML, y el
+    // pie con las tres acciones. Los dos bloques de estilo no generan nada, así
+    // que no tienen pie.
+    ficha = HPPromptCard.montar({
+      camposClase: "marker-instruction",
+      placeholder: PLACEHOLDER,
+      micId: "marcador:" + markerKey,
+      // El dictado escribe el texto ya terminado, no pulsaciones: se guarda SIN
+      // debounce, porque esperar 300 ms es la ventana en la que se pierde si el
+      // editor se va a otra pestaña justo ahí.
+      onChange: function (texto) { guardarInstruccion(texto); },
+      // Las referencias de este marcador, enteras. `enLaLista` dice que esta ficha
+      // ES la tarjeta de la pestaña Marcadores: HPStills la encuentra en el DOM por
+      // su `markerKey` y la repinta por ahí (ver `_refrescarTira` más abajo), así
+      // que pasarle además cómo repintarse la repintaría —y le recalcularía el
+      // estimado, que es una llamada al motor— dos veces por cada archivo.
+      stills: { clave: markerKey, enLaLista: true },
+      // Los tiempos y el estimado ya NO van en un renglón del cuerpo: viven en el
+      // `<summary>`, así que se ven con la ficha plegada (ver más arriba).
+      tira: dibujarTira,
+      controles: [bgRow],
+      avanzado: [tDetails && { el: tDetails }, { el: editor }].filter(Boolean),
+      acciones: { izquierda: [regenBtn], derecha: [queueBtn, genBtn] },
+      pie: [status]
+    });
+    instruction = ficha.campo;
+    // La instrucción de la sesión pasada entra DESPUÉS de montar, y con ella hay que
+    // revisar de nuevo: `montar` ya revisó, pero con el campo todavía vacío, y este
+    // texto puede traer una mención que quedó colgada desde ayer — que es justo el
+    // caso en que el editor no se acuerda de haberla escrito.
+    instruction.value = initialInstruction;
+    ficha.revisar();
+    instruction.addEventListener("input", debounce(function () {
+      HPStore.setMarkerInstruction(markerKey, instruction.value);
+    }, DEBOUNCE_MS));
+    // Y recalcular el estimado cuando cambia la instrucción.
+    instruction.addEventListener("input", debounce(updateEstimate, DEBOUNCE_MS));
+    // Que HPStills pueda repintar la tira ENTERA de esta ficha (y no solo sus
+    // miniaturas) cuando algo cambia desde afuera: agregar una imagen propia le
+    // corre el número a todas las heredadas.
+    card._refrescarTira = function () {
+      ficha.pintarTira();
+      ficha.revisar();
+      updateEstimate();
+    };
+    var body = ficha.el;
+    // `hp-cuerpo` es el padding que comparten las tres listas; `marker-body` es
+    // lo que esta ficha tiene de propio (el alto del campo, ver la sección 9).
+    body.classList.add("marker-body");
+    body.classList.add("hp-cuerpo");
     card.appendChild(body);
+
+    // El estimado se pide una vez con la ficha PLEGADA, porque ahí es donde ahora se
+    // muestra. Antes se pedía solo al abrir, que era coherente con vivir adentro del
+    // cuerpo. Es una llamada local por marcador al cargar la secuencia (el motor
+    // corre in-process, no hay red), y al abrir se vuelve a pedir: si las
+    // referencias del proyecto todavía no habían llegado del disco cuando se dibujó
+    // la lista, el número de la apertura es el que vale.
+    updateEstimate();
 
     // Acordeón: al abrir esta tarjeta, colapsar las demás (ahorra pantalla) y
     // también plegar el setup de arriba (Preparación) para dar el máximo espacio.
@@ -1754,6 +2055,17 @@
         var s = document.getElementById(id);
         if (s) s.open = false;
       });
+      // Y el CAMPO a la vista. Con las referencias arriba del campo —que es lo que
+      // pidió el editor— el campo ya no es lo primero de la ficha, así que abrir un
+      // marcador con seis referencias adjuntas lo dejaba abajo del borde. Se abre un
+      // marcador para escribir en él; que haya que scrollear para encontrar dónde es
+      // la mitad del problema que esta etapa vino a arreglar.
+      // `block: "nearest"` y no `"center"`: si ya se ve, no se mueve nada.
+      try {
+        if (ficha && ficha.campo && ficha.campo.scrollIntoView) {
+          ficha.campo.scrollIntoView({ block: "nearest" });
+        }
+      } catch (e) {}
     });
 
     syncUI();
@@ -1771,7 +2083,7 @@
     if (markers.length === 0) {
       setOutput(ignored
         ? "La secuencia solo tiene comentarios de Frame.io (" + ignored + "), ningún marcador para animar."
-        : "La secuencia activa no tiene marcadores.", false);
+        : "La secuencia activa no tiene marcadores.", "accion");
       setHeaderStatus(HPUtil.shortenMiddle(currentSequenceName || "secuencia", 26) + " · sin marcadores", "idle",
         (currentSequenceName || "secuencia") + " · sin marcadores");
       return;
@@ -1882,16 +2194,31 @@
   btnLoadMarkers.addEventListener("click", onLoadMarkers);
 
   // ── Contador de uso de la sesión (tokens) ───────────────────────────
+  //
+  // Desde la v1.6.0 el detalle vive adentro de ⚙ y en el encabezado queda solo
+  // el MONTO. El cálculo no cambió: lo arma HPUtil.sessionUsage, donde están
+  // las trampas de cada número explicadas y probadas. Lo único que cambió es
+  // dónde se escribe cada pedazo — y que el desglose se muestra escrito en vez
+  // de vivir en un tooltip: en un diálogo que abriste para mirar el gasto,
+  // esconderlo detrás de un hover es una vuelta de más.
   var suValue = document.getElementById("su-value");
-  var suBox = document.getElementById("session-usage");
+  var suDetail = document.getElementById("su-detail");
   var suReset = document.getElementById("su-reset");
-  // La línea corta y el detalle del tooltip los arma HPUtil.sessionUsage, donde
-  // están las trampas de cada número explicadas y probadas.
+  var hdrUsage = document.getElementById("hdr-usage");
   function updateSessionUsageBar() {
-    if (!suValue) return;
     var vista = HPUtil.sessionUsage(HPStore.getSessionUsage());
-    suValue.textContent = vista.line;
-    if (suBox) suBox.setAttribute("title", vista.detail);
+    if (suValue) suValue.textContent = vista.line;
+    if (suDetail) suDetail.textContent = vista.detail;
+    // El monto se dibuja solo si hay costo informado: con Cursor (suscripción)
+    // no hay ninguno, y una pastilla vacía en el encabezado sería ancho
+    // gastado en nada.
+    if (hdrUsage) {
+      hdrUsage.textContent = vista.monto;
+      hdrUsage.setAttribute("data-hidden", vista.monto ? "false" : "true");
+      hdrUsage.setAttribute("title", vista.monto
+        ? "Gastado en esta sesión: " + vista.monto + ". El detalle está en ⚙."
+        : "Lo gastado en esta sesión. El detalle está en ⚙.");
+    }
   }
   // Al contador le suman la cola (una generación) y el micrófono, que vive en
   // otro archivo (el refinado del dictado, en su propio bolsillo). En vez de que
@@ -2132,7 +2459,7 @@
     checkWhisperStatus();
   }
 
-  // ── Indicador de Whisper local (junto al botón 🎙) ──────────────────
+  // ── Indicador de Whisper local (junto al botón de transcribir) ─────
   // Tres estados: instalado y rápido (verde), instalado pero lento (ámbar), o
   // ausente. Cuando falta, el badge NO es un cartel muerto: lleva al botón que
   // lo instala (que vive con "Preparar motor", arriba de todo).
@@ -2158,7 +2485,7 @@
         badge.textContent = "✓ " + st.tool + " · " + st.model;
         badge.title = "Whisper local rápido: “" + st.tool + "” con el modelo " + st.model +
           (st.managed ? " (lo instaló el panel, no depende del PATH)" : "") +
-          ". 🎙 transcribe sin nube y sin tokens. El modelo se cambia con HYPERPREMIERE_WHISPER_MODEL.";
+          ". Transcribe sin nube y sin tokens. El modelo se cambia con HYPERPREMIERE_WHISPER_MODEL.";
       } else if (st.available) {
         badge.className = "whisper-badge is-slow";
         badge.textContent = "⚠ " + st.tool + " (lento)";
@@ -2343,7 +2670,7 @@
       if (btnInstallWhisper) { btnInstallWhisper.textContent = "Instalar Whisper"; btnInstallWhisper.disabled = false; }
       if (res && res.ok) {
         if (ewFill) ewFill.style.width = "100%";
-        if (ewMsg) ewMsg.textContent = "✓ " + res.tool + " listo (probado con " + (res.verified || "su ejecución") + "). Ya podés usar 🎙.";
+        if (ewMsg) ewMsg.textContent = "✓ " + res.tool + " listo (probado con " + (res.verified || "su ejecución") + "). Ya podés transcribir y dictar.";
         hpLog("Whisper instalado: " + res.tool + " @ " + res.path + " · verificado con " + res.verified);
         checkWhisperStatus();
         return;

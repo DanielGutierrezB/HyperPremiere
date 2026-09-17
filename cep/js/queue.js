@@ -110,7 +110,14 @@
       correction: j.correction, storeSeqName: j.storeSeqName,
       // Cuánto tardó cada etapa: el mensaje ya lo dice, pero guardar los números
       // deja que la vista los vuelva a componer sin parsear texto.
-      _modelMs: j._modelMs, _renderMs: j._renderMs,
+      //
+      // Y el TOTAL va aparte y no se deduce sumando, por lo mismo que explica
+      // `stageBreakdown`: entre el diseño y el render el job puede haber esperado
+      // un carril libre, y colocar el clip va después. Desde la 1.6.0 hace falta
+      // guardarlo: el encabezado del trabajo terminado muestra el tiempo, así que
+      // sin esto un panel reiniciado dejaba de decir cuánto había tardado —y se
+      // notaba sólo después de reiniciar, que es cuando nadie está mirando.
+      _modelMs: j._modelMs, _renderMs: j._renderMs, _totalMs: j._totalMs,
       // Un recurso renderizado que no se pudo colocar tiene que seguir
       // ofreciendo "Colocar" mañana: la causa (estabas en otro proyecto, la
       // secuencia estaba cerrada) suele arreglarse abriendo Premiere de nuevo,
@@ -494,14 +501,31 @@
       var hayRefs = refsSt.loaded || gen.images.length || gen.docs.length;
       if (hayRefs || !(dest.stills && dest.stills.length)) {
         var mkStills = md.stills || [];
+        // Quién es cada imagen del marcador, en el MISMO orden que `mkStills`: es lo
+        // que hace que una mención escrita en la instrucción se traduzca al número
+        // que le toca en este pedido y no en otro. Se arma acá, que es el último
+        // lugar donde `stills` se decide: si se armara solo al encolar, un job que
+        // esperó en la cola mientras el editor agregaba una captura traduciría
+        // contra la lista de ayer.
+        var todosRefs = HPStore.getMarkerStillRefs(job.markerKey);
+        var mkRefs = todosRefs;
         if (dest.mode === "adjust" && Array.isArray(dest.stillsSend)) {
-          mkStills = dest.stillsSend
-            .map(function (ix) { return (md.stills || [])[ix]; })
-            .filter(function (s) { return !!s; });
+          // Los índices que el editor dejó prendidos con el 📤 filtran las DOS
+          // listas de una sola pasada: filtrarlas por separado dejaba el nombre de
+          // la imagen 2 pegado a la 3 en cuanto una se caía.
+          mkStills = [];
+          mkRefs = [];
+          dest.stillsSend.forEach(function (ix) {
+            var s = (md.stills || [])[ix];
+            if (!s) return;
+            mkStills.push(s);
+            mkRefs.push(todosRefs[ix] || { scope: "marker", name: "", use: false });
+          });
         }
         dest.stills = mkStills.concat(gen.images);
+        dest.stillRefs = mkRefs.concat(gen.refs);
         dest.assets = HPStore.getMarkerAssets(job.markerKey).concat(gen.assets);
-        dest.resources = (md.resources || []).concat(gen.docs);
+        dest.resources = HPStore.getMarkerDocs(job.markerKey).concat(gen.docs);
       }
       // Los dos niveles del estilo se releen del proyecto y no se confía en lo
       // que el job traiga: si el editor lo arregló porque las animaciones

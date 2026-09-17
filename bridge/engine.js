@@ -46,6 +46,9 @@ const cliErrors = require('./providers/cli-errors');
 const {
   buildUserPrompt, generalPromptLabel, promptLevels, objectiveLabel,
 } = require('./prompt/build-context');
+// Las MENCIONES de una referencia dentro de lo que escribió el editor
+// (`@[curso/logo.svg]`) y su traducción al número que el modelo ya entiende.
+const menciones = require('./prompt/menciones');
 const { buildObjectivePrompt } = require('./prompt/objective');
 const { renderComposition, renderLanes } = require('./render/hyperframes');
 // Conseguir una composición renderizable (escalera de llamadas al modelo) y el
@@ -680,6 +683,63 @@ function stillToDataUrl(s) {
   return null;
 }
 
+// Los cuatro campos donde el editor puede mencionar una referencia. Son los
+// mismos cuatro que tienen la tira de referencias arriba en el panel; el objetivo
+// de la clase queda afuera porque ahí no hay referencias que mencionar.
+const CAMPOS_CON_MENCIONES = ['instruction', 'adjustment', 'generalInstruction', 'sequenceInstruction'];
+
+/**
+ * Los textos del editor con las MENCIONES ya traducidas a «imagen N».
+ *
+ * Se hace acá, en el motor, y no en el panel: el número de una imagen es su
+ * posición entre las que DE VERDAD llegan al modelo, y el único que sabe si un
+ * archivo se pudo leer del disco es el que está armando la llamada. El panel
+ * avisa mientras se escribe (ver cep/js/menciones.js), pero la traducción que
+ * viaja se decide una sola vez y es ésta.
+ *
+ * `viaja(still, i)` la pone quien llama, porque el que arma el pedido ya
+ * convirtió cada imagen (y sabe cuáles fallaron) y el que estima solo mira si el
+ * archivo existe. Las dos respuestas tienen que salir de la misma cuenta que
+ * decide `stillsCount`, o el número traducido apuntaría a otra imagen.
+ *
+ * NO toca el cuerpo del pedido ni la ficha de la versión: devuelve los textos
+ * aparte. Lo que se guarda en el `.meta.json` y lo que muestra Corrections es lo
+ * que el editor ESCRIBIÓ —con su `@[curso/logo.svg]`—, porque dentro de seis meses
+ * "imagen 2" no dice qué imagen era y el nombre del archivo sí.
+ */
+function traducirMenciones(body, viaja) {
+  const idx = menciones.indice({
+    stills: body.stills,
+    stillRefs: body.stillRefs,
+    resources: body.resources,
+    viaja: viaja,
+  });
+  const textos = {};
+  const cambios = [];
+  const problemas = [];
+  const pasar = (v) => {
+    if (typeof v !== 'string' || v.indexOf('@[') === -1) return v;
+    const r = menciones.resolver(v, idx);
+    r.cambios.forEach((c) => cambios.push(c));
+    r.problemas.forEach((p) => problemas.push(p));
+    return r.texto;
+  };
+  CAMPOS_CON_MENCIONES.forEach((k) => { textos[k] = pasar(body[k]); });
+  // El ajuste local de una corrección REEMPLAZA el nivel que toca (ver
+  // promptLevels), así que si se resolviera solo el campo original la mención
+  // escrita en la fila de Corrections viajaría sin traducir.
+  const ov = body.promptOverride;
+  if (ov && typeof ov === 'object') {
+    textos.promptOverride = Object.assign({}, ov);
+    ['course', 'sequence'].forEach((k) => {
+      if (typeof ov[k] === 'string') textos.promptOverride[k] = pasar(ov[k]);
+    });
+  } else {
+    textos.promptOverride = ov;
+  }
+  return { textos, cambios, problemas };
+}
+
 // Cuánto de un documento de texto se pega en el prompt. Es contexto de estilo,
 // no la clase: un manual de marca entero son unos pocos kB y entra; una
 // transcripción de doscientas páginas pegada acá se lleva el presupuesto de
@@ -753,11 +813,20 @@ function repartirDocumentos(lista, provider) {
   const textuales = [];
   const binarios = [];
   const sinLlegar = [];
+  // Con qué nombre se ANUNCIA cada uno, desempatado cuando dos se llaman igual.
+  // Sale del mismo lugar que el de la mención (`menciones.nombresDeRecursos`) y
+  // no de `fuenteDeDocumento`, que da el nombre del archivo a secas: si el
+  // encabezado dijera «guia.pdf» y la mención «guia.pdf (del curso)», el modelo
+  // tendría que adivinar que son el mismo documento.
+  const dichos = menciones.nombresDeRecursos(lista);
   (Array.isArray(lista) ? lista : []).forEach((r, i) => {
     const f = fuenteDeDocumento(r, i);
+    const dicho = dichos[i] || f.nombre;
+    // El texto se extrae con el nombre REAL del archivo, que es el que tiene la
+    // extensión: el desempate es para leer, no para decidir si esto es un `.md`.
     const texto = textoDeDocumento(f.nombre, bytesDeDocumento(f));
-    if (texto !== null) { textuales.push({ nombre: f.nombre, texto: texto }); return; }
-    if (leeArchivos(provider)) binarios.push(f); else sinLlegar.push(f.nombre);
+    if (texto !== null) { textuales.push({ nombre: dicho, texto: texto }); return; }
+    if (leeArchivos(provider)) binarios.push(f); else sinLlegar.push(dicho);
   });
   return { textuales, binarios, sinLlegar };
 }
@@ -893,9 +962,19 @@ async function prepareGeneration(body, mode, onProgress) {
   // (capturas guardadas en _capturas — así no revientan la cuota de localStorage).
   // Normalizamos todo a data URL para que providers/saveStills funcionen igual.
   const stillsGiven = Array.isArray(stills) ? stills : [];
-  const stillsList = stillsGiven.map(stillToDataUrl).filter(Boolean);
+  // Se convierte UNA vez y se guarda el resultado por índice, no filtrado: quién
+  // se cayó es lo que decide qué número le toca a cada una de las que quedaron, y
+  // es lo que las menciones necesitan saber.
+  const stillsConvertidos = stillsGiven.map(stillToDataUrl);
+  const stillsList = stillsConvertidos.filter(Boolean);
   const stillsMissing = stillsGiven.length - stillsList.length;
   const resourcesList = Array.isArray(body.resources) ? body.resources : [];
+
+  // Las menciones del editor, traducidas contra las imágenes que de verdad van a
+  // viajar. Lo que sigue usa `dicho.*` para armar el prompt y `body`/`instruction`
+  // para la ficha: la una es lo que ve el modelo, la otra lo que escribió el editor.
+  const men = traducirMenciones(body, (s, i) => !!stillsConvertidos[i]);
+  const dicho = men.textos;
 
   report({ pct: 5, msg: 'Armando el contexto…' });
   const systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
@@ -904,11 +983,11 @@ async function prepareGeneration(body, mode, onProgress) {
   const leanPrompt = mode === 'adjust';
   let userPrompt = buildUserPrompt({
     objective, transcriptSegments: transcript, marker, markerTranscript,
-    instruction, stillsCount: stillsList.length,
+    instruction: dicho.instruction, stillsCount: stillsList.length,
     // Los dos niveles generales viajan por separado hasta acá: quién le gana a
     // quién se le dice al modelo en el prompt, no se resuelve antes.
-    generalInstruction: body.generalInstruction,
-    sequenceInstruction: body.sequenceInstruction,
+    generalInstruction: dicho.generalInstruction,
+    sequenceInstruction: dicho.sequenceInstruction,
     generalSource: body.generalSource,
     // El ajuste que el editor escribió en la fila de correcciones para ESTE
     // pedido. Se aplica adentro de build-context, que es el único lugar donde el
@@ -916,7 +995,7 @@ async function prepareGeneration(body, mode, onProgress) {
     // texto que se manda, al conteo de tokens y a la ficha) ni pisar la
     // relectura del disco de la cola, que sigue siendo la fuente de lo que el
     // editor no tocó.
-    promptOverride: body.promptOverride,
+    promptOverride: dicho.promptOverride,
     lean: leanPrompt,
   });
 
@@ -957,7 +1036,7 @@ async function prepareGeneration(body, mode, onProgress) {
       '', '## Refinamiento sobre la versión previa',
       'Ya generaste una versión de este recurso (abajo). Tomala como REFERENCIA:',
       'mantené lo que funciona y aplicá la nueva instrucción del editor sobre esa base.',
-      '', '### Nueva instrucción', (adjustment || instruction || '').trim() || '(sin detalle)',
+      '', '### Nueva instrucción', (dicho.adjustment || dicho.instruction || '').trim() || '(sin detalle)',
       '', '### Versión previa (HTML)', '```html', prevHtml || '(no disponible)', '```',
       '', 'Devolvé SOLO el HTML completo de la versión refinada.',
     ].join('\n');
@@ -1041,7 +1120,11 @@ async function prepareGeneration(body, mode, onProgress) {
   // tiene ninguna de las palabras de la lista y es el pedido más explícito que
   // existe. Antes eso no disparaba nada, y cuando sí disparaba mandaba los dos
   // primeros marcadores por orden alfabético, que rara vez eran el que pediste.
-  const contHint = ((instruction || '') + ' ' + (adjustment || '')).toLowerCase();
+  // Sobre el texto YA TRADUCIDO, no sobre el que escribió el editor: una
+  // referencia que se llame «Marcador 3.png» habría disparado la continuidad con
+  // el Marcador 3 por su nombre de archivo, y le habría metido al pedido un HTML
+  // entero que nadie pidió.
+  const contHint = ((dicho.instruction || '') + ' ' + (dicho.adjustment || '')).toLowerCase();
   const nombrados = referencedMarkerNumbers(contHint);
   const wantsContinuity = nombrados.length > 0 ||
     /(retom|continu|anterior|sigu|mism[oa]|coheren|igual que|como (el|la)|estilo|empalm|coincid|en línea con|misma línea)/.test(contHint);
@@ -1088,6 +1171,18 @@ async function prepareGeneration(body, mode, onProgress) {
     resourcesList.length + ' recursos',
     continuidadNota,
   ].join(' · ') });
+  // Qué mención se tradujo a qué número. Es el renglón que contesta la pregunta
+  // que va a aparecer la primera vez que un recurso salga apuntando a la imagen
+  // equivocada: no "hubo 3 menciones" sino el par entero, nombre → número.
+  if (men.cambios.length) {
+    report({ note: 'Menciones del editor traducidas: ' + menciones.nota(men.cambios) });
+  }
+  // Y lo que no se pudo traducir bien. Ninguno frena la generación —no se puede
+  // no generar por un typo— pero los tres cambian lo que el modelo va a leer, así
+  // que ninguno puede pasar callado.
+  if (men.problemas.length) {
+    report({ level: 'WARN', note: 'OJO con las menciones: ' + menciones.aviso(men.problemas) + '.' });
+  }
   // Pediste seguir un marcador que todavía no tiene nada generado: sin este
   // aviso, la generación sale igual y parece que la referencia no se respetó.
   if (continuidadFaltan.length) {
@@ -1349,6 +1444,13 @@ function estimateTokens(body) {
 
     // Lo que de verdad va a viajar de este pedido, contestado por quien lo arma.
     const imagenes = stills.filter(imagenViaja);
+    // Las menciones también se traducen para estimar: «@[curso/logo-platzi.svg]»
+    // y «imagen 2» no miden lo mismo, y este número promete ser el del cuerpo que
+    // se manda. Se resuelve contra la MISMA pregunta que usa la generación (¿está
+    // el archivo?), así que el número que se le muestra al editor sale de la misma
+    // cuenta que el que va a leer el modelo.
+    const men = traducirMenciones(body, (s) => imagenViaja(s));
+    const dicho = men.textos;
     const assetInfos = assets.filter(imagenViaja)
       .map((s, i) => ({ name: nombreDeAsset(mimeDeImagen(s), i), w: null, h: null }));
     // El proveedor decide si un PDF viaja o no, así que decide cuánto cuesta.
@@ -1366,20 +1468,20 @@ function estimateTokens(body) {
         transcriptSegments: transcript,
         marker,
         markerTranscript,
-        instruction: body.instruction || '',
+        instruction: dicho.instruction || '',
         // Los prompts generales entran en la llamada de verdad, así que entran
         // acá: el semáforo de tokens que los omitía quedaba corto justo en los
         // proyectos que más contexto mandan.
-        generalInstruction: body.generalInstruction || '',
+        generalInstruction: dicho.generalInstruction || '',
         // Tal cual vinieron, sin coercionar: que el nivel de la secuencia FALTE
         // —y no que esté vacío— es lo que delata a un job anterior a la 1.5.0, y
         // el prompt de ésos sale distinto (ver promptLevels en build-context).
         // Rellenarlo con "" acá era estimar un pedido que no es el que viaja.
-        sequenceInstruction: body.sequenceInstruction,
+        sequenceInstruction: dicho.sequenceInstruction,
         generalSource: body.generalSource,
         // Un ajuste local cambia el tamaño del pedido, así que también cambia el
         // semáforo: el estimado tiene que contar el prompt que se va a mandar.
-        promptOverride: body.promptOverride,
+        promptOverride: dicho.promptOverride,
         // Las que VIAJAN: el prompt numera "imagen 1, imagen 2…" y numerar una
         // que no está sería nombrarle al modelo algo que no va a recibir.
         stillsCount: imagenes.length,
@@ -1413,6 +1515,30 @@ function estimateTokens(body) {
         docsPasted: docs.textuales.length,
         docsAsFiles: docs.binarios.length,
         docsNotTraveling: docs.sinLlegar.length,
+      },
+      // Lo que le pasó a cada mención EN ESTE CUERPO, el que se acaba de contar.
+      //
+      // Va acá y no en una llamada propia porque la tarjeta ya pregunta el estimado
+      // con cada tecla: preguntar aparte sería una segunda llamada por el mismo
+      // cuerpo, y una segunda cuenta que se podría desincronizar de la primera.
+      //
+      // Y viene YA REDACTADO (`nota` y `aviso`, las mismas dos frases del ⬇ Log)
+      // porque el consumidor es el globo del estimado en la ficha del marcador, que
+      // no puede redactarlo: la gramática de las menciones del panel vive en
+      // globales de navegador y ésta en Node (ver `aviso` en prompt/menciones.js).
+      // Son las dos mitades de la promesa del estimado —«se arma con el mismo
+      // cuerpo que se le manda al modelo»—: con qué número le llega cada mención, y
+      // cuál no le va a llegar.
+      //
+      // Lo que NO hace el panel con esto es un segundo renglón de aviso: el fuerte
+      // ya existe y sale mientras se escribe, sin esperar al motor
+      // (`HPMenciones.revisar`). Dos redacciones del mismo hecho en la misma ficha,
+      // llegando en momentos distintos, es el bug que se acaba de sacar de encima.
+      menciones: {
+        traducidas: men.cambios.map((c) => ({ nombre: c.nombre, en: c.en })),
+        problemas: men.problemas,
+        nota: menciones.nota(men.cambios),
+        aviso: menciones.aviso(men.problemas),
       },
     };
   } catch (e) {

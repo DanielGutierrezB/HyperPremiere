@@ -57,6 +57,21 @@ URL tal cual. `referenciasLocales`, en cambio, se siembra con la API pública de
 escenarios de abajo es exactamente lo que se encontraría en la máquina de un
 editor que actualiza.
 
+Las **menciones** de las instrucciones son datos falsos con una condición: los
+nombres tienen que existir. Una mención se resuelve por el **nombre del archivo**
+(`@[curso/manual-de-marca-nova.png]`, ver `bridge/prompt/menciones.js`), así que las
+de `datos.js` caen sobre los `name` de `imagenes`, `referenciasCurso` y
+`referenciasSecuencia`. Están sembrados los cinco casos que definen si la función
+sirve o miente, uno por marcador, para poder mirarlos sin armar nada:
+
+| marcador | qué muestra |
+| --- | --- |
+| 1 | una del **curso** y una de **su clase** en la misma instrucción |
+| 3 | una mención en **medio de una frase** (así se escribe de verdad) |
+| 5 | una imagen que el manifiesto nombra y el disco **no tiene** (`falta: true`) |
+| 8 | un **documento** mencionado (un PDF del curso) |
+| 11 | **sin menciones** pero con referencias, y con un "como en la imagen 2" en texto plano |
+
 Un campo que vale la pena conocer: el `contexto` de cada recurso de
 `correcciones`. Es lo que la ficha `.meta.json` guardó de los tres niveles cuando
 ese recurso se generó, y decide cuál de los dos casos muestra la fila. Con un
@@ -94,6 +109,127 @@ se combinan con coma (`?e=whisper,otra-secuencia`):
 | `?e=cursor-sin-sesion` | el caso del editor: el CLI está instalado y falta el login — ⚙ nombra a **Cursor** (no a Claude) y da el comando con la ruta completa |
 | `?e=cursor-sin-cli` | el binario no está (`spawn cursor-agent ENOENT`): otro cartel, con el comando de instalación, y el Diagnóstico arma la ficha igual diciendo dónde buscó |
 | `?e=cursor-sin-cupo` | hay credencial y la cuenta no tiene cupo: ⚙ en **ámbar**, ni verde (mentiría) ni rojo (no falta configurar nada) |
+
+## Sacar las capturas del interior de la ficha
+
+```
+node test/manual/panel-demo/capturar-ficha.js
+```
+
+Deja en `capturas-1.6.0/` los PNG de la ficha **cerrada**, **abierta**, con
+**menciones**, con una mención **colgada**, con un **documento** mencionado, los dos
+bloques de **estilo**, y el micrófono en sus tres estados (**listo** en verde,
+**escuchando** en rojo, **apagado** donde no se puede dictar), a 400 y a 320 px.
+`--anchos 400` y `--alto 900` los cambian.
+
+Es lo único que puede decir si una tira de referencias envuelve bien, si el aviso de
+una mención colgada se lee, y si el verde se distingue del rojo. Lo que sí se mide con
+número está en `medir-botones.js` y en `temas/estudiado/auditar.js`.
+
+Y **falla** si la página tira un error de JS en vez de sacar la foto de un panel roto,
+que es justo la foto que uno mira y da por buena. El 404 del favicon —que el servidor de
+la maqueta no tiene— no cuenta.
+
+El **antes** de esta etapa son los `v160-marcadores-*.png` de esa misma carpeta: los
+sacó la etapa 1 desde su propio estado, que es exactamente el estado previo a esto, y no
+se pueden volver a sacar (la etapa 1 nunca se commiteó).
+
+## Los temas en prueba, y el que ya no está
+
+`temas/<nombre>/tema.css` se carga DESPUÉS del CSS del panel, así que un tema solo
+pisa lo que redefine, y se prueba con `?tema=<nombre>`. Quedan dos exploraciones,
+`platzi` y `premiere`.
+
+El tercero, `estudiado`, **se fue**: la etapa 1 lo plegó adentro de
+`cep/css/style.css`, o sea que dejó de ser una propuesta encima del panel para ser el
+panel. Dejarlo era pedir un accidente, y pasó: cargarlo con `?tema=estudiado`
+aplicaba dos veces la misma hoja, y su copia vieja de `textarea { color: … }` le
+tapaba el texto al campo del marcador —que ahora dibuja su texto en un espejo detrás—.
+Se fue con él su `capturar.js` de "antes y después", porque el "después" que sacaba ES
+lo publicado. El antes y el después de la etapa 1 son los `v153-*` y `v160-*` de
+`capturas-1.6.0/`, sacados de dos checkouts de git y no de una hoja encima.
+
+## Sacar las capturas de la Cola y de Corrections
+
+```
+node test/manual/panel-demo/capturar-listas.js --prefijo antes
+…se cambia el código…
+node test/manual/panel-demo/capturar-listas.js --prefijo despues
+```
+
+Las dos listas que no son la de marcadores, a 400 y a 320 px: la cola con los
+**siete estados a la vez**, la ronda de feedback de un trabajo terminado, las
+filas de Corrections y una fila abierta con su contexto y su HTML.
+
+El `--prefijo` es obligatorio a propósito: con un nombre por defecto la segunda
+corrida pisaría la primera y no habría antes contra qué comparar. Y el viewport
+es **alto** (1500 px) y no los 700 de la maqueta: la pregunta que estas fotos
+contestan es si la cola se puede barrer, y con 700 px entran tres trabajos.
+
+## Medir cuánto ocupa una lista, sobre las capturas
+
+```
+node test/manual/panel-demo/medir-capturas.js antes-cola-400 despues-cola-400
+```
+
+Abre el PNG en un `<canvas>` y busca la última fila de píxeles que no es el fondo
+del panel: da cuánto ocupa todo lo que la pestaña dibuja, con los mismos datos
+falsos y el mismo ancho en las dos fotos.
+
+Existe por un motivo puntual: las tres etapas de la 1.6.0 se hicieron sobre el
+árbol sin commitear, así que el **antes** de cada una no se puede volver a medir
+con `auditar.js` —ese código no está en ningún commit—. Lo único que queda del
+antes son las capturas, y una captura sí se puede medir. No reemplaza a
+`auditar.js`, que mide fila por fila sobre el DOM.
+
+## Medir los chips de mención (es lo único que puede salir mal)
+
+```
+node test/manual/panel-demo/medir-chips.js
+```
+
+El campo muestra `@Imagen_1` y guarda `@[curso/manual-de-marca-nova.png]`, y es un
+`contenteditable` que imita la interfaz de un textarea (ver `cep/js/campo.js`).
+Mide, en los **tres** campos con menciones —la instrucción de un marcador, la ronda
+de feedback de la Cola y la corrección de una fila— y a 320 / 400 / 600 / 900 px:
+
+* que el **número del chip** sea el que le toca, contado sobre la tira que está
+  arriba del campo (o sea contra otra fuente, no contra la misma función);
+* que **`value` siga siendo el texto canónico**, carácter por carácter, con Chromium
+  editando de verdad;
+* que el **preview** aparezca y caiga **arriba** del chip (abajo taparía el renglón
+  que se está escribiendo);
+* que **Backspace se lleve el token entero** y no deje medio token suelto;
+* que **tecleando no se redibujen** los chips (se comprueba por identidad del nodo:
+  si se recreó, se perdió el undo nativo);
+* que el **doble clic** abra un `<input>` de verdad —con el foco puesto y el número
+  SELECCIONADO, que es lo único que prueba que la edición no es simulada: un
+  `selectionEnd` no existe en algo que no es un control de formulario—, que sus
+  flechas y su Backspace sean nativos y no se lleven el chip, que **repunte** el chip
+  al número que se escribe, que un número que no existe **quede en rojo** con ese
+  número (y no se deshaga), y que ese rojo **se arregle** reabriendo con el número
+  que se había escrito;
+* que **borrar un chip se pueda DESHACER**: el undo lo lleva el navegador y no se le
+  puede empujar nada a mano, así que el borrado se hace pasar por su comando de
+  edición para que entre en su pila. Acá se borra con el teclado, se pide el undo y
+  se mira si el chip volvió;
+* y el **menú del `@`**: que se abra tecleando, que filtre (con una consulta sacada
+  del nombre de la primera fila, así la cuenta esperada se compara exacta), que no
+  quede cortado en ningún ancho, y que el **Enter** con el que se elige no deje un
+  salto de línea en la instrucción.
+
+Acá vivía `medir-espejo.js`, que medía si el ESPEJO de resaltado cortaba las líneas
+en el mismo lugar que el campo. Ese mecanismo no existe más: un chip dice OTROS
+caracteres que el texto guardado, así que no hay nada que alinear.
+
+Es lo que encontró los dos defectos reales que tuvieron estas etapas, y ninguno de
+los dos lo podía ver un test del repo. El chip se editaba volviéndolo
+`contenteditable`, y con el foco puesto ahí Chromium le entregaba el Backspace y el
+Enter al campo de AFUERA — así que "borrar el número" borraba el chip entero y
+"confirmar" metía además un salto de línea en la instrucción. Y el menú del `@`
+elegía de qué lado abrirse pero no se **acotaba** al hueco: a 320×700, con el campo a
+media altura, quedaban 132 px abajo y el menú medía 232, así que "hay lugar abajo"
+era verdad y el menú igual salía 18 px por debajo del borde.
 
 ## Medir el encabezado (no mirarlo a ojo)
 

@@ -169,16 +169,31 @@
     };
   }
 
-  /** Las que le van a llegar al modelo por este contexto: primero el curso. */
+  /**
+   * Las que le van a llegar al modelo por este contexto: primero el curso.
+   *
+   * `refs` va PARALELO a `images` y dice de qué nivel salió cada una, cómo se
+   * llama y si se incrusta. Es lo que deja que una mención escrita en la
+   * instrucción (`@[curso/logo.svg]`) se traduzca al número correcto en el momento
+   * de mandar, sin que el editor tenga que contar (ver bridge/prompt/menciones.js).
+   * El nombre que viaja es el del ARCHIVO y no el que puso el editor: es el que se
+   * ve en la carpeta del proyecto, el que la otra máquina también ve, y el único
+   * que la carpeta garantiza único.
+   */
   function paraElModelo(st) {
-    var out = { images: [], assets: [], docs: [] };
-    [st.course, st.sequence].forEach(function (lista) {
-      (lista || []).forEach(function (it) {
+    var out = { images: [], refs: [], assets: [], docs: [] };
+    [["course", st.course], ["sequence", st.sequence]].forEach(function (par) {
+      (par[1] || []).forEach(function (it) {
         if (it.kind === "image") {
           out.images.push(it.file);
+          out.refs.push({ scope: par[0], name: it.fileName || it.name, use: !!it.use });
           if (it.use) out.assets.push(it.file);
         } else {
-          out.docs.push({ name: it.name, path: it.file, mediaType: it.mediaType });
+          out.docs.push({
+            name: it.name, path: it.file, mediaType: it.mediaType,
+            // De qué nivel es, para poder mencionarlo sin ambigüedad.
+            scope: par[0], fileName: it.fileName || it.name
+          });
         }
       });
     });

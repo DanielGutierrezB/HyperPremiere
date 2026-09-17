@@ -1,0 +1,2 @@
+/* Platzi Sinapsis — corner radius scale. Source: design-tokens/inputs/sinapsis/radius.json */
+:root{--sin-radius-xs:4px;--sin-radius-sm:6px;--sin-radius-md:8px;--sin-radius-lg:10px;--sin-radius-xl:12px;--sin-radius-2xl:14px;--sin-radius-3xl:16px;--sin-radius-4xl:20px;--sin-radius-full:999px}

@@ -10,3 +10,11 @@ node_modules
 .env
 dist/
 *.zxp
+
+# Las capturas de pantalla de la maqueta: se regeneran con
+# `test/manual/panel-demo/capturar-*.js` cuando se las necesita para mirar un
+# cambio, y pesan megas. No van al repo por una razón concreta y no por prolijidad:
+# una instalación EMPAQUETADA se actualiza bajando el zip del repo desde codeload
+# (ver «Empaquetar el ZXP» en el README), así que cada MB acá lo paga cada editor
+# en cada update — y estas imágenes no le sirven a ninguno.
+test/manual/panel-demo/capturas-*/

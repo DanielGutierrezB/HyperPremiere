@@ -1,0 +1,1915 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   HyperPremiere · PROPUESTA DE TEMA — Platzi (Sinapsis)
+
+   Esto NO es el panel. Es una hoja que la maqueta carga DESPUÉS de
+   `cep/css/style.css` cuando pedís `?tema=platzi`, así que solo pisa lo que
+   acá abajo se redefine. Sin `?tema=` no se carga nada y se ve la interfaz
+   publicada, intacta. No se tocó ni una línea de `cep/`.
+
+   La fuente de verdad es el skill `platzi-sinapsis-design`. De ahí salen, sin
+   editar, los cinco archivos de `tokens/` y los cinco `.woff2` de
+   `assets/fonts/`, más el isotipo de `assets/platzi-isotype-solid.svg`.
+
+   Tres decisiones que conviene saber antes de leer el resto:
+
+   1. Dark-first sin `data-theme`. `tokens/colors.css` de Sinapsis ya trae el
+      esquema oscuro en `:root`, que es justo lo que quiere un panel que vive
+      adentro de Premiere. No hace falta ningún atributo en el <html>, que es
+      bueno porque el <html> lo escribe `cep/index.html` y no se puede tocar.
+
+   2. Las fuentes van LOCALES (`tokens/fonts.css` + los woff2 del skill) y no
+      por Google Fonts. Dos motivos: el panel corre embebido en Premiere, donde
+      no se puede dar por hecha la conexión (y ya hay evidencia de eso: el
+      `index.html` pide DM Sans a fonts.googleapis.com y cuando no hay red
+      simplemente no llega), y la fuente de iconos del skill está SUBSETEADA a
+      los ~293 iconos del producto, con `font-display: block` para que no
+      parpadee el nombre de la ligadura. Eso último no se consigue con el CSS
+      público de Google Fonts.
+
+   3. NADA de `color-mix()`. El skill define las capas de estado con
+      `color-mix` (hover 8% / foco 12% / presionado 16%), pero el panel real
+      corre en CEF 99 = Chromium 99 y `color-mix()` llegó en Chrome 111. Las
+      mismas capas se implementan acá con un `::after` del color "on" a
+      `opacity: var(--sin-state-*)` —los tokens son porcentajes, y `opacity`
+      acepta porcentajes desde Chrome 78—, así que el número no se retipea
+      NUNCA y encima anda en el runtime de verdad. Los tintes de reposo usan
+      los roles `*-container`, que son opacos y ya existen como token.
+
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Los tokens del skill, copiados sin editar ─────────────────────────────
+   No se importa `base.css`: pone `body { font-size: 16px; line-height: 24px }`
+   y este panel mide 400 px de ancho. Su equivalente está más abajo, con las
+   clases de tipografía de abajo de la escala. */
+@import url("tokens/colors.css");
+@import url("tokens/typography.css");
+@import url("tokens/spacing.css");
+@import url("tokens/radius.css");
+@import url("tokens/fonts.css");
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1. EL PUENTE — las variables del panel, apuntadas a roles de Material 3
+
+   El panel ya tenía sus propias custom properties y las usa en casi todos
+   lados. Reapuntarlas es lo que convierte de una sola vez la mayor parte de la
+   interfaz, sin repetir selector por selector. Lo que queda después son los
+   hexadecimales que el panel escribió a mano (unos ochenta), y esos se pisan
+   uno por uno más abajo.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Superficies: la escalera de contenedores de Sinapsis. `surface` es el
+     fondo de la página; cada escalón sube un paso de elevación-por-color, que
+     es como Sinapsis hace profundidad en oscuro (sombras, casi nada). */
+  --bg-base: var(--sin-surface);                       /* #121413 */
+  --bg-panel: var(--sin-surface-container-low);        /* encabezado, pestañas */
+  --bg-surface: var(--sin-surface-container);          /* tarjetas */
+  --bg-surface-hover: var(--sin-surface-container-high);
+  --bg-inset: var(--sin-surface-container-lowest);     /* campos, hundido */
+
+  /* Texto. Sinapsis tiene dos roles de texto sobre superficie y el panel usa
+     tres. El tercero ("muted") se resuelve con `--sin-outline`: es el rol de
+     gris medio del sistema y lee mejor que bajarle alfa al de arriba. */
+  --text-primary: var(--sin-on-surface);
+  --text-secondary: var(--sin-on-surface-variant);
+  --text-muted: var(--sin-outline);
+
+  /* Los dos bordes de Sinapsis, cada uno con su trabajo: `outline` identifica
+     controles (campos, botones delineados) y `outline-variant` separa
+     contenido (divisores, hairlines de tarjeta). No se mezclan con nada. */
+  --hairline: var(--sin-outline-variant);
+  --hairline-strong: var(--sin-outline);
+
+  /* El acento. El azul del panel pasa a ser el verde menta de Platzi. */
+  --accent: var(--sin-primary);
+  --accent-dim: var(--sin-primary-container);
+  /* El panel usaba `--accent-glow` para resplandores de 1 px y de 12 px.
+     Sinapsis no resplandece: el foco es un contorno de 2 px y el primario da
+     su respuesta física (se levanta 1 px). Se apaga acá y se reemplaza abajo. */
+  --accent-glow: transparent;
+
+  /* Los estados con significado, mapeados a los roles semánticos de M3.
+     Ver la sección 5 para el mapa completo y por qué. */
+  --error: var(--sin-error);
+  --ok: var(--sin-success);
+  --warn: var(--sin-warning);
+
+  /* Radios. Contenedores en `lg` y controles en `md`; los botones y los chips
+     se pasan a píldora (`full`) uno por uno, porque `--radius-sm` también lo
+     usan los textarea y un textarea con forma de píldora no existe. */
+  --radius: var(--sin-radius-lg);       /* 10 px */
+  --radius-sm: var(--sin-radius-md);    /*  8 px */
+
+  /* Movimiento, tal como lo pide el skill: 140-180 ms `ease` para color. */
+  --ease: 160ms ease;
+
+  /* Sombras: la receta del skill (card elevated y raised) expandida a mano,
+     porque su `color-mix` sobre `--sin-shadow` no existe en CEF 99. El color
+     es el del token (`--sin-shadow` es #000000) y los porcentajes son los
+     documentados: 30/15 en reposo, 30/18 en lo que flota. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 1px 3px rgba(0, 0, 0, 0.15);
+  --shadow-pop: 0 4px 8px rgba(0, 0, 0, 0.30), 0 8px 24px rgba(0, 0, 0, 0.18);
+
+  /* Dos variables que el panel usa con `var(--x, respaldo)` y nunca definió.
+     Definirlas acá mata seis respaldos en rgba() de una sola vez. */
+  --border: var(--sin-outline);
+  --bg-input: var(--sin-surface-container-lowest);
+
+  /* ── Propias del tema ──────────────────────────────────────────────────
+     Las clases de tipografía de Sinapsis, apretadas al presupuesto de un
+     panel de 400 px. Se eligieron las de ABAJO de cada escala; donde incluso
+     la de abajo seguía siendo más grande que lo que hay, se conservó la
+     familia, el peso y el tracking de esa clase y se bajó el tamaño a los px
+     que el panel ya usaba. Está anotado en cada una. */
+  --hp-title: 600 13px/18px var(--sin-font-display);   /* .sin-title-sm 14/20 → 13/18 */
+  --hp-label: 600 12px/16px var(--sin-font-body);      /* .sin-label-md, tal cual */
+  --hp-label-plain: 400 12px/16px var(--sin-font-body); /* .sin-label-sm, tal cual */
+  --hp-label-xs: 500 11px/16px var(--sin-font-body);   /* .sin-label-xs, tal cual */
+  --hp-note: 400 11px/16px var(--sin-font-body);       /* .sin-label-sm a 11 px */
+  --hp-body: 400 12px/18px var(--sin-font-body);       /* .sin-body-sm 14/24 → 12/18 */
+  --hp-mono: 400 11px/17px var(--sin-font-mono);       /* .sin-mono-md 14/20 → 11/17 */
+
+  /* Movimiento de cosas que se mueven (no de color). */
+  --hp-move: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. TIPOGRAFÍA
+
+   Plus Jakarta Sans para cuerpo y etiquetas, Bricolage Grotesque para
+   títulos, IBM Plex Mono para código y números. Y algo que no es tamaño sino
+   voz: el skill dice "sentence case en todo, ALL-CAPS solo en etiquetas
+   diminutas". El panel gritaba en versalitas en seis lugares (rótulos de
+   campo, títulos de sección, cabeceras de la ayuda y de la cola, el resumen
+   de sesión); todos pasan a caja normal. Es lo que más cambia la cara del
+   panel y no cuesta ni un píxel.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+body {
+  font: var(--hp-body);
+  letter-spacing: 0.1px;
+  background-color: var(--sin-surface);
+  color: var(--sin-on-surface);
+}
+
+/* Rótulo de campo: `.sin-label-xs`, en caja normal y en el gris de texto
+   secundario (antes era el gris más apagado y en versalitas: se leía como
+   decoración y no como el nombre del campo). */
+.field-label,
+.corr-level-label {
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  text-transform: none;
+  color: var(--sin-on-surface-variant);
+}
+
+/* Títulos de sección con la cara display. Es el trabajo de Bricolage en
+   Sinapsis y es lo que le da jerarquía al panel sin agrandar nada. */
+.section-label,
+.help-head,
+.queue-head,
+.help-section > summary,
+.context-section > summary,
+.section-title {
+  font: var(--hp-title);
+  letter-spacing: 0.1px;
+  text-transform: none;
+  color: var(--sin-on-surface);
+}
+
+/* La barra de la izquierda del rótulo "Marcadores" se va: Sinapsis no marca
+   secciones con barritas de acento, las marca con la tipografía. */
+.section-label::before { display: none; }
+.section-label {
+  padding-bottom: var(--sin-space-4);
+  border-bottom: 1px solid var(--sin-outline-variant);
+}
+
+/* Texto de apoyo, notas y estados de una línea. */
+.muted,
+.qj-msg,
+.qj-act,
+.marker-estimate,
+.marker-times,
+.qj-fb-hint,
+.mic-state,
+.mic-meter-text,
+.corr-level-hint,
+.corr-prompts-note,
+.queue-filter-note,
+.general-source {
+  font: var(--hp-note);
+  letter-spacing: 0.4px;
+  color: var(--sin-outline);
+}
+
+/* Los números no bailan. `mono-md` es la cara de CÓDIGO del sistema, así que
+   se la queda el código y los dos relojes (que cambian cada segundo y no
+   pueden mover al vecino); todo el resto de lo tabular se resuelve con las
+   cifras de ancho fijo de Plus Jakarta Sans, que además es bastante más
+   angosta que IBM Plex Mono —y eso, en un panel de 320 px, se nota. */
+.qj-clock,
+.hp-bar-clock,
+.corr-cross-val { font-family: var(--sin-font-mono); }
+
+.marker-meta,
+.qj-msg,
+.qj-clock,
+.hp-bar-clock,
+.session-usage,
+.corr-when,
+.marker-estimate,
+.marker-times,
+.corr-second,
+.mic-meter-text,
+.offset-input,
+.corr-fix input[type="number"] { font-variant-numeric: tabular-nums; }
+
+/* Código: IBM Plex Mono, la única familia mono del sistema. */
+.output,
+.code-edit .code-hl,
+.code-edit .code-input,
+.login-manual-how code,
+code {
+  font: var(--hp-mono);
+  letter-spacing: 0.1px;
+}
+
+.login-manual-how code {
+  background: var(--sin-surface-container-highest);
+  color: var(--sin-on-surface);
+  border-radius: var(--sin-radius-xs);
+  padding: 1px 4px;
+}
+
+/* Prosa de la ayuda: es el único lugar del panel donde se lee de verdad, así
+   que se queda con `.sin-body-sm` completo (14/24 no entra, 12/18 sí). */
+.help-body p,
+.corr-brief,
+.qp-msg,
+.seq-notice,
+.general-conflict-title,
+.corr-cross {
+  font: var(--hp-body);
+  letter-spacing: 0.1px;
+}
+
+.help-body strong { color: var(--sin-on-surface); font-weight: 600; }
+
+/* Selección de texto. El skill la quiere al 30 % del primario; sin
+   `color-mix` en CEF 99 se usa el rol `primary-container`, que es el tinte
+   opaco equivalente del sistema. */
+::selection {
+  background: var(--sin-primary-container);
+  color: var(--sin-on-primary-container);
+}
+.code-edit .code-input::selection {
+  background: var(--sin-primary-container);
+  color: transparent;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3. ICONOS — Material Symbols Rounded como fuente de ligaduras
+
+   El skill prohíbe los emoji como icono y prohíbe dibujar SVG de iconos. El
+   panel hace las dos cosas: ocho emoji escritos en el JS (que no se puede
+   tocar) y dos SVG a mano en el HTML (que tampoco).
+
+   Lo que se hizo, desde CSS y nada más:
+
+   a) Donde el glifo es TODO el contenido del elemento (⚙, ⟳, ⬇, 🎙 del
+      dictado, ✨, ✕, ▾), se le pone `font-size: 0` al elemento y el icono se
+      dibuja en su `::before`. Si el glifo cambia con el estado, el icono
+      también: cada estado tiene su clase, así que `.mic-btn.is-rec` dibuja un
+      cuadrado de "parar" y `.is-busy` los tres puntos de "esperá".
+
+   b) Donde el emoji es el PRIMER carácter de una etiqueta que sigue con
+      palabras ("⟲ Regenerar desde cero"), se usa `::first-letter {
+      font-size: 0 }`. Eso saca exactamente el glifo y deja la palabra: medido
+      en la maqueta, un botón de 76,8 px con "🎙 Transcribir" pasa a 61,8, o
+      sea los 15,0 px que mide el emoji a 12 px y ni uno más. El requisito es
+      que el elemento sea un contenedor de bloque, así que esos botones pasan
+      de `inline-flex` a `inline-block` (son todos de un solo nodo de texto,
+      no pierden nada).
+
+   c) Donde el mismo selector recibe etiquetas que a veces empiezan con glifo
+      y a veces con letra, no se toca NADA: comerse la "l" de "limpiar
+      terminados" sería peor que el emoji. La lista de los que quedaron así
+      está en el reporte.
+
+   Los nombres de ligadura se verificaron contra el subset que trae el skill
+   (renderizar un nombre que no está da el texto crudo). Quedaron afuera, y
+   por eso no se usan: stop_circle, photo_camera, help, restart_alt,
+   cleaning_services, playlist_add.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* La receta de `.sin-icon` de `tokens/typography.css`, puesta en los
+   pseudo-elementos porque el HTML del panel no puede llevar el <span>. */
+#btn-config::before,
+#btn-help::before,
+#btn-mic-refresh::before,
+.icon-btn::before,
+.btn-log .dl-ico::before,
+.update-icon::before,
+.hps-arrow::before,
+.mic-btn::before,
+.mic-refine-ico::before,
+.hdr-mic .hps-trigger::before,
+.resource-icon::before,
+.still-missing::before,
+.still-remove::before,
+.resource-remove::before,
+#btn-load-markers::before,
+#btn-generate-all::before,
+#btn-queue-ready::before,
+#tab-markers::before,
+#tab-queue::before,
+#tab-corrections::before,
+#btn-transcribe-seq::before,
+.btn-add-still::before,
+.qbtn-react::before,
+.qbtn-fresh::before,
+.qbtn-stage::before,
+.queue-start::before,
+.queue-react::before,
+.queue-clear.is-danger::before,
+.still-tag.is-use::before,
+.still-send.is-on::before,
+.qj-title::before,
+.whisper-badge::before,
+.cfg-summary.is-ok::before,
+.cfg-summary.is-warn::before,
+.cfg-summary.is-cupo::before,
+.section-state.is-ok::before,
+.qs-ctx.is-ready::before,
+.qs-ctx.is-working::before,
+.help-section > summary::after,
+.context-section > summary::after,
+.login-manual > summary::before,
+.transcript-details > summary::before,
+.html-editor > summary::before {
+  font-family: "Material Symbols Rounded";
+  font-weight: 400;
+  font-style: normal;
+  /* `wght` 400, que es el de `.sin-icon`. No es cosmético: el eje de peso de
+     Material Symbols también mueve el AVANCE del glifo (el `close` mide 1 em a
+     400 y 1,307 a 500), y con 500 los iconos de 14 px que viven en los botones
+     de 16 × 16 de una miniatura se salían 3 px de su caja. Medido. */
+  font-variation-settings: 'FILL' 0, 'wght' 400;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  line-height: 1;
+}
+
+/* (a) Iconos que reemplazan todo el contenido del elemento ─────────────── */
+
+/* Los cinco botones cuadrados del panel: ⚙ ? ✕ ↻. El único que se repite es
+   el ✕ (cerrar la ayuda, cerrar ⚙, cancelar un diálogo), así que ése es el
+   predeterminado y los otros tres van por id. */
+.icon-btn { font-size: 0; }
+.icon-btn::before { content: "close"; font-size: 20px; }
+#btn-config::before { content: "settings"; }
+#btn-help::before { content: "quiz"; }
+#btn-mic-refresh::before { content: "refresh"; }
+
+.btn-log .dl-ico { font-size: 0; }
+.btn-log .dl-ico::before { content: "download"; font-size: 18px; }
+
+.update-icon { font-size: 0; }
+.update-icon::before { content: "refresh"; font-size: 18px; }
+
+/* El ▾ de todos los desplegables propios. Sigue rotando 180° al abrir, que es
+   la regla que ya tenía el panel. */
+.hps-arrow { font-size: 0; }
+.hps-arrow::before { content: "expand_more"; font-size: 18px; }
+
+/* El micrófono del dictado. Cuatro estados, cada uno con su clase, así que
+   cada uno dice lo suyo: apagado ya no es un micrófono gris sino un micrófono
+   TACHADO, y "esperá" son los tres puntos y no un emoji distinto. */
+.mic-btn { font-size: 0; }
+.mic-btn::before { content: "mic"; font-size: 18px; }
+.mic-btn.is-off::before { content: "mic_off"; }
+.mic-btn.is-busy::before { content: "pending"; }
+.mic-btn.is-rec::before { content: "square"; font-variation-settings: 'FILL' 1, 'wght' 400; }
+
+/* El ✨ de refinar. La palabra "Refinar" vive en otro span y no se toca. */
+.mic-refine-ico { font-size: 0; }
+.mic-refine-ico::before { content: "auto_awesome"; font-size: 18px; }
+.mic-refine.is-busy .mic-refine-ico::before { content: "pending"; }
+/* El botón sí queda `inline-flex`: tiene dos hijos (icono y palabra), así que
+   recupera el `gap` que se le saca al resto de la familia `.mic-btn`. */
+.mic-refine { gap: var(--sin-space-4); }
+.mic-refine .mic-refine-txt { font: var(--hp-label); letter-spacing: 0.3px; }
+
+/* El 🎙 del desplegable de micrófono del encabezado ya era un pseudo-elemento
+   del propio panel: solo hay que cambiarle el contenido. */
+.hdr-mic .hps-trigger::before { content: "mic"; font-size: 18px; }
+
+/* Los adjuntos que no son imagen (📄 / 📎) y el hueco de la referencia que el
+   disco ya no tiene ("?"). El pdf y el genérico comparten icono: el JS no los
+   distingue con una clase. */
+.resource-icon { font-size: 0; }
+.resource-icon::before { content: "description"; font-size: 16px; }
+.resource-chip.is-missing .resource-icon::before { content: "warning"; }
+.still-missing { font-size: 0; }
+.still-missing::before { content: "warning"; font-size: 20px; color: var(--sin-warning); }
+
+.still-remove,
+.resource-remove { font-size: 0; }
+/* Cajas de 16 × 16 y de 14 × 14 que dibuja el JS: el icono entra justo y no
+   más, así que acá el piso de 20 px del skill es imposible sin tocar el HTML. */
+.still-remove::before { content: "close"; font-size: 14px; }
+.resource-remove::before { content: "close"; font-size: 12px; }
+
+/* El texto reemplazado queda en `font-size: 0`, pero sigue siendo un ítem flex
+   y el `gap` del botón lo sigue separando del icono. Medido: el ✕ de una
+   miniatura pedía 18,3 px para una caja de 16 (14 del icono + 4 de gap), y el
+   medidor lo contaba como contenido pintado afuera. */
+.icon-btn,
+.mic-btn,
+.still-remove,
+.resource-remove { gap: 0; }
+
+/* Los dos SVG dibujados a mano se esconden y se reemplazan por ligaduras. El
+   skill es explícito: los iconos nunca son SVG. (Los `<svg>` siguen en el
+   HTML, invisibles: sacarlos pide tocar `cep/index.html`.) */
+.btn-ico { display: none !important; }
+#btn-load-markers::before,
+#btn-generate-all::before,
+#btn-queue-ready::before { font-size: 18px; }
+#btn-load-markers::before { content: "label"; }
+#btn-generate-all::before { content: "bolt"; }
+#btn-queue-ready::before { content: "queue"; }
+
+/* La marca. El isotipo de Platzi se COPIA del skill, no se redibuja, y el
+   `<svg>` inventado del panel se apaga. */
+.brand-mark { display: none !important; }
+.brand::before {
+  content: "";
+  flex: none;
+  width: 18px;
+  height: 18px;
+  background: url("assets/platzi-isotype-solid.svg") no-repeat center / contain;
+}
+
+/* Las tres pestañas, con icono como las Tabs de Sinapsis. */
+#tab-markers::before { content: "label"; }
+#tab-queue::before { content: "list"; }
+#tab-corrections::before { content: "edit_note"; }
+
+/* (b) Iconos que reemplazan el emoji inicial de una etiqueta ───────────── */
+
+/* Dos condiciones para que esto funcione, las dos medidas en la maqueta:
+
+   · El elemento tiene que ser un contenedor de BLOQUE. En un contenedor flex
+     `::first-letter` no hace nada (400 px con y sin la regla: el mismo ancho).
+     Todos estos son de un solo nodo de texto, así que pasar de `inline-flex` a
+     `inline-block` no les quita nada.
+
+   · El icono tiene que ir FUERA DE FLUJO. Un `::before` en flujo pasa a ser el
+     comienzo de la primera línea, y entonces `::first-letter` le pega a la
+     primera letra del NOMBRE DE LA LIGADURA en vez de al emoji: el botón
+     "▶ Reanudar" medía 78,9 px, con el icono en flujo 95,0 (o sea 78,9 + el
+     icono, con el ▶ intacto) y con el icono absoluto 90,0 (98,9 − los 8,9 px
+     del ▶). Por eso el icono va `position: absolute` y el elemento le hace
+     lugar con el relleno de la izquierda. */
+#btn-transcribe-seq,
+.btn-add-still,
+.qbtn-react,
+.qbtn-fresh,
+.qbtn-stage,
+.queue-start,
+.queue-react,
+.queue-clear.is-danger,
+.whisper-badge,
+.cfg-summary.is-ok,
+.cfg-summary.is-warn,
+.cfg-summary.is-cupo,
+.section-state.is-ok,
+.qs-ctx.is-ready,
+.qs-ctx.is-working {
+  display: inline-block;
+}
+/* Las chapas de la miniatura ya están posicionadas (`position: absolute`), así
+   que son su propio bloque contenedor y no hay que tocarles el `position`; lo
+   que sí hay que sacarles es el flex, que en un absoluto se convierte en
+   `flex` y deja a `::first-letter` sin efecto. */
+.still-tag.is-use,
+.still-send.is-on { display: block; }
+
+/* Estos ya son flex-item (o sea, bloque): solo les falta ser el bloque
+   contenedor de su propio icono. */
+.qj-title { position: relative; }
+.cfg-summary.is-ok,
+.cfg-summary.is-warn,
+.cfg-summary.is-cupo,
+.section-state.is-ok,
+.qs-ctx.is-ready,
+.qs-ctx.is-working { position: relative; }
+
+#btn-transcribe-seq::first-letter,
+.btn-add-still::first-letter,
+.qbtn-react::first-letter,
+.qbtn-fresh::first-letter,
+.qbtn-stage::first-letter,
+.queue-start::first-letter,
+.queue-react::first-letter,
+.queue-clear.is-danger::first-letter,
+.still-tag.is-use::first-letter,
+.still-send.is-on::first-letter,
+.whisper-badge:not(.is-missing)::first-letter,
+.cfg-summary.is-ok::first-letter,
+.cfg-summary.is-warn::first-letter,
+.cfg-summary.is-cupo::first-letter,
+.section-state.is-ok::first-letter,
+.qs-ctx.is-ready::first-letter,
+.qs-ctx.is-working::first-letter,
+.queue-job .qj-title::first-letter {
+  font-size: 0;
+}
+
+#btn-transcribe-seq::before,
+.btn-add-still::before,
+.qbtn-react::before,
+.qbtn-fresh::before,
+.qbtn-stage::before,
+.queue-start::before,
+.queue-react::before,
+.queue-clear.is-danger::before,
+.still-tag.is-use::before,
+.still-send.is-on::before,
+.whisper-badge::before,
+.cfg-summary.is-ok::before,
+.cfg-summary.is-warn::before,
+.cfg-summary.is-cupo::before,
+.section-state.is-ok::before,
+.qs-ctx.is-ready::before,
+.qs-ctx.is-working::before,
+.queue-job .qj-title::before {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+}
+
+/* Dónde se para el icono de cada familia. El hueco que le hace el relleno de
+   la izquierda va más abajo, con la geometría de los botones (sección 6), para
+   que ninguna regla de allá lo pise. */
+#btn-transcribe-seq::before,
+.btn-add-still::before,
+.qbtn-react::before,
+.qbtn-fresh::before,
+.qbtn-stage::before,
+.queue-start::before,
+.queue-react::before,
+.queue-clear.is-danger::before { left: var(--sin-space-8); }
+.qj-fb-actions .qbtn-react::before,
+.corr-actions .qbtn-react::before,
+.corr-actions .qbtn-stage::before { left: var(--sin-space-12); }
+
+/* Las chapas de la miniatura: icono de 12 px en 72 × 40 px. */
+.still-tag.is-use,
+.still-send.is-on { padding-left: 15px; }
+.still-tag.is-use::before,
+.still-send.is-on::before { left: 3px; font-size: 12px; }
+
+/* Los semáforos y la insignia de Whisper. */
+.whisper-badge::before { left: 5px; font-size: 14px; }
+.cfg-summary.is-ok,
+.cfg-summary.is-warn,
+.cfg-summary.is-cupo,
+.section-state.is-ok { padding-left: 18px; }
+.cfg-summary.is-ok::before,
+.cfg-summary.is-warn::before,
+.cfg-summary.is-cupo::before,
+.section-state.is-ok::before { left: 0; font-size: 14px; }
+
+/* La cola. */
+.queue-job .qj-title { padding-left: 20px; }
+.queue-job .qj-title::before { left: 0; }
+
+/* 🎙 Transcribir esta secuencia. Cuando la transcripción arranca, el JS le
+   cambia la etiqueta a "✕ Cancelar transcripción" y no le pone ninguna clase,
+   así que en ese rato el icono dice "mic" y la palabra dice "Cancelar": es el
+   único caso donde el arreglo queda a medias y está anotado en el reporte. */
+#btn-transcribe-seq::before { content: "mic"; }
+/* 📸 Capturar del programa. */
+.btn-add-still::before { content: "image"; }
+/* ↻ Reactivar / Reintentar / Regenerar / Aplicar el ajuste… y 📌 Colocar, que
+   comparte la clase pero solo aparece en una fila terminada. */
+.qbtn-react::before { content: "refresh"; }
+.queue-job.is-done .qbtn-react::before { content: "push_pin"; }
+/* ⟲ Regenerar desde cero. */
+.qbtn-fresh::before { content: "replay"; }
+/* ＋ Enviar a la cola. */
+.qbtn-stage::before { content: "add"; }
+/* ▶ Iniciar cola / Reanudar. */
+.queue-start::before { content: "play_arrow"; }
+/* ⏹ vaciar cola. */
+.queue-clear.is-danger::before { content: "delete"; }
+/* ↻ Reactivar todos (n). */
+.queue-react::before { content: "refresh"; }
+/* ✓ usar (la etiqueta "referencia" no lleva glifo y no se toca). */
+.still-tag.is-use::before { content: "check"; }
+/* 📤 reenviar ("no se envía" no lleva glifo y no se toca). */
+.still-send.is-on::before { content: "send"; }
+/* ✓ whisper listo / ⚠ whisper lento / "sin whisper local · instalar", que no
+   lleva glifo: ahí la primera letra NO se esconde y el icono suma. */
+.whisper-badge::before { content: "check_circle"; }
+.whisper-badge.is-slow::before { content: "warning"; }
+.whisper-badge.is-missing::before { content: "download"; }
+/* Los semáforos: ✓ / ⚠ / ⏳ / ✗, todos glifos, ninguno letra. */
+.cfg-summary.is-ok::before,
+.section-state.is-ok::before { content: "check_circle"; }
+.cfg-summary.is-warn::before,
+.cfg-summary.is-cupo::before { content: "warning"; }
+/* ✓ transcript + objetivo / ◔ transcribiendo… ("falta transcript" no lleva
+   glifo y se queda sin icono). */
+.qs-ctx.is-ready::before { content: "check_circle"; }
+.qs-ctx.is-working::before { content: "pending"; }
+
+/* La cola: los siete estados. El glifo va pegado al título en el mismo nodo de
+   texto, pero la fila SÍ lleva su clase (`queue-job is-<estado>`), así que
+   cada uno queda con su icono y con su rol de color. Es la lectura de un
+   vistazo que esa pestaña tiene que dar. */
+.queue-job .qj-title::before { content: "circle"; font-size: 14px; }
+.queue-job.is-queued .qj-title::before { content: "circle"; font-size: 8px; left: 4px; }
+.queue-job.is-modeling .qj-title::before { content: "edit_note"; }
+.queue-job.is-ready .qj-title::before { content: "pending"; }
+.queue-job.is-running .qj-title::before { content: "play_arrow"; font-variation-settings: 'FILL' 1, 'wght' 400; }
+.queue-job.is-done .qj-title::before { content: "check_circle"; font-variation-settings: 'FILL' 1, 'wght' 400; }
+.queue-job.is-waiting .qj-title::before { content: "schedule"; }
+.queue-job.is-error .qj-title::before { content: "error"; font-variation-settings: 'FILL' 1, 'wght' 400; }
+
+/* Los chevrones de los desplegables, que ya eran pseudo-elementos. */
+.help-section > summary::after,
+.context-section > summary::after {
+  content: "expand_more";
+  font-size: 20px;
+  color: var(--sin-on-surface-variant);
+  transition: transform var(--hp-move);
+}
+.help-section[open] > summary::after,
+.context-section[open] > summary::after { transform: rotate(180deg); }
+
+.login-manual > summary::before,
+.transcript-details > summary::before,
+.html-editor > summary::before {
+  content: "chevron_right";
+  font-size: 16px;
+  vertical-align: -3px;
+  margin-right: var(--sin-space-2);
+  color: var(--sin-on-surface-variant);
+}
+.login-manual[open] > summary::before,
+.transcript-details[open] > summary::before,
+.html-editor[open] > summary::before { content: "expand_more"; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4. CAPAS DE ESTADO
+
+   Las tres capas del skill (hover 8 %, foco 12 %, presionado 16 %) con el
+   token puesto tal cual en un `opacity`, sin retipear ni un número y sin
+   `color-mix`. La capa va DEBAJO del contenido (`z-index: -1` con la caja
+   aislada), que es donde M3 la pone.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+button,
+.tab,
+.hps-option,
+.marker-summary,
+.queue-filter {
+  position: relative;
+  isolation: isolate;
+}
+
+/* Los `<summary>` de las secciones quedan afuera: su `::after` ya lo usa el
+   chevron, y ahí el hover se resuelve subiendo un escalón de contenedor. */
+button::after,
+.tab::after,
+.hps-option::after,
+.marker-summary::after,
+.queue-filter::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ease);
+}
+
+button:hover::after,
+.tab:hover::after,
+.hps-option:hover::after,
+.marker-summary:hover::after,
+.queue-filter:hover::after { opacity: var(--sin-state-hover); }
+
+button:active::after,
+.tab:active::after,
+.hps-option:active::after,
+.marker-summary:active::after { opacity: var(--sin-state-pressed); }
+
+/* Foco: contorno de 2 px en primario con 2 de separación. Reemplaza el
+   resplandor de 1 px que tenía el panel. */
+button:focus-visible,
+textarea:focus,
+input:focus,
+.hps-trigger:focus-visible,
+.tab:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--sin-primary);
+  outline-offset: 2px;
+}
+button:focus-visible { border-color: var(--sin-outline); box-shadow: none; }
+button:focus-visible::after { opacity: var(--sin-state-focus); }
+
+/* ── Deshabilitado ────────────────────────────────────────────────────────
+   Hay una observación registrada de que el deshabilitado de hoy se lee poco,
+   y la causa es que el panel le baja la opacidad al botón ENTERO (0,45): la
+   caja se desvanece junto con la letra y queda una mancha.
+
+   El skill dice lo contrario: `opacity: 0.38` al CONTENIDO, nunca al relleno.
+   En CEF 99 no hay forma de alcanzar solo el contenido sin tocar el HTML, así
+   que se hizo lo que el criterio de la regla pide: el relleno se queda —
+   sólido, con su forma— y lo que se apaga es la letra, con el rol
+   `--sin-outline`. Queda MÁS legible que el 38 % literal y, sobre todo, se
+   sigue viendo que ahí hay un botón. */
+button:disabled,
+button:disabled:hover,
+.btn-generate:disabled,
+.btn-secondary:disabled {
+  opacity: 1;
+  cursor: default;
+  background: var(--sin-surface-container-low);
+  border-color: var(--sin-outline-variant);
+  color: var(--sin-outline);
+  box-shadow: none;
+  transform: none;
+}
+button:disabled::after { opacity: 0; }
+/* El micrófono apagado por plataforma se VE (lleva su motivo en el tooltip):
+   no se desvanece, cambia de icono a "mic_off". */
+.mic-btn.is-off,
+.mic-btn:disabled { opacity: 1; color: var(--sin-outline); background: transparent; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   5. LOS ESTADOS CON SIGNIFICADO → roles de Material 3
+
+   El mapa, y por qué:
+
+     interactivo / marca        → primary          menta #09E989
+     trabajando (diseña/renderiza, cronómetro)
+                                → info            #A0BAEE
+     listo / terminado          → success         #89E689
+     atención (falta algo, sin cupo, sin tokens)
+                                → warning         #F9D894
+     error / falló              → error           #FEB4AB
+     rehacer (Regenerar, Reactivar, Aplicar el ajuste, Colocar)
+                                → organizer       #FF833F
+     deshabilitado              → outline sobre container-low (ver arriba)
+
+   Dos notas sobre el mapa:
+
+   · En Sinapsis el primario ES verde, y "listo" también es verde. Son dos
+     verdes distintos (menta saturada contra verde salvia) y se distinguen,
+     pero es el punto flojo del mapa y está dicho en el reporte.
+
+   · "Trabajando" hoy es el mismo ámbar que "atención", y "rehacer" el mismo
+     ámbar que los dos. Acá se separan en tres roles: azul para lo que está
+     pasando, arena para lo que falta, naranja para las acciones de rehacer.
+     El naranja es el rol `organizer` de Platzi (que en el producto nombra a
+     los organizadores de comunidad): es un token de color, no un hex, pero es
+     un uso prestado y también está dicho en el reporte.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── listo / terminado (verde) ──────────────────────────────────────────── */
+.transcript-row .transcript-ok,
+.section-state.is-ok,
+.cfg-summary.is-ok,
+.marker-status.is-ok,
+.mic-state.is-ok,
+.mic-verdict.is-ok,
+.corr-state.is-ok,
+.corr-prompts-tag.is-saved,
+.cleanup-row .cl-keep,
+.queue-job.is-done .qj-title,
+.marker-summary .marker-badge { color: var(--sin-success); }
+
+.whisper-badge {
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  border-radius: var(--sin-radius-sm);
+  border: 1px solid transparent;
+  background: var(--sin-success-container);
+  color: var(--sin-on-success-container);
+  padding: 2px 7px;
+}
+.whisper-badge:hover {
+  background: var(--sin-success-container);
+  border-color: transparent;
+  color: var(--sin-on-success-container);
+}
+.qs-ctx.is-ready {
+  background: var(--sin-success-container);
+  color: var(--sin-on-success-container);
+}
+
+/* ── trabajando (azul) ──────────────────────────────────────────────────── */
+.marker-status.is-busy,
+.hp-bar-clock,
+.qj-clock,
+.qj-msg-waiting { color: var(--sin-info); }
+.qs-ctx.is-working {
+  background: var(--sin-info-container);
+  color: var(--sin-on-info-container);
+}
+.queue-job.is-running .qj-title,
+.queue-job.is-modeling .qj-title,
+.queue-job.is-ready .qj-title { color: var(--sin-info); }
+
+/* Barra de progreso: pista en `container-highest`, relleno en primario, 4 px y
+   píldora, tal como la especifica el sistema. El brillo que la recorría se
+   apaga: Sinapsis no lo tiene. */
+.hp-bar {
+  height: 4px;
+  border-radius: var(--sin-radius-full);
+  background: var(--sin-surface-container-highest);
+}
+.hp-bar-fill {
+  background: var(--sin-primary);
+  background-image: none;
+  animation: none;
+  border-radius: var(--sin-radius-full);
+}
+.hp-bar-msg { color: var(--sin-on-surface-variant); }
+
+/* ── atención (arena) ───────────────────────────────────────────────────── */
+.marker-status.is-warn,
+.mic-state.is-warn,
+.mic-verdict.is-warn,
+.section-state.is-warn,
+.cfg-summary.is-cupo,
+.login-warn,
+.general-source.is-warn,
+.general-conflict-title,
+.corr-warn,
+.corr-cross-title,
+.corr-prompts-tag.is-rebuilt,
+.corr-prompts-tag.is-adjusted,
+.corr-level-hint.is-adjusted,
+.corr-prompts-note.is-rebuilt,
+.seq-notice,
+.queue-job.is-waiting .qj-title,
+#mic-status.is-warn { color: var(--sin-warning); }
+
+.qs-ctx.is-missing {
+  background: var(--sin-warning-container);
+  color: var(--sin-on-warning-container);
+}
+
+/* Los carteles de atención: superficie `warning-container` con su texto
+   `on-warning-container`, que es el Tag soft del sistema en tamaño cartel. */
+.seq-notice,
+.general-conflict,
+.provider-note,
+.engine-prep {
+  background: var(--sin-warning-container);
+  border: 1px solid transparent;
+  border-radius: var(--sin-radius-lg);
+  color: var(--sin-on-warning-container);
+}
+.seq-notice,
+.general-conflict-title,
+.provider-note,
+.engine-prep .ep-text { color: var(--sin-on-warning-container); }
+.provider-note { font: var(--hp-note); letter-spacing: 0.4px; }
+#ep-row-deps[data-hidden="false"] ~ #ep-row-whisper {
+  border-top: 1px solid var(--sin-on-warning-container);
+}
+.engine-prep .ep-msg,
+.engine-prep .ep-manual { color: var(--sin-on-warning-container); }
+.engine-prep .hp-bar { background: var(--sin-on-warning-container); }
+.engine-prep .hp-bar-fill { background: var(--sin-warning); }
+
+/* El botón del aviso de secuencia distinta vive dentro del cartel arena: va
+   delineado con el color del texto del contenedor, no con el del rol. */
+.seq-notice-go {
+  border-radius: var(--sin-radius-full);
+  border-color: var(--sin-on-warning-container);
+  color: var(--sin-on-warning-container);
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  padding: 4px 12px;
+}
+.general-conflict-actions button {
+  border-color: var(--sin-on-warning-container);
+  color: var(--sin-on-warning-container);
+}
+.general-conflict-text {
+  background: var(--sin-surface-container-lowest);
+  border-color: var(--sin-outline-variant);
+  color: var(--sin-on-surface);
+}
+.corr-row.is-unknown { border-left: 3px solid var(--sin-warning); }
+.corr-cross { border-color: var(--sin-warning); background: var(--sin-surface-container-low); }
+
+/* "Guardar para todo el curso": escribe en un archivo que comparten todos los
+   que abran el .prproj, así que se queda en arena — es una precaución, no una
+   acción de rehacer. */
+.corr-level-save {
+  color: var(--sin-warning);
+  border-color: var(--sin-warning);
+  border-radius: var(--sin-radius-full);
+}
+.corr-level-save:hover { color: var(--sin-warning); border-color: var(--sin-warning); }
+
+/* ── error (rojo) ───────────────────────────────────────────────────────── */
+.output.is-error,
+.marker-status.is-error,
+.still-status.is-error,
+.mic-state.is-error,
+.mic-verdict.is-error,
+.corr-state.is-error,
+.cleanup-row .cl-del,
+.login-err,
+.queue-job.is-error .qj-title,
+#mic-status.is-error { color: var(--sin-error); }
+
+.output.is-error { border-color: var(--sin-error); }
+#transcript-status.is-error {
+  color: var(--sin-on-error-container);
+  background: var(--sin-error-container);
+  border-color: transparent;
+  border-radius: var(--sin-radius-md);
+}
+.still-remove:hover { background: var(--sin-error); color: var(--sin-on-error); }
+.resource-remove:hover { color: var(--sin-error); }
+/* El dictado grabando: rojo, que es lo que hace un REC. */
+.mic-btn.is-rec {
+  color: var(--sin-on-error-container);
+  background: var(--sin-error-container);
+  border-color: transparent;
+}
+.queue-clear.is-danger {
+  color: var(--sin-on-error-container);
+  background: var(--sin-error-container);
+  border-color: transparent;
+}
+.queue-clear.is-danger:hover {
+  color: var(--sin-on-error-container);
+  background: var(--sin-error-container);
+  border-color: transparent;
+}
+/* El semáforo de ⚙ en rojo cuando falta configurar algo (esa decisión ya la
+   había tomado el panel: `is-warn` es rojo y `is-cupo` es ámbar). */
+.cfg-summary.is-warn { color: var(--sin-error); }
+
+/* ── rehacer (naranja) ──────────────────────────────────────────────────── */
+.qbtn-react,
+.queue-react {
+  background: var(--sin-organizer-container);
+  color: var(--sin-on-organizer-container);
+  border-color: transparent;
+  border-radius: var(--sin-radius-full);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+}
+.qbtn-react:hover,
+.queue-react:hover {
+  background: var(--sin-organizer-container);
+  color: var(--sin-on-organizer-container);
+  border-color: transparent;
+}
+/* Las dos apariciones grandes: la acción de la fila de Corrections y la de la
+   caja de feedback de la Cola. Misma acción, misma cara. */
+.qj-fb-actions .qbtn-react,
+.corr-actions .qbtn-react,
+.corr-actions .qbtn-stage {
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+}
+.qj-fb-actions .qbtn-react,
+.corr-actions .qbtn-react { background: var(--sin-organizer-container); }
+.qj-fb-actions .qbtn-react:hover,
+.corr-actions .qbtn-react:hover { background: var(--sin-organizer-container); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6. LA ESCALERA DE BOTONES
+
+   Sinapsis ordena el énfasis: primary → primary-tonal → secondary → glass →
+   tertiary → outlined → plain, con `destroy` afuera de la escalera. Todos son
+   píldoras y el `sm` mide 28 px, que es exactamente el presupuesto de este
+   panel (los botones de hoy miden 27).
+
+   Cómo quedó repartida:
+
+     primary       Cargar marcadores, Preparar motor, Instalar Whisper,
+                   Guardar (⚙), Cargar secuencia, Confirmar — una por vista
+     primary-tonal Transcribir esta secuencia, Iniciar cola / Reanudar
+     outlined      el resto de los botones del panel (es el default)
+     plain         los enlaces-botón (reiniciar el contador, subir archivo)
+     destroy       vaciar cola
+     organizer     la familia rehacer (arriba)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+button {
+  border: 1px solid var(--sin-outline);
+  border-radius: var(--sin-radius-full);
+  background: transparent;
+  color: var(--sin-on-surface);
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  min-height: 28px;
+  padding: 0 var(--sin-space-12);
+  gap: var(--sin-space-4);
+  transition: background-color var(--ease), border-color var(--ease),
+              color var(--ease), transform var(--hp-move);
+}
+/* El hover de un delineado es su capa de estado y nada más: ni se pinta de
+   otro color ni se le mueve el borde. */
+button:hover {
+  background: transparent;
+  border-color: var(--sin-outline);
+  color: var(--sin-on-surface);
+}
+button:active { background: transparent; }
+
+/* Los controles diminutos del panel (la chapa de una miniatura, los ✕ de
+   quitar, los enlaces-botón) NO son botones `sm`: son cromo de 12-16 px y el
+   piso de 28 los rompería. Se los deja con su alto propio. */
+.still-tag,
+.still-send,
+.still-remove,
+.resource-remove,
+.su-reset,
+.btn-add-still-file { min-height: 0; }
+
+/* Y la familia chica de la cola y las cabeceras se queda en 24: es un escalón
+   por debajo del `sm` del sistema y es lo que deja el alto de una fila de cola
+   con cuatro acciones que envuelven. */
+.qbtn,
+.queue-clear,
+.queue-filter,
+.mic-undo,
+.corr-level-save { min-height: 24px; }
+
+/* Los que se pasaron a `inline-block` por el `::first-letter` centran su única
+   línea con el `line-height`, no con el flex, y le hacen hueco al icono con el
+   relleno de la izquierda (16 px de glifo + 4 de aire). El alto de cada uno es
+   el que ya tenía: acá no se agranda nada. */
+#btn-transcribe-seq,
+.btn-add-still { line-height: 26px; text-align: left; padding: 0 var(--sin-space-12) 0 28px; }
+.queue-start { line-height: 26px; text-align: left; padding: 0 var(--sin-space-12) 0 28px; }
+.queue-clear.is-danger,
+.queue-react { line-height: 22px; text-align: left; padding: 0 var(--sin-space-12) 0 28px; }
+.qbtn-react,
+.qbtn-fresh,
+.qbtn-stage { line-height: 22px; text-align: left; padding: 0 var(--sin-space-8) 0 28px; }
+
+/* Las tres apariciones grandes: la acción principal de una fila de Corrections
+   y las dos de la caja de feedback. El panel ya las había agrandado a mano; se
+   las lleva al `md` del sistema (36) menos un escalón. Las dos que ocupan el
+   renglón entero centran su etiqueta, con el icono pegado a la izquierda. */
+.qj-fb-actions .qbtn-react,
+.corr-actions .qbtn-react,
+.corr-actions .qbtn-stage {
+  line-height: 30px;
+  min-height: 32px;
+  padding: 0 var(--sin-space-16) 0 34px;
+}
+.qj-fb-actions .qbtn-react,
+.qj-fb-actions .qbtn-fresh { text-align: center; }
+.qj-fb-actions .qbtn-fresh { padding: 0 var(--sin-space-12) 0 28px; }
+
+/* primary — relleno menta, texto verde profundo. Su respuesta es física: se
+   levanta 1 px al pasar y se asienta 2 al apretar. Nada de resplandor. */
+.btn-primary,
+.btn-generate {
+  background: var(--sin-primary);
+  border-color: transparent;
+  color: var(--sin-on-primary);
+  border-radius: var(--sin-radius-full);
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  padding: 0 var(--sin-space-16);
+  min-height: 28px;
+}
+.btn-primary:hover,
+.btn-generate:hover {
+  background: var(--sin-primary);
+  border-color: transparent;
+  color: var(--sin-on-primary);
+  transform: translateY(-1px);
+  box-shadow: none;
+  filter: brightness(1.08);
+}
+.btn-primary:active,
+.btn-generate:active { transform: translateY(2px); filter: brightness(0.92); }
+.btn-primary::after,
+.btn-generate::after { display: none; }
+
+/* primary-tonal — el segundo escalón. Transcribir comparte vista con Cargar
+   marcadores y hay UN primario por vista, así que baja un peldaño; Iniciar
+   cola es lo mismo en la pestaña de la Cola. */
+#btn-transcribe-seq,
+.queue-start {
+  background: var(--sin-primary-container);
+  color: var(--sin-on-primary-container);
+  border-color: transparent;
+  border-radius: var(--sin-radius-full);
+}
+#btn-transcribe-seq:hover,
+.queue-start:hover {
+  background: var(--sin-primary-container);
+  color: var(--sin-on-primary-container);
+  border-color: transparent;
+  /* El tonal no se levanta: eso es privilegio del primario. */
+  transform: none;
+  filter: none;
+}
+#btn-transcribe-seq:active { transform: none; filter: none; }
+/* …y sí recupera su capa de estado, que `.btn-primary` había apagado. */
+#btn-transcribe-seq::after { display: block; }
+
+/* outlined chico — los controles de la cola y las cabeceras. */
+.qbtn,
+.queue-clear,
+.queue-filter,
+.btn-log,
+.btn-update,
+.mic-undo,
+.corr-actions .qbtn-stage {
+  border-radius: var(--sin-radius-full);
+  border: 1px solid var(--sin-outline);
+  background: transparent;
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+}
+.qbtn:hover,
+.queue-clear:hover,
+.queue-filter:hover,
+.btn-log:hover,
+.btn-update:hover,
+.mic-undo:hover {
+  background: transparent;
+  border-color: var(--sin-outline);
+  color: var(--sin-on-surface);
+}
+
+/* plain — sin caja: los dos que hoy son links subrayados. */
+.su-reset,
+.btn-add-still-file {
+  border: 0;
+  background: transparent;
+  color: var(--sin-on-surface-variant);
+  text-decoration: none;
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  border-radius: var(--sin-radius-full);
+  padding: 2px var(--sin-space-8);
+}
+.su-reset:hover,
+.btn-add-still-file:hover { color: var(--sin-primary); background: transparent; border: 0; }
+
+/* secondary/outlined mediano — Feedback, Editar HTML, Regenerar desde cero. */
+.btn-secondary {
+  border-radius: var(--sin-radius-full);
+  border-color: var(--sin-outline);
+  color: var(--sin-on-surface);
+  background: transparent;
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  min-height: 28px;
+  padding: 0 var(--sin-space-12);
+}
+.btn-secondary:hover { border-color: var(--sin-outline); background: transparent; }
+.qj-fb-actions .qbtn-fresh {
+  color: var(--sin-on-surface-variant);
+  border-color: var(--sin-outline-variant);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+}
+.qj-fb-actions .qbtn-fresh:hover {
+  color: var(--sin-on-surface);
+  border-color: var(--sin-outline);
+  background: transparent;
+}
+
+/* Los cinco botones cuadrados: icon-only `sm` en píldora, con el icono a
+   20 px, que es el piso que pide el skill. */
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--sin-radius-full);
+  border-color: var(--sin-outline);
+  color: var(--sin-on-surface-variant);
+  padding: 0;
+}
+.icon-btn:hover { color: var(--sin-on-surface); border-color: var(--sin-outline); background: transparent; }
+.btn-log,
+.btn-update { height: 28px; padding: 0 var(--sin-space-8); }
+.btn-log .dl-ico { font-size: 0; }
+
+/* El aviso de versión nueva: arena, sin latido (Sinapsis no pulsa cajas). */
+.btn-update.has-update {
+  color: var(--sin-on-warning-container);
+  background: var(--sin-warning-container);
+  border-color: transparent;
+  animation: none;
+}
+.btn-update.has-update:hover { background: var(--sin-warning-container); border-color: transparent; }
+.btn-update.check-failed {
+  color: var(--sin-outline);
+  border-style: dashed;
+  border-color: var(--sin-outline-variant);
+}
+.btn-update.check-failed:hover { color: var(--sin-on-surface); border-color: var(--sin-outline); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   7. ENCABEZADO
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.panel-header {
+  background: var(--sin-surface-container-low);
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding: var(--sin-space-8) var(--sin-space-12);
+  gap: var(--sin-space-8);
+}
+.brand { gap: var(--sin-space-8); }
+.brand-name {
+  font: var(--hp-title);
+  letter-spacing: 0.1px;
+  color: var(--sin-on-surface);
+}
+
+/* El chip de estado de la secuencia es una etiqueta, no un control: en
+   Sinapsis eso es un Tag, que NO es píldora (radio `sm`) y se rellena con el
+   `*-container` de su rol. Es lo que lo separa de los botones de al lado. */
+.hdr-chip {
+  border-radius: var(--sin-radius-sm);
+  border: 1px solid transparent;
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  padding: 3px var(--sin-space-8);
+  background: var(--sin-surface-container-high);
+  color: var(--sin-on-surface-variant);
+}
+.hdr-chip.is-idle { background: var(--sin-surface-container-high); color: var(--sin-outline); }
+.hdr-chip.is-ok { background: var(--sin-success-container); color: var(--sin-on-success-container); }
+.hdr-chip.is-warn { background: var(--sin-warning-container); color: var(--sin-on-warning-container); }
+.hdr-chip.is-error { background: var(--sin-error-container); color: var(--sin-on-error-container); }
+
+/* El desplegable de micrófono del encabezado. */
+.hdr-mic .hps-trigger {
+  height: 28px;
+  border-radius: var(--sin-radius-full);
+  border-color: var(--sin-outline);
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  padding: 0 var(--sin-space-8);
+}
+.hdr-mic .hps-trigger:hover { color: var(--sin-on-surface); border-color: var(--sin-outline); }
+.hdr-mic.is-warn .hps-trigger { color: var(--sin-warning); border-color: var(--sin-warning); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   8. BARRA DE ACCIONES, PESTAÑAS Y CONTADOR DE SESIÓN
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.actions {
+  background: var(--sin-surface-container-low);
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding: var(--sin-space-8) var(--sin-space-12);
+  gap: var(--sin-space-8);
+}
+
+/* Tabs de Sinapsis: hairline abajo de toda la lista, la activa en primario con
+   su subrayado de 2 px. El sistema las quiere de 48 px (40 en `sm`); acá son
+   36, que es lo que deja el alto de un panel acoplado. */
+.tabs {
+  background: var(--sin-surface-container-low);
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding: 0 var(--sin-space-12);
+  gap: var(--sin-space-4);
+}
+.tab {
+  min-height: 36px;
+  padding: 0 var(--sin-space-12);
+  gap: var(--sin-space-4);
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.tab::before { font-size: 18px; }
+.tab:hover { color: var(--sin-on-surface); background: transparent; border-color: transparent; }
+.tab.is-active { color: var(--sin-primary); border-bottom-color: var(--sin-primary); }
+.tab.is-active::before { font-variation-settings: 'FILL' 1, 'wght' 400; }
+/* La capa de estado de una pestaña no puede ser redonda ni taparle el
+   subrayado: se recorta arriba. */
+.tab::after { border-radius: var(--sin-radius-sm) var(--sin-radius-sm) 0 0; }
+
+/* Badge de la cola: el contador de 16 px del sistema, en primario. */
+.tab-badge {
+  background: var(--sin-primary);
+  color: var(--sin-on-primary);
+  border-radius: var(--sin-radius-full);
+  font: var(--hp-label-xs);
+  letter-spacing: 0;
+  line-height: 16px;
+}
+.tab-badge.is-waiting { background: var(--sin-warning); color: var(--sin-on-warning); }
+
+.session-usage {
+  background: var(--sin-surface-container-low);
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding: 2px var(--sin-space-12) var(--sin-space-4);
+}
+.session-usage .su-label {
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  text-transform: none;
+  color: var(--sin-on-surface-variant);
+}
+.session-usage .su-value { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-outline); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   9. CUERPO, SECCIONES Y CAMPOS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.panel-body {
+  padding: var(--sin-space-8) var(--sin-space-12);
+  gap: var(--sin-space-8);
+}
+
+/* La línea de salida: hundida un escalón, con la cara mono. */
+.output {
+  background: var(--sin-surface-container-lowest);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  color: var(--sin-on-surface-variant);
+  padding: var(--sin-space-8);
+  box-shadow: none;
+}
+.output .placeholder { color: var(--sin-outline); }
+
+/* Card `outlined` del sistema para las secciones desplegables: superficie un
+   escalón arriba de la página y hairline de `outline-variant`. El radio de
+   Sinapsis para tarjetas de producto es 16; acá va 10, que es lo que aguanta
+   una caja de 40 px de alto. */
+.help-section,
+.context-section {
+  background: var(--sin-surface-container-low);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  padding: var(--sin-space-4) var(--sin-space-12);
+  box-shadow: none;
+}
+.help-section > summary,
+.context-section > summary {
+  padding: var(--sin-space-4) 0;
+  border-radius: var(--sin-radius-sm);
+}
+.help-section > summary:hover,
+.context-section > summary:hover {
+  color: var(--sin-on-surface);
+  background: var(--sin-surface-container);
+}
+.context-body { margin-top: var(--sin-space-4); gap: var(--sin-space-8); }
+
+/* Los tres niveles de prompt tienen que seguir leyéndose como tres alcances,
+   del más ancho al más angosto. Sinapsis no tiene un componente para eso, así
+   que se usa lo que sí tiene: la escalera de contenedores. El del CURSO es una
+   caja aparte arriba, en el escalón más bajo; el de la SECUENCIA va pegado a
+   la lista, un escalón más arriba y con su guarda de color a la izquierda; la
+   instrucción del MARCADOR vive adentro de la tarjeta, que es el escalón más
+   alto. El ancho de la caja y la altura del escalón dicen el alcance sin una
+   palabra de más. */
+#general-section {
+  background: var(--sin-surface-container-lowest);
+  border-color: var(--sin-outline-variant);
+}
+#general-sequence-section {
+  background: var(--sin-surface-container-low);
+  border-color: var(--sin-outline-variant);
+  margin-bottom: var(--sin-space-2);
+}
+.general-level.is-sequence {
+  padding-left: var(--sin-space-8);
+  border-left: 2px solid var(--sin-primary);
+}
+.general-level { gap: var(--sin-space-4); }
+.general-source.is-override { color: var(--sin-primary); }
+.section-state.is-hint { color: var(--sin-primary); opacity: 1; }
+
+/* Campos. El Input de Sinapsis es 56 px con radio 12 y etiqueta flotante:
+   nada de eso entra acá (ni cabe, ni el HTML lo permite). Lo que se toma es la
+   variante `soft` —relleno de contenedor, borde `outline`, anillo de foco de
+   3 px al 13 % del primario— con el relleno un escalón MÁS ABAJO que la
+   tarjeta que lo contiene, que es lo que lo hace leer como campo. */
+textarea,
+input[type="text"],
+input[type="password"],
+input[type="number"],
+.config-body input,
+.offset-input,
+.qj-fb-input,
+.corr-level-input {
+  background: var(--sin-surface-container-lowest);
+  border: 1px solid var(--sin-outline);
+  border-radius: var(--sin-radius-md);
+  color: var(--sin-on-surface);
+  font: var(--hp-body);
+  letter-spacing: 0.1px;
+  padding: var(--sin-space-8);
+}
+textarea::placeholder,
+input::placeholder { color: var(--sin-outline); }
+textarea:hover,
+input:hover { border-color: var(--sin-on-surface-variant); }
+textarea:focus,
+input:focus,
+.qj-fb-input:focus {
+  border-color: var(--sin-primary);
+  box-shadow: 0 0 0 3px var(--sin-primary-container);
+}
+.offset-input,
+.corr-second,
+.corr-fix input[type="number"] { padding: var(--sin-space-4) var(--sin-space-8); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10. MARCADORES
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.marker-card {
+  background: var(--sin-surface-container);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  box-shadow: none;
+  margin-bottom: var(--sin-space-4);
+}
+.marker-card:hover { background: var(--sin-surface-container); border-color: var(--sin-outline-variant); }
+/* Abierta = un escalón más arriba y borde de control. Sin resplandores. */
+.marker-card[open] {
+  background: var(--sin-surface-container-high);
+  border-color: var(--sin-outline);
+  box-shadow: none;
+}
+.marker-card.is-selected { background: var(--sin-surface-container-high); border-color: var(--sin-outline); box-shadow: none; }
+.marker-card.is-focused { box-shadow: 0 0 0 2px var(--sin-primary); }
+.marker-summary { padding: var(--sin-space-8) var(--sin-space-12); gap: var(--sin-space-8); }
+.marker-summary .marker-name {
+  font: var(--hp-title);
+  letter-spacing: 0.1px;
+  color: var(--sin-on-surface);
+}
+.marker-card.is-selected .marker-name { color: var(--sin-on-surface); }
+.marker-summary .marker-meta { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-outline); }
+.marker-body { padding: 0 var(--sin-space-12) var(--sin-space-12); gap: var(--sin-space-8); }
+.marker-instruction { border-top: 1px solid var(--sin-outline-variant); }
+.marker-instruction textarea { background: var(--sin-surface-container-lowest); }
+
+/* El fragmento del transcript: cita, con la guarda del primario. */
+.transcript-slice {
+  background: var(--sin-surface-container-lowest);
+  border: 1px solid var(--sin-outline-variant);
+  border-left: 2px solid var(--sin-primary);
+  border-radius: var(--sin-radius-md);
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-body);
+  letter-spacing: 0.1px;
+}
+.transcript-details > summary { color: var(--sin-on-surface-variant); font: var(--hp-note); letter-spacing: 0.4px; }
+
+/* El toggle "Con fondo" es un ajuste instantáneo: en Sinapsis eso es un
+   Switch, pero el HTML trae un <input type=checkbox> y no se puede cambiar.
+   Lo que sí se puede es darle el color del sistema. */
+.bg-toggle { color: var(--sin-on-surface-variant); font: var(--hp-note); letter-spacing: 0.4px; }
+.bg-toggle input { accent-color: var(--sin-primary); }
+
+/* Zona de arrastre. */
+.dropzone {
+  background: var(--sin-surface-container-lowest);
+  border: 1px dashed var(--sin-outline);
+  border-radius: var(--sin-radius-lg);
+  padding: var(--sin-space-12);
+}
+.dropzone:hover { border-color: var(--sin-primary); }
+.dropzone.is-over { border-color: var(--sin-primary); background: var(--sin-primary-container); }
+.dropzone .dz-text { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-outline); }
+.dropzone .dz-text u { color: var(--sin-on-surface-variant); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   11. MINIATURAS Y RECURSOS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.still-thumb {
+  background: var(--sin-surface-container-lowest);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-md);
+}
+.still-thumb:hover { border-color: var(--sin-primary); }
+.still-thumb.is-missing { border-color: var(--sin-warning); }
+
+/* Las etiquetas de la miniatura viven en 72 × 40 px y se quedan a 10 px, un
+   punto por debajo del piso de `.sin-label-xs`. Subirlas a 11 desborda la
+   miniatura, y el tamaño de la miniatura lo decide el CSS pero su contenido lo
+   escribe el JS. Está anotado en el reporte. */
+.still-num,
+.still-tag,
+.still-send {
+  border-radius: var(--sin-radius-sm);
+  font-family: var(--sin-font-body);
+  letter-spacing: 0.08px;
+}
+.still-num {
+  background: var(--sin-surface-container-highest);
+  color: var(--sin-on-surface);
+  font-weight: 600;
+  font-family: var(--sin-font-mono);
+}
+.still-tag {
+  background: var(--sin-surface-container-highest);
+  color: var(--sin-on-surface);
+  font-weight: 500;
+}
+.still-tag:hover { background: var(--sin-surface-container-high); }
+/* "✓ usar" = se incrusta en el gráfico. Es la marca más fuerte de la
+   miniatura, así que se la queda el primario. */
+.still-tag.is-use { background: var(--sin-primary); color: var(--sin-on-primary); font-weight: 600; }
+/* "📤 reenviar" = viaja al modelo en esta ronda. Es otro toggle sobre la misma
+   miniatura, así que va en otro rol (info) para no confundirse con el de
+   arriba, igual que hoy está en otro color. */
+.still-send { background: var(--sin-surface-container-highest); color: var(--sin-on-surface-variant); }
+.still-send.is-on { background: var(--sin-info-container); color: var(--sin-on-info-container); font-weight: 600; }
+
+.resource-chip {
+  background: var(--sin-surface-container-high);
+  border: 1px solid transparent;
+  border-radius: var(--sin-radius-full);
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  padding: 3px var(--sin-space-8);
+}
+.resource-chip.is-missing { background: var(--sin-warning-container); color: var(--sin-on-warning-container); border-color: transparent; }
+.still-status { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-outline); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   12. LA COLA
+
+   Es la vista que tiene que decir de un vistazo en qué anda cada job. El
+   trabajo lo hacen el icono (sección 3) y el rol de color (sección 5); acá
+   queda el contenedor y las filas.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.queue-panel {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.queue-view .queue-panel { padding: var(--sin-space-12); }
+.queue-head {
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding-bottom: var(--sin-space-8);
+  margin-bottom: var(--sin-space-8);
+  gap: var(--sin-space-4);
+}
+.queue-seq {
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  text-transform: none;
+  border-bottom: 1px solid var(--sin-outline-variant);
+}
+.qs-ctx {
+  border-radius: var(--sin-radius-sm);
+  font: var(--hp-label-xs);
+  letter-spacing: 0.08px;
+  padding: 1px var(--sin-space-4);
+  text-transform: none;
+}
+.qs-ctx.is-ready,
+.qs-ctx.is-working { padding-left: 18px; }
+.qs-ctx.is-ready::before,
+.qs-ctx.is-working::before { left: 2px; font-size: 13px; }
+
+/* Cada job es una fila de lista, separada por hairline. */
+.queue-job {
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding: var(--sin-space-4) 0 var(--sin-space-4) var(--sin-space-8);
+}
+.qj-title {
+  font: var(--hp-label);
+  letter-spacing: 0.3px;
+  color: var(--sin-on-surface);
+}
+.queue-job.is-waiting { border-left: 3px solid var(--sin-warning); }
+.queue-job.is-error { border-left: 3px solid var(--sin-error); }
+.qj-title-link:hover { color: var(--sin-primary); }
+.qj-act { color: var(--sin-outline); }
+
+/* El cartel de preparación del contexto. Es "está pasando algo", no "falta
+   algo": va en azul (info), no en el ámbar de los avisos. */
+.queue-prep {
+  background: var(--sin-info-container);
+  border: 1px solid transparent;
+  border-left: 3px solid var(--sin-info);
+  border-radius: var(--sin-radius-lg);
+  padding: var(--sin-space-8);
+}
+.queue-prep .qp-seq { color: var(--sin-on-info-container); font: var(--hp-title); letter-spacing: 0.1px; }
+.queue-prep .qp-msg { color: var(--sin-on-info-container); }
+.queue-prep .hp-bar { background: var(--sin-on-info-container); }
+.queue-prep .hp-bar-fill { background: var(--sin-info); }
+.queue-prep .qbtn { border-color: var(--sin-on-info-container); color: var(--sin-on-info-container); }
+
+.queue-estimate {
+  background: var(--sin-surface-container-low);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  color: var(--sin-on-surface-variant);
+  font: var(--hp-note);
+  letter-spacing: 0.4px;
+  padding: var(--sin-space-8);
+}
+.queue-estimate .qe-tok { color: var(--sin-outline); }
+.queue-empty,
+.corr-empty { color: var(--sin-outline); font: var(--hp-body); letter-spacing: 0.1px; }
+
+/* La caja de feedback de un job terminado. */
+.qj-fb-input { background: var(--sin-surface-container-lowest); border-color: var(--sin-outline); }
+.qj-fb-hint { color: var(--sin-outline); }
+.cleanup-row { border-bottom: 1px solid var(--sin-outline-variant); font: var(--hp-body); letter-spacing: 0.1px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13. CORRECTIONS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.corrections-view { padding: var(--sin-space-12); }
+.corr-row {
+  background: var(--sin-surface-container);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  padding: var(--sin-space-8) var(--sin-space-12);
+  margin-bottom: var(--sin-space-8);
+}
+.corr-name { font: var(--hp-title); letter-spacing: 0.1px; color: var(--sin-on-surface); }
+.corr-name.is-link:hover { color: var(--sin-primary); }
+.corr-when { font: var(--hp-label-xs); letter-spacing: 0.08px; color: var(--sin-on-surface); }
+.corr-meta { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-outline); }
+.corr-brief { color: var(--sin-on-surface-variant); }
+.corr-picker-label { font: var(--hp-label-xs); letter-spacing: 0.08px; color: var(--sin-on-surface-variant); }
+.corr-prompts summary,
+.corr-prompts-title,
+.corr-html summary { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-on-surface-variant); }
+.corr-cross-key { color: var(--sin-on-surface-variant); }
+.corr-cross-val { color: var(--sin-on-surface); }
+.corr-cross-note { color: var(--sin-on-surface-variant); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14. OVERLAYS, DESPLEGABLES Y TOOLTIP
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Scrim al 55 % de negro, que es lo que dice el skill para Modal. El
+   `--sin-scrim` es #000000; el alfa va escrito porque `color-mix` no existe en
+   CEF 99. */
+.help-overlay {
+  background: rgba(0, 0, 0, 0.55);
+  padding: var(--sin-space-16);
+}
+/* Modal: `container-high`, radio 16, sombra profunda. Acá el radio 16 sí se
+   respeta: es la única caja grande del panel. */
+.help-card {
+  background: var(--sin-surface-container-high);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-3xl);
+  box-shadow: var(--shadow-pop);
+  padding: var(--sin-space-16);
+}
+.help-head {
+  border-bottom: 1px solid var(--sin-outline-variant);
+  padding-bottom: var(--sin-space-8);
+}
+.help-body { gap: var(--sin-space-8); }
+.help-body p { color: var(--sin-on-surface-variant); }
+.help-body .help-diff { border-top: 1px solid var(--sin-outline-variant); }
+.config-body { gap: var(--sin-space-8); }
+.cfg-row { gap: var(--sin-space-4); }
+
+/* El desplegable propio del panel (el <select> nativo no abre en CEP). Shell
+   de campo, y el menú con la superficie de Menu del sistema. */
+.hps-trigger {
+  background: var(--sin-surface-container-lowest);
+  border: 1px solid var(--sin-outline);
+  border-radius: var(--sin-radius-md);
+  color: var(--sin-on-surface);
+  font: var(--hp-body);
+  letter-spacing: 0.1px;
+  padding: var(--sin-space-4) var(--sin-space-8);
+  min-height: 28px;
+}
+.hps-trigger:hover { background: var(--sin-surface-container-lowest); border-color: var(--sin-on-surface-variant); color: var(--sin-on-surface); }
+.hp-select.is-open .hps-trigger { border-color: var(--sin-primary); }
+.hps-arrow { color: var(--sin-on-surface-variant); }
+.hps-menu {
+  background: var(--sin-surface-container-high);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  box-shadow: var(--shadow-pop);
+  padding: var(--sin-space-4);
+}
+.hps-option {
+  border-radius: var(--sin-radius-md);
+  color: var(--sin-on-surface);
+  font: var(--hp-body);
+  letter-spacing: 0.1px;
+  padding: var(--sin-space-8);
+}
+.hps-option:hover { background: transparent; color: var(--sin-on-surface); }
+/* La opción elegida lleva `container-highest` y el color del primario, que es
+   como Sinapsis marca la selección persistente en un Menu. */
+.hps-option.is-sel { background: var(--sin-surface-container-highest); color: var(--sin-primary); }
+
+/* Tooltip. Los del panel son párrafos explicativos de hasta 320 px, así que se
+   usa la variante `rich` del sistema (container-high + hairline + radio 10) y
+   no la `plain`, que es una píldora en superficie inversa —clara— pensada para
+   una palabra. */
+.hp-tip {
+  background: var(--sin-surface-container-high);
+  color: var(--sin-on-surface);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  box-shadow: var(--shadow-pop);
+  font: var(--hp-note);
+  letter-spacing: 0.4px;
+  padding: var(--sin-space-8);
+}
+
+/* Enlaces. */
+a,
+.login-code a { color: var(--sin-primary); }
+a:hover { color: var(--sin-on-primary-container); }
+.login-manual > summary { color: var(--sin-on-surface-variant); font: var(--hp-note); letter-spacing: 0.4px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   15. EDITOR DE HTML
+
+   Sinapsis no trae paleta de resaltado de sintaxis, así que se armó una con
+   los roles que sí tiene. Ni un hexadecimal.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.code-edit {
+  background: var(--sin-surface-container-lowest);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-lg);
+  box-shadow: none;
+}
+.code-edit.focus-within,
+.code-edit:focus-within { border-color: var(--sin-primary); }
+.code-edit .code-hl { color: var(--sin-on-surface); }
+.code-edit .code-input { caret-color: var(--sin-primary); }
+
+.code-hl .token.comment { color: var(--sin-outline); }
+.code-hl .token.tag { color: var(--sin-primary); }
+.code-hl .token.tag .punctuation { color: var(--sin-on-surface-variant); }
+.code-hl .token.attr-name { color: var(--sin-tertiary); }
+.code-hl .token.attr-value,
+.code-hl .token.string { color: var(--sin-warning); }
+.code-hl .token.punctuation { color: var(--sin-outline); }
+.code-hl .token.property { color: var(--sin-info); }
+.code-hl .token.selector { color: var(--sin-success); }
+.code-hl .token.keyword { color: var(--sin-organizer); }
+.code-hl .token.function { color: var(--sin-tertiary-fixed-dim); }
+.code-hl .token.number,
+.code-hl .token.boolean,
+.code-hl .token.constant { color: var(--sin-error); }
+.code-hl .token.operator { color: var(--sin-secondary); background: transparent; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   16. MICRÓFONO Y MEDIDOR
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.mic-bar { gap: var(--sin-space-4); }
+.mic-btn { padding: 0 var(--sin-space-8); }
+.mic-meter-track {
+  background: var(--sin-surface-container-highest);
+  border: 1px solid var(--sin-outline-variant);
+  border-radius: var(--sin-radius-full);
+  height: 8px;
+}
+/* El medidor se colorea por lo único que importa: si pasa la compuerta del
+   dictado o no. Arena = no llega; verde = sí. */
+.mic-meter-fill { background: var(--sin-warning); }
+.mic-meter-fill.is-ok { background: var(--sin-success); }
+.mic-meter-gate { background: var(--sin-on-surface); opacity: 1; }
+.mic-meter-peak { background: var(--sin-on-surface-variant); }
+.mic-verdict { font: var(--hp-note); letter-spacing: 0.4px; color: var(--sin-on-surface-variant); }
+.mic-state { color: var(--sin-on-surface-variant); }
+
+/* Barra de desplazamiento de la lista de marcadores. */
+.markers-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--sin-surface-container-highest);
+  border: 2px solid var(--sin-surface);
+  border-radius: var(--sin-radius-full);
+}
+.markers-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--sin-outline); }
+.hps-menu::-webkit-scrollbar-thumb { background-color: var(--sin-surface-container-highest); border-radius: var(--sin-radius-full); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   17. DENSIDAD
+
+   Sinapsis está pensado para web: campos de 56, botones de 36, pestañas de 48,
+   secciones separadas 32-48 px. Este panel abre en 400 px de ancho y baja a
+   320, acoplado adentro de una app densa. Lo que se apretó, en orden de cuánto
+   costó:
+
+     · Espaciado: nada por arriba de `--sin-space-16`. Los rellenos de tarjeta
+       (16 en el sistema) van 8/12, los gaps de sección (32-48) van 8.
+     · Tipografía: siempre las clases de abajo. `label-md`, `label-sm` y
+       `label-xs` entran tal cual, con sus 12 y 11 px. Las que no entraban
+       —`title-sm`, `body-sm`, `mono-md`— conservan familia, peso y tracking y
+       bajan 1-3 px.
+     · Alturas: botones y controles en `sm` (28 px, el escalón más chico del
+       sistema). Las Tabs, 36 en vez de 40.
+     · Iconos: el piso del skill es 20 px. Los icon-only del encabezado lo
+       cumplen (28 px de caja, icono de 20). Los que van adelante de una
+       etiqueta de 12 px van a 16, que es lo que la propia ficha del Button
+       manda para el tamaño `sm` ("icons sized 16/20/22"). Las dos reglas del
+       sistema se contradicen y se eligió la del componente.
+     · Lo que NO se apretó: el radio de la ventana modal (16, el del sistema),
+       las píldoras de los botones y el anillo de foco de 2 px. No cuestan
+       alto.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Panel angosto: el mismo corte que ya usaba el panel (380 px), donde se van el
+   subtítulo, los iconos de los botones de acción y el nombre del micrófono. */
+@media (max-width: 380px) {
+  .panel-header { padding: var(--sin-space-4) var(--sin-space-8); }
+  .actions { padding: var(--sin-space-4) var(--sin-space-8); gap: var(--sin-space-4); }
+  .panel-body { padding: var(--sin-space-8); gap: var(--sin-space-4); }
+  /* Las tres pestañas con icono no entran en un renglón de 320 px y bajar una
+     a otra fila cuesta 36 px de alto, que en un panel acoplado es una tarjeta
+     de marcador entera. Se aprietan el relleno, el aire y el icono: a 320 px
+     los tres caben en 298 de los 304 disponibles (medido). */
+  .tabs { padding: 0 var(--sin-space-8); gap: var(--sin-space-2); }
+  .tab { padding: 0 var(--sin-space-4); gap: 3px; }
+  .tab::before { font-size: 16px; }
+  .session-usage { padding: 2px var(--sin-space-8) var(--sin-space-4); }
+  .queue-view .queue-panel,
+  .corrections-view { padding: var(--sin-space-8); }
+  .help-section,
+  .context-section { padding: var(--sin-space-4) var(--sin-space-8); }
+  .marker-summary { padding: var(--sin-space-8); }
+  .marker-body { padding: 0 var(--sin-space-8) var(--sin-space-8); }
+  .corr-row { padding: var(--sin-space-8); }
+  /* A 320 px el icono de la barra de acciones no se esconde como el `.btn-ico`
+     de antes: un botón de tres palabras con un rayo adelante sigue entrando, y
+     el icono es justamente lo que hace que se reconozca sin leer. Lo que se va
+     es el aire. */
+  #btn-load-markers,
+  #btn-generate-all,
+  #btn-queue-ready { padding: 0 var(--sin-space-8); }
+  /* El micrófono del encabezado se queda en 34 px (lo decide el panel) y ahí
+     no entran dos iconos de 18: el emoji 🎙 y el ▾ que había medían 11 y 10.
+     Se va el ▾ —a este ancho el control ya es un botón que abre un menú— y el
+     micrófono baja a 16: 16 + 8 de relleno + 2 de borde = 26 en 34. */
+  .hdr-mic .hps-trigger { padding: 0 var(--sin-space-4); gap: 0; }
+  .hdr-mic .hps-trigger::before { font-size: 16px; }
+  .hdr-mic .hps-arrow { display: none; }
+  .help-overlay { padding: var(--sin-space-8); }
+  .help-card { padding: var(--sin-space-12); }
+}
+
+/* Panel ancho: un poco más de aire, sin inflar. */
+@media (min-width: 640px) {
+  .panel-body { padding: var(--sin-space-12) var(--sin-space-16); gap: var(--sin-space-12); }
+  .panel-header { padding: var(--sin-space-12) var(--sin-space-16); }
+  .actions { padding: var(--sin-space-12) var(--sin-space-16); }
+  .tabs { padding: 0 var(--sin-space-16); }
+  .session-usage { padding: var(--sin-space-4) var(--sin-space-16) var(--sin-space-4); }
+  .marker-summary { padding: var(--sin-space-12); }
+  .queue-view .queue-panel,
+  .corrections-view { padding: var(--sin-space-16); }
+}
+
+/* Movimiento reducido: el skill lo pide siempre. */
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+  .btn-primary:hover,
+  .btn-generate:hover,
+  .btn-primary:active,
+  .btn-generate:active { transform: none; }
+}

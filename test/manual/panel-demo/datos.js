@@ -44,7 +44,11 @@
     secuenciaEnPremiere: SEQ_ABIERTA,
     duracionSecuencia: 3418.4,
 
-    version: "1.5.0",
+    // La real, que `abrir.js` lee de version.json. El valor de acá es sólo el
+    // respaldo para cuando este archivo se abre suelto por `file://`: escrito a
+    // mano se quedó viejo y las capturas decían una versión distinta de la del
+    // panel, que es lo último que uno quiere descubrir mirando una captura.
+    version: (typeof window !== "undefined" && window.HP_VERSION_REAL) || "1.6.0",
 
     // ── Contexto de la clase ────────────────────────────────────────────
     objetivo:
@@ -108,38 +112,72 @@
     // `numero` es el que la herramienta le asignó por su guid (no la posición):
     // por eso hay huecos, y está bien — el 4, el 6 y el 7 se borraron.
     // `imagenes`: se dibujan al vuelo como PNG (ver doble.js); `usar: true` es
-    // la etiqueta "✓ usar" (se incrusta), sin ella es "referencia".
+    // la etiqueta "✓ usar" (se incrusta), sin ella es "referencia". `name` es con
+    // qué nombre la menciona la instrucción; `documentos` son los PDFs y .md que
+    // el editor arrastró a ese marcador.
+    //
+    // ── Las MENCIONES, y por qué están todas acá ────────────────────────
+    // Desde la 1.6.0 una referencia se nombra en la instrucción con
+    // `@[ámbito/nombre]` y el motor la traduce a «imagen N» al mandar (ver
+    // bridge/prompt/menciones.js). Los cinco casos que definen si la función
+    // sirve o miente están sembrados a propósito, uno por marcador, para poder
+    // mirarlos en la maqueta sin armar nada:
+    //
+    //   · Marcador 1  — una del CURSO y una de SU CLASE en la misma instrucción,
+    //                   que es el caso donde había que contar dos listas.
+    //   · Marcador 3  — una mención EN MEDIO de una frase (así se escribe de
+    //                   verdad, no como lista al final) y otra a una imagen
+    //                   propia; encima nombra el Marcador 2, así que se ve que la
+    //                   continuidad sigue disparando sobre el texto traducido.
+    //   · Marcador 5  — una imagen que el manifiesto nombra y el disco NO tiene:
+    //                   no viaja, no ocupa número, y la ficha lo dice en ámbar.
+    //   · Marcador 8  — un DOCUMENTO mencionado (un PDF), que no se numera: se
+    //                   traduce a «el documento "…"».
+    //   · Marcador 11 — SIN menciones pero con referencias cargadas, para
+    //                   confirmar que una instrucción de siempre sigue andando
+    //                   igual (y con un "como en la imagen 2" en texto plano, que
+    //                   es lo que hay escrito en los prompts viejos).
     marcadores: [
       {
         numero: 1, guid: "mk-8f21a0", name: "Intro / placa de título", start: 12.4, duration: 6.5,
         instruccion:
           "Placa de entrada con el título de la clase: “Tu primera automatización” y abajo, chiquito, " +
           "“Módulo 3 · Clase 12”. Que entre desde la derecha y quede fija hasta el final. Sin fondo, " +
-          "va sobre mi cara así que dejá libre la mitad izquierda.",
+          "va sobre mi cara así que dejá libre la mitad izquierda.\n" +
+          "Incrustá @[marcador/logo-nova.png] arriba a la derecha, con la tipografía y los colores de " +
+          "@[curso/manual-de-marca-nova.png], y respetá el encuadre de @[clase/captura-programa-00-03-41.png].",
         generado: true, background: false,
         versiones: [1, 2, 3], modelo: "claude-sonnet-5",
         timings: { modelMs: 185000, renderMs: 67000, totalMs: 252000, version: 3 },
         imagenes: [
-          { etiqueta: "logo-nova.png", color: "#35e0d6", fondo: "#12161d", usar: true },
-          { etiqueta: "frame-00-12.png", color: "#8b97a8", fondo: "#1f2530" }
+          { name: "logo-nova.png", etiqueta: "logo-nova.png", color: "#35e0d6", fondo: "#12161d", usar: true },
+          { name: "frame-00-12.png", etiqueta: "frame-00-12.png", color: "#8b97a8", fondo: "#1f2530" }
         ]
       },
       {
         numero: 2, guid: "mk-31c7de", name: "Los 3 componentes", start: 221.8, duration: 11.2,
         instruccion:
           "Tres bloques que aparecen de a uno mientras los voy nombrando: DISPARADOR, CONDICIÓN, ACCIÓN. " +
-          "Cada uno con una línea de descripción de cuatro o cinco palabras. Alineados a la derecha, " +
+          "Cada uno con una línea de descripción de cuatro o cinco palabras, como en " +
+          "@[marcador/boceto-3-columnas.jpg]. Alineados a la derecha, " +
           "apilados, que no me tapen. El tercero que quede resaltado en cian porque es el que sigo explicando.",
         generado: false, background: false,
         versiones: [], modelo: "",
+        // Una mención COLGADA: el archivo se llama `boceto-3-bloques.jpg` y la
+        // instrucción dice `boceto-3-columnas.jpg`. Es el caso de la referencia que se
+        // borró de la lista (o del nombre escrito de memoria), y en el campo se tiene
+        // que ver en ROJO —no solo en el renglón de abajo—, porque es el único de los
+        // tres estados que no tiene arreglo automático: nadie le va a prestar su
+        // número, así que esa parte del pedido llega sin la imagen que la explicaba.
         imagenes: [
-          { etiqueta: "boceto-3-bloques.jpg", color: "#efeadf", fondo: "#2a2119" }
+          { name: "boceto-3-bloques.jpg", etiqueta: "boceto-3-bloques.jpg", color: "#efeadf", fondo: "#2a2119" }
         ]
       },
       {
         numero: 3, guid: "mk-a4b902", name: "Dato 68%", start: 444.0, duration: 8.0,
         instruccion:
-          "El 68% enorme, contando hacia arriba desde cero en el primer segundo y medio. " +
+          "El 68% enorme, contando hacia arriba desde cero en el primer segundo y medio, con el cian de " +
+          "@[curso/manual-de-marca-nova.png] y no con el celeste que salió la última vez. " +
           "Abajo chiquito: “de los carritos de compra se abandonan” y la fuente “Baymard Institute, 2025”. " +
           "Con el mismo diseño del Marcador 2, que quedó perfecto.",
         generado: true, background: false,
@@ -152,14 +190,16 @@
         instruccion:
           "El embudo completo en cuatro escalones: Visita → Carrito → Checkout → Compra, con el " +
           "porcentaje que sobrevive en cada uno (100 / 32 / 21 / 14). Que se dibuje escalón por escalón " +
-          "de arriba hacia abajo. Este va CON fondo porque acá estoy en cámara chica, abajo a la izquierda.",
+          "de arriba hacia abajo. Este va CON fondo porque acá estoy en cámara chica, abajo a la izquierda.\n" +
+          "Copiá la forma de los escalones de @[marcador/embudo-referencia.png] y los colores de " +
+          "@[curso/paleta-institucional.png].",
         generado: true, background: true,
         versiones: [1], modelo: "claude-opus-5",
         timings: { modelMs: 264000, renderMs: 118000, totalMs: 402000, version: 1 },
         imagenes: [
-          { etiqueta: "embudo-referencia.png", color: "#35e0d6", fondo: "#0e1116" },
-          { etiqueta: "paleta-modulo-3.png", color: "#fbbf24", fondo: "#191b20" },
-          { etiqueta: "captura-programa-12-58.png", color: "#8b97a8", fondo: "#242a34" }
+          { name: "embudo-referencia.png", etiqueta: "embudo-referencia.png", color: "#35e0d6", fondo: "#0e1116" },
+          { name: "paleta-modulo-3.png", etiqueta: "paleta-modulo-3.png", color: "#fbbf24", fondo: "#191b20" },
+          { name: "captura-programa-12-58.png", etiqueta: "captura 12:58", color: "#8b97a8", fondo: "#242a34" }
         ]
       },
       {
@@ -167,11 +207,17 @@
         instruccion:
           "Comparativa de dos columnas: SIN AUTOMATIZAR 4% recuperado / CON AUTOMATIZACIÓN 19% recuperado. " +
           "Que la segunda barra crezca hasta pasar a la primera. Aclarar abajo “tienda real, 6 meses, " +
-          "con permiso de la alumna”.",
+          "con permiso de la alumna”.\n" +
+          "Los números salen de @[marcador/planilla-male.png] y las reglas de cómo se muestran los datos " +
+          "están en @[curso/Guia_de_estilo_ACADEMIA_NOVA_v4.pdf], página 12. Nada de rojo para el “sin”: " +
+          "en esta marca el rojo es error.",
         generado: false, background: false,
         versiones: [], modelo: "",
         imagenes: [
-          { etiqueta: "planilla-male.png", color: "#0ae98d", fondo: "#12161d" }
+          { name: "planilla-male.png", etiqueta: "planilla-male.png", color: "#0ae98d", fondo: "#12161d" }
+        ],
+        documentos: [
+          { name: "notas-de-la-alumna.md", mediaType: "text/markdown" }
         ]
       },
       {
@@ -179,10 +225,23 @@
         instruccion:
           "Checklist de cinco puntos que se van tildando uno por uno: límite de envíos por día, " +
           "prueba con tu propio mail, condición de salida, horario permitido, y registro de errores. " +
-          "Tipografía chica, alineado a la derecha, sin iconos raros.",
+          "Tipografía chica, alineado a la derecha, sin iconos raros. Los tildes como en la imagen 2.",
         generado: false, background: false,
         versiones: [], modelo: "",
-        imagenes: []
+        // Sin ninguna mención escrita pero CON referencias cargadas, y con un
+        // "como en la imagen 2" en texto plano: es la instrucción que ya estaba
+        // escrita antes de que las menciones existieran, y tiene que seguir
+        // viajando exactamente así (el motor no reescribe "imagen N").
+        //
+        // Y es el marcador con el que se prueba a mano lo OTRO: apretar ✨ Refinar
+        // acá tiene que dejar «la imagen 2» convertida en la mención del archivo que
+        // de verdad es la 2 de este pedido, resaltada como las demás, y decirlo en el
+        // renglón de estado. Es lo único de esta vuelta que no se puede ver en una
+        // captura: hay que apretar el botón.
+        imagenes: [
+          { name: "tildes-referencia.png", etiqueta: "tildes-referencia.png", color: "#0ae98d", fondo: "#12161d" },
+          { name: "checklist-vieja.png", etiqueta: "checklist-vieja.png", color: "#efeadf", fondo: "#1f2530" }
+        ]
       },
       {
         numero: 12, guid: "mk-2e88a1", name: "Cierre / CTA", start: 2495.0, duration: 7.0,
@@ -227,6 +286,11 @@
     referenciasCurso: [
       { name: "manual-de-marca-nova.png", etiqueta: "manual-de-marca-nova", color: "#35e0d6", fondo: "#12161d", bytes: 412880 },
       { name: "logo-canal-180x60.png", etiqueta: "logo-canal 180×60", color: "#efeadf", fondo: "#0e1116", usar: true, bytes: 24104 },
+      // La que el manifiesto nombra y el disco no tiene (el disco externo
+      // desmontado). El Marcador 5 la MENCIONA a propósito: así se ve el caso
+      // completo —no viaja, no ocupa número, la ficha lo dice en ámbar y el ⬇ Log lo
+      // repite antes de gastar la llamada—.
+      { name: "paleta-institucional.png", etiqueta: "paleta institucional", color: "#8ab4f8", fondo: "#0e1116", falta: true, bytes: 96410 },
       { name: "Guia_de_estilo_ACADEMIA_NOVA_v4.pdf", mediaType: "application/pdf", bytes: 2884512 },
       { name: "tipografias-y-tamanos.md", mediaType: "text/markdown", bytes: 3180 }
     ],

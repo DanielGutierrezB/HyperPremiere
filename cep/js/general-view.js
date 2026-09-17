@@ -61,8 +61,6 @@
   // badge (lo que se lee plegado) y su renglón. Que compartieran un resumen
   // combinado sería, en cada uno, decir algo que no es sobre el bloque que se
   // está mirando.
-  var mount = null;
-  var courseMount = null;
   var summary = null;
   var seqSummary = null;
   var sourceEl = null;
@@ -71,19 +69,86 @@
   var refsConflict = null;
   var seqSection = null;
 
-  // Las dos cajas de referencias, ya montadas: una por bloque. Se guardan para
-  // poder repintarlas sin volver a crearlas, que es lo que deja que una escritura
-  // asincrónica que vuelve del disco actualice la caja que el editor tiene
-  // adelante en vez de una copia vieja.
-  var courseRefs = null;
-  var seqRefs = null;
-
   // Los dos niveles, cada uno con su campo y su archivo. `scope` es el que
-  // entiende HPGeneral.save: cuál de los dos se está guardando.
+  // entiende HPGeneral.save: cuál de los dos se está guardando, y `refScope` el que
+  // entiende HPRefs (son dos vocabularios y no uno: acá el del curso es "project"
+  // porque es del proyecto, y en las referencias es "course" porque es del curso).
   var niveles = [
-    { scope: "project", id: "general-instruction", mic: "prompt-general", texto: "courseText", input: null },
-    { scope: "sequence", id: "general-sequence-instruction", mic: "prompt-secuencia", texto: "sequenceText", input: null }
+    {
+      scope: "project", refScope: "course", id: "general-instruction",
+      rotulo: "general-label", mic: "prompt-general", texto: "courseText",
+      input: null, ficha: null
+    },
+    {
+      scope: "sequence", refScope: "sequence", id: "general-sequence-instruction",
+      rotulo: "general-sequence-label", mic: "prompt-secuencia", texto: "sequenceText",
+      input: null, ficha: null
+    }
   ];
+
+  function nivelDe(refScope) {
+    return niveles[refScope === "sequence" ? 1 : 0];
+  }
+
+  /**
+   * La tira de referencias de un nivel, recreada.
+   *
+   * Se recrea (y no se refresca) por contexto y no por gusto: cada caja queda
+   * atada al nivel que dibuja y lo que muestra sale de la caché de ESE nivel, así
+   * que al cambiar de secuencia la de la clase tiene que nacer de nuevo. Los
+   * controles del campo se cuelgan una sola vez —viven en la barra, que no se
+   * recrea— y por eso apuntan a `n.refs` por referencia y no a la caja de entonces.
+   */
+  function dibujarTira(n, cont) {
+    cont.innerHTML = "";
+    n.refs = HPRefsView.createControl(n.refScope);
+    cont.appendChild(n.refs);
+    if (n.capturaBtn) n.refs._capture = n.capturaBtn;
+    // El renglón de estado se creó una vez y vive AFUERA de la tira (la ficha lo
+    // pone debajo de la barra): la caja nueva le apunta al mismo, así que un mensaje
+    // no se pierde porque el inventario se haya redibujado.
+    if (n.estadoRefs) n.refs._status = n.estadoRefs;
+  }
+
+  /**
+   * Lo que le llega al modelo por este nivel, para poder avisar de una mención que
+   * no apunta a nada.
+   *
+   * Es SOLO su propio nivel a propósito. El texto del curso viaja en todos los
+   * marcadores de todas las clases, así que mencionar desde acá una referencia de
+   * una clase sería escribir en el archivo del curso una mención que en las otras
+   * veinte clases queda colgada. Lo que este bloque puede nombrar es lo suyo.
+   */
+  function inventarioDe(refScope) {
+    var c = ctx();
+    var st = HPRefs.state(c.projectPath, c.sequenceName);
+    // La fila la arma HPStills y no este módulo, aunque la lista sea de HPRefs: qué
+    // es una imagen y de dónde sale su miniatura tiene que contestarse en UN solo
+    // lugar, porque lo consumen el chip del campo, la tira y el feedback de la Cola,
+    // y los tres tienen que ver lo mismo.
+    return ((refScope === "sequence" ? st.sequence : st.course) || [])
+      .map(function (it) { return HPStills.deReferencia(refScope, it); });
+  }
+
+  /**
+   * El clip de adjuntar de un nivel.
+   *
+   * El botón y su selector los arma `HPPromptCard.adjuntar`, que es donde vive la
+   * lista de formatos: estuvo escrita también acá y en las otras tres pestañas, y
+   * cuatro copias de lo que el motor puede ingerir fallan en silencio —el día que
+   * entre `.rtf`, la que se olvide simplemente no deja adjuntarlo—.
+   *
+   * Lo que sigue siendo de acá es a dónde va lo que se elige: a las referencias de
+   * ESTE nivel, que son de HPRefs y no de HPStills, y el título, que nombra el
+   * nivel porque lo del curso viaja con el .prproj y lo de la clase no.
+   */
+  function botonAdjuntar(n) {
+    return HPPromptCard.adjuntar(
+      n.refScope === "course"
+        ? "Elegir el logo, el manual de marca o una captura para las referencias DEL CURSO (viajan con el .prproj)"
+        : "Elegir imágenes, PDFs o documentos para las referencias de esta clase",
+      function (files) { HPRefsView.ingerir(n.refs, files); });
+  }
 
   var seqLabel = null;
   var seqRow = null;
@@ -229,8 +294,13 @@
 
   /** Las dos cajas de referencias y el cartel de las que quedaron en el limbo. */
   function pintarReferencias() {
-    if (courseRefs) HPRefsView.refresh(courseRefs);
-    if (seqRefs) HPRefsView.refresh(seqRefs);
+    niveles.forEach(function (n) {
+      if (n.refs) HPRefsView.refresh(n.refs);
+      // Y el aviso de menciones de ese campo: una referencia que se acaba de sacar
+      // deja colgada la mención que la nombraba, y eso hay que decirlo cuando pasa
+      // y no cuando se generó.
+      if (n.ficha) n.ficha.revisar();
+    });
     HPRefsView.renderConflict(refsConflict);
   }
 
@@ -252,8 +322,6 @@
     init: function (d) {
       deps = d || {};
 
-      mount = document.getElementById("general-stills-mount");
-      courseMount = document.getElementById("general-course-refs");
       summary = document.getElementById("general-summary");
       sourceEl = document.getElementById("general-source");
       conflict = document.getElementById("general-conflict");
@@ -265,18 +333,53 @@
       seqRow = document.getElementById("general-sequence-row");
 
       niveles.forEach(function (n) {
-        n.input = document.getElementById(n.id);
-        if (!n.input) return;
+        var declarado = document.getElementById(n.id);
+        if (!declarado) return;
+
+        // ── La MISMA gramática que la ficha de un marcador ────────────
+        //
+        // Tira de referencias arriba, campo alto, barra de controles abajo. Y sin
+        // pie de acciones: estos dos bloques no generan nada, así que no tienen
+        // ningún botón que ofrecer ahí. Es exactamente lo que pidió el editor —"la
+        // misma interfaz en su versión de lo que piden"— y lo que hace que la caja
+        // de referencias no sea una maqueta pegada a los marcadores.
+        //
+        // El `<textarea>` de index.html es la DECLARACIÓN del campo —su id, su
+        // placeholder, su rótulo— y el campo con chips lo reemplaza heredando las
+        // tres (ver cep/js/campo.js: un campo que pinta chips no puede ser un
+        // textarea). Por eso `n.input` se toma DESPUÉS de montar y no antes: el
+        // elemento que queda en la pantalla es el nuevo, y colgarle los oyentes al
+        // que se fue era tener un campo que no guarda nada.
+        var padre = declarado.parentNode;
+        var ancla = declarado.nextSibling;
+        // Los controles se arman ANTES de montar: la barra los recibe ya hechos, y
+        // los dos apuntan a `n.refs` a través de una función porque la caja del
+        // inventario se recrea al cambiar de secuencia y ellos no.
+        n.capturaBtn = HPRefsView.botonCapturar(n.refScope, function () { return n.refs; });
+        n.estadoRefs = HPRefsView.crearEstado();
+        n.controles = [n.capturaBtn].concat(botonAdjuntar(n));
+        n.ficha = HPPromptCard.montar({
+          campo: declarado,
+          rotulo: n.rotulo,
+          micId: n.mic,
+          // Los prompts generales son los campos más largos que se escriben a mano
+          // en el panel (marca, paleta, tipografía, tono), así que son los que más
+          // se agradecen dictar. Van sin debounce: lo que escribe el dictado ya es
+          // el texto final, no una tecla.
+          onChange: function () { guardar(n); },
+          tira: function (cont) { n.tiraCont = cont; dibujarTira(n, cont); },
+          inventario: function () { return inventarioDe(n.refScope); },
+          canonizar: function (texto) { return HPMenciones.canonizar(texto, inventarioDe(n.refScope)); },
+          soltar: function (files) { HPRefsView.ingerir(n.refs, files); },
+          controles: n.controles,
+          estado: n.estadoRefs
+        });
+        n.input = n.ficha.campo;
         // Se marca en el evento crudo y no en el guardado: entre la primera
         // tecla y el debounce hay 300 ms, y es justo cuando llega el disco.
         n.input.addEventListener("input", function () { tecleado[n.scope] = true; });
         n.input.addEventListener("input", HPUtil.debounce(function () { guardar(n); }, DEBOUNCE_MS));
-        // Los prompts generales son los campos más largos que se escriben a mano
-        // en el panel (marca, paleta, tipografía, tono), así que son los que más
-        // se agradecen dictar. Van sin debounce: lo que escribe el dictado ya es
-        // el texto final, no una tecla.
-        var mic = micOpcional(n.input, { id: n.mic, onChange: function () { guardar(n); } });
-        if (mic) n.input.parentNode.insertBefore(mic, n.input.nextSibling);
+        if (padre) padre.insertBefore(n.ficha.el, ancla);
       });
     },
 
@@ -289,17 +392,10 @@
     hydrate: function () {
       var c = ctx();
       // Las cajas se recrean por contexto: cada una queda atada al nivel que
-      // dibuja, y lo que muestran sale de la caché de ESE nivel.
-      if (courseMount) {
-        courseMount.innerHTML = "";
-        courseRefs = HPRefsView.createControl("course");
-        courseMount.appendChild(courseRefs);
-      }
-      if (mount) {
-        mount.innerHTML = "";
-        seqRefs = HPRefsView.createControl("sequence");
-        mount.appendChild(seqRefs);
-      }
+      // dibuja, y lo que muestran sale de la caché de ESE nivel. Desde la 1.6.0 la
+      // caja vive en la TIRA de la ficha, arriba del campo, así que la recrea la
+      // función que dibuja esa tira.
+      niveles.forEach(function (n) { if (n.ficha) n.ficha.pintarTira(); });
       var turno = ++hidratacion;
       tecleado = {};
       pintar();
@@ -318,6 +414,23 @@
       // subido a los dos editores material que nadie pidió mover.
       HPGeneral.migrate(c.projectPath, c.sequenceName).then(repintar, repintar);
       HPRefs.migrate(c.projectPath, c.sequenceName).then(repintar, repintar);
+    },
+
+    /**
+     * Escribe la mención de una referencia en el campo de SU bloque.
+     *
+     * Cada nivel menciona lo suyo y nada más: el texto del curso viaja en todos los
+     * marcadores de todas las clases, así que una mención a una referencia de una
+     * clase escrita ahí quedaría colgada en las otras veinte. Lo que un bloque puede
+     * nombrar es su propio material, y por eso el ámbito de la mención y el bloque
+     * donde se escribe son siempre el mismo.
+     */
+    mencionar: function (refScope, nombre) {
+      var n = nivelDe(refScope);
+      if (!n || !n.ficha || !nombre) return;
+      HPMenciones.insertar(n.ficha.campo, HPMenciones.escribir(refScope, nombre), {
+        onChange: function () { guardar(n); n.ficha.revisar(); }
+      });
     },
 
     /**

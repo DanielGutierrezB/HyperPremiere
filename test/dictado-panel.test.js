@@ -56,7 +56,7 @@ function elemento(tag) {
     querySelectorAll: function () { return []; },
     buscar: function (clase) {
       for (const h of this.children) {
-        if (h.className === clase) return h;
+        if (String(h.className || "").split(" ").indexOf(clase) !== -1) return h;
         const hit = h.buscar && h.buscar(clase);
         if (hit) return hit;
       }
@@ -113,14 +113,25 @@ function porClase(raiz, clase) {
 }
 
 /**
- * El emoji del ✨ y su palabra, que viven en dos `<span>` y no en el
+ * El icono del ✨ y su palabra, que viven en dos `<span>` y no en el
  * `textContent` del botón.
  *
  * Están separados porque la palabra se esconde con CSS en el panel angosto, y
  * CSS no puede esconder media palabra de un nodo de texto. Los tests preguntan
  * por cada uno donde antes preguntaban por el botón entero.
+ *
+ * Desde la 1.6.0 el icono es un `<svg>` de trazo y no un emoji tipeado, así que
+ * lo que se lee no es su `textContent` —el SVG se pega con `innerHTML` y el DOM de
+ * mentira no parsea— sino `data-icono`, que HPIconos escribe justamente para que
+ * esto se pueda fijar. El "…" de "estoy trabajando" sigue siendo texto: no es un
+ * objeto que se pueda dibujar a 15 px.
  */
-function icono(btn) { const e = porClase(btn, 'mic-refine-ico'); return e ? String(e.textContent) : null; }
+function icono(btn) {
+  const e = porClase(btn, 'hp-ico');
+  if (!e) return null;
+  const n = e.getAttribute ? e.getAttribute('data-icono') : '';
+  return n || String(e.textContent || '');
+}
 function palabra(btn) { const e = porClase(btn, 'mic-refine-txt'); return e ? String(e.textContent) : null; }
 
 /** Un HPDictado de mentira que cuelga una barra reconocible. */
@@ -165,7 +176,12 @@ function dibujarCola(dictado, espia) {
     HPEngine: { call: function () { return Promise.resolve({ ok: true }); } },
     HPStills: {
       fbInit: function () {}, fbClear: function () {}, fbCollect: function () { return []; },
-      createControl: function () { const e = elemento('div'); e.className = 'marker-stills'; return e; },
+      crearTira: function () {
+        const e = elemento('div'); e.className = 'hp-tira-propia';
+        return { el: e, estado: elemento('div'), refrescar: function () {}, cuantasImagenes: function () { return 0; } };
+      },
+      inventario: function () { return []; },
+      capturar: function () {}, ingerir: function () {},
     },
     HPQueue: {
       jobs: function () { return jobs; },
@@ -192,7 +208,7 @@ function dibujarCola(dictado, espia) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -209,17 +225,21 @@ test('sin dictado, la caja de feedback de la cola se dibuja y funciona', functio
   const espia = { regenerados: [] };
   const d = dibujarCola(null, espia);
 
-  const btn = d.panel.porTexto('✎ Feedback');
+  const btn = d.panel.porTexto('Feedback');
   ok(btn, 'el job terminado sigue ofreciendo feedback: el micrófono no se lleva puesta la cola');
   btn.click();
 
   const caja = d.panel.buscar('qj-fb-input');
   ok(caja, 'y la caja de texto está');
-  ok(!d.panel.buscar('mic-bar'), 'sin micrófono, claro');
+  // La BARRA sigue estando —desde la 1.6.x es la barra de controles de la ficha y
+  // lleva el 📸 y el clip, que no tienen nada que ver con el micrófono—, pero la
+  // línea de estado del dictado no: eso es del dictado y acá no hay.
+  ok(d.panel.buscar('mic-bar'), 'la barra de controles se dibuja igual');
+  ok(!d.panel.buscar('mic-state'), 'sin la línea de estado del dictado, claro');
 
   // Lo que importa no es que la caja exista: es que ESCRIBIR Y MANDAR ande.
   caja.escribir('el título tapa la cara, subilo');
-  const refinar = d.panel.porTexto('↻ Aplicar el ajuste');
+  const refinar = d.panel.porTexto('Aplicar el ajuste');
   ok(refinar, 'el botón de refinar está');
   refinar.click();
   eq(espia.regenerados.length, 1, 'el feedback se mandó');
@@ -230,14 +250,14 @@ test('sin dictado, la caja de feedback de la cola se dibuja y funciona', functio
 test('con dictado, la caja de feedback suma el micrófono sin perder nada', function () {
   const espia = { regenerados: [], enganchados: [] };
   const d = dibujarCola(dictadoDeMentira(espia), espia);
-  d.panel.porTexto('✎ Feedback').click();
+  d.panel.porTexto('Feedback').click();
 
   ok(d.panel.buscar('mic-bar'), 'ahora sí está el micrófono');
   eq(espia.enganchados[0], 'cola:j1', 'colgado del job, que es como el motor sabe cuál dictado es cuál');
 
   const caja = d.panel.buscar('qj-fb-input');
   caja.escribir('subí el título');
-  d.panel.porTexto('↻ Aplicar el ajuste').click();
+  d.panel.porTexto('Aplicar el ajuste').click();
   eq(espia.regenerados[0].texto, 'subí el título', 'y mandar sigue andando igual');
 });
 
@@ -265,7 +285,12 @@ async function dibujarCorreccion(dictado, espia) {
     HPHost: { openSequenceAndSeek: function () {} },
     HPStills: {
       fbInit: function () {}, fbClear: function () {}, fbCollect: function () { return []; },
-      createControl: function () { const e = elemento('div'); e.className = 'marker-stills'; return e; },
+      crearTira: function () {
+        const e = elemento('div'); e.className = 'hp-tira-propia';
+        return { el: e, estado: elemento('div'), refrescar: function () {}, cuantasImagenes: function () { return 0; } };
+      },
+      inventario: function () { return []; },
+      capturar: function () {}, ingerir: function () {},
     },
     HPQueue: {
       add: function (job) { espia.encolados.push(job); },
@@ -294,12 +319,16 @@ async function dibujarCorreccion(dictado, espia) {
         return Promise.resolve({ ok: true });
       },
     },
-    document: { createElement: elemento, getElementById: function (id) { return nodos[id] || null; } },
+    document: {
+      createElement: elemento,
+      createTextNode: function (t) { const n = elemento('#text'); n.textContent = t; return n; },
+      getElementById: function (id) { return nodos[id] || null; },
+    },
   };
   if (dictado) ctx.HPDictado = dictado;
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'corrections-contexto.js', 'corrections.js']) {
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPCorrections.init({
@@ -319,13 +348,16 @@ test('sin dictado, la fila de correcciones se dibuja y encola', async function (
   const { fila } = await dibujarCorreccion(null, espia);
 
   ok(fila, 'la fila existe: sin esto la pestaña entera queda vacía y no se sabe por qué');
-  ok(!fila.buscar('mic-bar'));
+  // La barra de controles sí está (lleva el 📸 y el clip); lo que no está es la
+  // línea de estado del dictado, que es lo único que el dictado agrega.
+  ok(fila.buscar('mic-bar'), 'la barra de controles de la fila se dibuja igual');
+  ok(!fila.buscar('mic-state'), 'y sin la línea de estado del dictado');
 
   const caja = fila.buscar('corr-input');
   ok(caja, 'con su caja para escribir qué corregir');
   caja.value = 'el título tapa la cara';
 
-  const enviar = fila.porTexto('↻ Regenerar');
+  const enviar = fila.porTexto('Regenerar');
   ok(enviar, 'y su botón');
   enviar.click();
   await new Promise(function (r) { setTimeout(r, 0); }); // lee el HTML de la versión antes de encolar
@@ -340,7 +372,7 @@ test('con dictado, la fila de correcciones suma el micrófono sin perder nada', 
   ok(fila.buscar('mic-bar'), 'el micrófono está');
   eq(espia.enganchados[0], 'correccion:Marcador 3');
   fila.buscar('corr-input').value = 'subí el título';
-  fila.porTexto('↻ Regenerar').click();
+  fila.porTexto('Regenerar').click();
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(espia.encolados.length, 1, 'y encolar sigue andando');
 });
@@ -355,12 +387,12 @@ test('si el micrófono explota al colgarse, el campo se dibuja igual', function 
   const d = dibujarCola({
     attachMic: function () { throw new Error('HPEngine no está definido'); },
   }, espia);
-  d.panel.porTexto('✎ Feedback').click();
+  d.panel.porTexto('Feedback').click();
   const caja = d.panel.buscar('qj-fb-input');
   ok(caja, 'la caja está');
-  ok(!d.panel.buscar('mic-bar'), 'y el micrófono simplemente no aparece');
+  ok(!d.panel.buscar('mic-state'), 'y el micrófono simplemente no aparece');
   caja.escribir('corregí el color');
-  d.panel.porTexto('↻ Aplicar el ajuste').click();
+  d.panel.porTexto('Aplicar el ajuste').click();
   eq(espia.regenerados[0].texto, 'corregí el color');
 });
 
@@ -369,7 +401,7 @@ test('un HPDictado a medio cargar se trata como ausente', function () {
   // Un objeto sin `attachMic`: si se lo llamara igual, sería un TypeError
   // adentro del render, o sea el mismo agujero por otra puerta.
   const d = dibujarCola({}, espia);
-  d.panel.porTexto('✎ Feedback').click();
+  d.panel.porTexto('Feedback').click();
   ok(d.panel.buscar('qj-fb-input'));
 });
 
@@ -394,18 +426,34 @@ test('ningún campo de prompt llama al micrófono sin la guarda', function () {
     'la guarda tiene que contemplar que la global NO EXISTA. Preguntar por ' +
     '`!HPDictado` a secas tira ReferenceError, que es el mismo agujero por otra puerta.');
   has(guarda[0], 'catch', 'y que attachMic reviente por dentro tampoco puede tumbar el campo');
-  eq((util.replace(guarda[0], '\n').match(/HPDictado\.attachMic/g) || []).length, 0,
-    'util.js: fuera de la guarda tampoco se nombra');
+  // Lo que se cuenta es la LLAMADA (`attachMic(`) y no el nombre: desde la 1.6.0 la
+  // barra del micrófono es además la barra de controles del campo, así que
+  // `prompt-card.js` tiene que poder EXPLICAR en un comentario de dónde sale esa
+  // barra. Un comentario no cuelga ningún micrófono; lo que rompe es el paréntesis.
+  eq((util.replace(guarda[0], '\n').match(/HPDictado\.attachMic\s*\(/g) || []).length, 0,
+    'util.js: fuera de la guarda tampoco se llama');
 
-  // Y ninguna vista lo nombra por su cuenta: todas pasan por HPUtil.micOpcional.
+  // Y ninguna vista lo llama por su cuenta: todas pasan por HPUtil.micOpcional.
   fs.readdirSync(CEP).filter(function (f) {
     return /\.js$/.test(f) && f !== 'dictado.js' && f !== 'util.js';
   }).forEach(function (f) {
     const src = fs.readFileSync(path.join(CEP, f), 'utf8');
-    eq((src.match(/HPDictado\.attachMic/g) || []).length, 0,
+    eq((src.match(/HPDictado\.attachMic\s*\(/g) || []).length, 0,
       f + ': colgar el micrófono sin preguntar es lo que dejó 44 tests en rojo y, en una ' +
       'máquina sin Whisper, al editor sin campo donde escribir. Usá HPUtil.micOpcional.');
   });
+});
+
+test('la barra de controles del campo se arma con o sin dictado', function () {
+  // La otra mitad de la misma guarda, y la que hace falta desde que la barra del
+  // micrófono es TAMBIÉN la barra donde viven 📸 y el clip de adjuntar: si el
+  // camino sin dictado no armara una barra, en Windows la ficha se quedaría sin
+  // capturar del programa y sin adjuntar archivos, que no tienen nada que ver con
+  // el micrófono.
+  const src = fs.readFileSync(path.join(CEP, 'prompt-card.js'), 'utf8');
+  has(src, 'HPUtil.micOpcional', 'pide el micrófono por la guarda');
+  has(src, 'if (!barra)', 'y si no hay, arma la barra igual');
+  has(src, 'extras.forEach', 'con los mismos controles adentro');
 });
 
 // ── 5. La lógica pura del widget ─────────────────────────────────────
@@ -459,7 +507,7 @@ test('en Windows el botón se VE, apagado y diciendo por qué', function () {
   });
   ok(p.apagado, 'no se puede apretar');
   has(p.titulo, 'solo para Mac', 'y el motivo está a la vista');
-  eq(p.texto, '🎙', 'el ícono sigue siendo el micrófono: esconderlo dejaría al editor ' +
+  eq(p.icono, 'microfono', 'el dibujo sigue siendo el micrófono: esconderlo dejaría al editor ' +
     'sin saber que la función existe');
   has(p.clase, 'is-off');
 });
@@ -716,13 +764,17 @@ function montarDictado(altoPanel, o) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'dictado.js']) {
+  for (const f of ['util.js', 'iconos.js', 'store.js', 'dictado.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   const escrito = [];
   const w = ctx.HPDictado.attachMic(ta, {
     id: 'marcador:1',
     onChange: function (texto) { escrito.push(texto); },
+    // El gancho que canoniza las referencias escritas a mano al refinar. Lo pone
+    // HPPromptCard con las referencias de ESE pedido; acá se falsea para poder fijar
+    // que se aplica al texto refinado y no antes.
+    canonizar: o.canonizar,
   });
   tarjeta.appendChild(w.el);
   return {
@@ -785,14 +837,14 @@ test('el botón pasa a ■ porque el motor dice la FASE, no por lo que diga el m
   const m = montarDictado(600);
   await m.listo();
   m.boton.click();
-  eq(m.boton.textContent, '…', 'mientras prepara no se puede parar todavía');
+  eq(icono(m.boton), '…', 'mientras prepara no se puede parar todavía');
 
   // El mensaje viene en otro idioma, o reescrito, o vacío: da igual. Lo que
   // manda es `fase`. Deducirlo del texto —lo que se hacía, con un regex sobre
   // la palabra "Escuchando"— dejaba el botón en "…" en cuanto alguien tocaba
   // esa frase, y con el botón en "…" el editor NO PUEDE frenar el micrófono.
   m.avisar({ fase: 'escuchando', msg: 'Listening on «MacBook Pro Microphone»…' });
-  eq(m.boton.textContent, '■', 'con la fase alcanza');
+  eq(icono(m.boton), 'parar', 'con la fase alcanza: el dibujo pasa al cuadrado de detener');
   ok(!m.boton.disabled, 'y se puede apretar: es lo único que corta el micrófono');
 });
 
@@ -871,7 +923,7 @@ function cargarContador() {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'store.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'store.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   return ctx;
@@ -999,19 +1051,31 @@ test('el ✨ apagado siempre dice qué lo apagó', function () {
   ['sin-refinador', 'dictando', 'ocupado', 'vacio', 'ya-refinado'].forEach(function (e) {
     const p = D._pintarRefinar(e, { refinador: 'Claude Haiku', sinRefinador: 'Ollama local: no está corriendo' });
     ok(p.apagado, e + ': tiene que estar apagado');
-    eq(p.texto, '✨', e + ': el ícono se queda');
+    eq(p.icono, 'refinar', e + ': el dibujo se queda');
     ok(p.titulo.length > 40, e + ': el tooltip tiene que explicar, no rotular');
   });
 });
 
 test('el volver atrás se llama distinto según de dónde salió el texto', function () {
   const D = cargarDictado();
-  eq(D._etiquetaDeVolver('escrito', false).texto, '↩ texto original',
-    '"↩ dictado crudo" sobre un párrafo tecleado nombra un dictado que no hubo');
-  eq(D._etiquetaDeVolver('dictado', false).texto, '↩ dictado crudo');
-  eq(D._etiquetaDeVolver('escrito', true).texto, '↪ volver al refinado');
-  eq(D._etiquetaDeVolver('dictado', true).texto, '↪ volver al refinado',
+  eq(D._etiquetaDeVolver('escrito', false).texto, 'texto original',
+    '"dictado crudo" sobre un párrafo tecleado nombra un dictado que no hubo');
+  eq(D._etiquetaDeVolver('dictado', false).texto, 'dictado crudo');
+  eq(D._etiquetaDeVolver('escrito', true).texto, 'volver al refinado');
+  eq(D._etiquetaDeVolver('dictado', true).texto, 'volver al refinado',
     'para ir al refinado da igual de dónde venía: es el mismo texto');
+});
+
+test('los dos sentidos de volver comparten dibujo, y lo espejan', function () {
+  // Son las dos únicas acciones del panel que SÍ son la misma en sentidos
+  // opuestos (volver al original ⇄ volver al refinado), así que acá espejar el
+  // icono dice la verdad. Donde no lo son —"aplicar el ajuste" y "regenerar desde
+  // cero"— tienen que ser dos dibujos distintos, y eso lo fija panel-iconos.
+  const D = cargarDictado();
+  eq(D._etiquetaDeVolver('escrito', false).icono, 'volver');
+  eq(D._etiquetaDeVolver('escrito', false).espejo, false);
+  eq(D._etiquetaDeVolver('escrito', true).icono, 'volver');
+  eq(D._etiquetaDeVolver('escrito', true).espejo, true, 'el otro sentido, el mismo dibujo dado vuelta');
 });
 
 // ── 9.2 El ciclo, cableado ───────────────────────────────────────────
@@ -1062,11 +1126,11 @@ test('el ↩ devuelve lo escrito a mano carácter por carácter', async function
 
   const volver = m.volver();
   eq(volver.getAttribute('data-hidden'), 'false', 'el volver atrás queda a la vista');
-  eq(volver.textContent, '↩ texto original');
+  eq(volver.textContent, 'texto original');
   volver.click();
   eq(m.ta.value, suyo, 'exactamente lo que había: los dos espacios del principio y el renglón vacío');
   eq(m.escrito[m.escrito.length - 1], suyo, 'y también se persiste así');
-  eq(volver.textContent, '↪ volver al refinado');
+  eq(volver.textContent, 'volver al refinado');
   ok(!m.refinar.disabled, 'volver al original vuelve a habilitar el ✨');
 
   volver.click();
@@ -1172,7 +1236,7 @@ test('mientras refina, el botón se apaga y no manda un segundo pedido', async f
   has(m.linea().textContent, 'Refinando con Claude Haiku');
   // El 🎙 también queda tomado, pero NO se pone en "…": dos "…" idénticos al
   // lado del otro no dicen cuál de los dos está trabajando.
-  eq(m.boton.textContent, '🎙');
+  eq(icono(m.boton), 'microfono');
   ok(m.boton.disabled);
   has(m.boton.title, 'Esperá', 'y dice que espere, no que está pasando algo con el micrófono');
 
@@ -1182,7 +1246,7 @@ test('mientras refina, el botón se apaga y no manda un segundo pedido', async f
   soltar(REFINADO);
   await m.esperar();
   eq(m.ta.value, REFINADO.texto);
-  eq(icono(m.refinar), '✨', 'y el botón vuelve');
+  eq(icono(m.refinar), 'refinar', 'y el botón vuelve');
 });
 
 test('en todo el panel se refina de a uno, como hay un solo micrófono', async function () {
@@ -1339,7 +1403,7 @@ test('sin ningún refinador el ✨ se ve, apagado y diciendo qué falta', async 
   await m.listo();
   m.teclear('que el título entre con un fade');
   ok(m.refinar.disabled);
-  eq(icono(m.refinar), '✨', 'esconderlo dejaría al editor sin saber que la función existe');
+  eq(icono(m.refinar), 'refinar', 'esconderlo dejaría al editor sin saber que la función existe');
   eq(palabra(m.refinar), 'Refinar', 'y apagado sigue diciendo qué es: un botón gris sin nombre ni ' +
     'motivo es el que se reporta como roto');
   has(m.refinar.className, 'is-off');
@@ -1440,7 +1504,7 @@ test('la palabra vive en su propio nodo, que es lo que deja esconderla con CSS',
   const m = montarDictado(600);
   await m.listo();
   eq(palabra(m.refinar), 'Refinar', 'el botón dice qué hace');
-  eq(icono(m.refinar), '✨', 'con el emoji al lado, en otro nodo');
+  eq(icono(m.refinar), 'refinar', 'con el dibujo al lado, en otro nodo');
   // Si el emoji y la palabra compartieran el `textContent` del botón, esconder
   // una sola sería imposible: no hay selector para media frase.
   eq(String(m.refinar.textContent), '', 'y el botón no escribe texto suyo: son sus dos hijos');
@@ -1473,7 +1537,7 @@ test('la decisión pura sigue siendo solo el emoji: la palabra no es un estado',
   ['averiguando', 'sin-refinador', 'refinando', 'dictando', 'ocupado', 'vacio', 'ya-refinado', 'listo']
     .forEach(function (e) {
       const p = D._pintarRefinar(e, { refinador: 'Claude Haiku' });
-      ok(p.texto === '✨' || p.texto === '…', e + ': el emoji y nada más, es «' + p.texto + '»');
+      ok(p.icono === 'refinar' || p.texto === '…', e + ': el dibujo y nada más, es «' + (p.icono || p.texto) + '»');
       // Y con la palabra en el botón, el tooltip tiene que aportar algo más que
       // repetirla: qué va a hacer, con qué, o por qué está apagado. El único que
       // puede ser corto es el de "refinando", que no explica nada: informa que
@@ -1529,9 +1593,87 @@ test('el 🎙 se queda sin palabra, y eso es a propósito', async function () {
   // falta a esta máquina— no entra en una palabra y ya está en su tooltip.
   const m = montarDictado(600);
   await m.listo();
-  eq(m.boton.children.length, 0, 'el 🎙 es su emoji y nada más');
-  eq(String(m.boton.textContent), '🎙');
+  eq(m.boton.children.length, 1, 'el 🎙 es su dibujo y nada más: un solo hijo, el <svg>');
+  eq(icono(m.boton), 'microfono');
   ok(m.boton.title.length > 40, 'y lo suyo lo sigue diciendo el tooltip');
+});
+
+// ── 9.4 Refinar CANONIZA las referencias escritas a mano ─────────────
+//
+// "Si escribo o dicto «Imagen 1» y le doy al botón «refinar», este debería entonces
+// arreglar el formato […] al que referencia como tal." Lo hace el panel y no el
+// modelo (el orden lo conoce el panel), y se aplica DESPUÉS del refinado: el control
+// de tamaño del refinador compara lo que volvió contra lo que se le mandó, y una de
+// sus comprobaciones es justamente que no se pierda ninguna mención.
+
+test('el ✨ canoniza las referencias del texto refinado', async function () {
+  const m = montarDictado(600, {
+    canonizar: function (t) {
+      return { texto: t.replace('imagen 1', '@[marcador/boceto.png]'), nota: '«imagen 1» ahora nombra el archivo' };
+    },
+    refinar: function () { return { ok: true, texto: 'Un título como en la imagen 1.', refinador: 'Claude Haiku', ms: 1200 }; },
+  });
+  await m.listo();
+  m.teclear('un titulo como en la imagen 1');
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, 'Un título como en la @[marcador/boceto.png].',
+    'lo que queda en el campo es el refinado YA canonizado');
+  has(m.linea().textContent, 'Refinado con Claude Haiku');
+  has(m.linea().textContent, 'ahora nombra el archivo',
+    'y se dice qué le cambió: el editor tiene que poder aceptarlo o volver atrás');
+});
+
+test('el ↩ vuelve a lo que el editor había escrito, sin canonizar', async function () {
+  // La canonización es parte de lo que hizo el botón, así que deshacer la deshace.
+  const m = montarDictado(600, {
+    canonizar: function (t) { return { texto: t.replace('imagen 1', '@[marcador/boceto.png]'), nota: '' }; },
+    refinar: function () { return { ok: true, texto: 'Como en la imagen 1.', refinador: 'Haiku', ms: 900 }; },
+  });
+  await m.listo();
+  m.teclear('como en la imagen 1');
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, 'Como en la @[marcador/boceto.png].');
+  m.volver().click();
+  eq(m.ta.value, 'como en la imagen 1', 'exactamente lo que había escrito');
+});
+
+test('el dictado también canoniza al parar', async function () {
+  const m = montarDictado(600, {
+    canonizar: function (t) { return { texto: t.replace('imagen 2', '@[curso/manual.png]'), nota: 'listo' }; },
+    refinar: function () { return { ok: true, texto: 'Con la paleta de la imagen 2.', refinador: 'Haiku', ms: 800 }; },
+  });
+  await m.listo();
+  m.boton.click();
+  m.avisar({ fase: 'escuchando' });
+  await m.parar('con la paleta de la imagen dos');
+  await m.esperar();
+  eq(m.ta.value, 'Con la paleta de la @[curso/manual.png].');
+});
+
+test('sin el gancho de canonizar, refinar hace exactamente lo que hacía', async function () {
+  // Es la guarda de siempre: la caja de feedback de la Cola y las filas de
+  // Corrections cuelgan el micrófono sin pasar por HPPromptCard, así que no le
+  // mandan `canonizar`. Ahí el refinado no puede cambiar de comportamiento.
+  const m = montarDictado(600);
+  await m.listo();
+  m.teclear('como en la imagen 1');
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, REFINADO.texto, 'el refinado, tal cual volvió');
+});
+
+test('una canonización que revienta no se lleva puesto el refinado ya pagado', async function () {
+  const m = montarDictado(600, {
+    canonizar: function () { throw new Error('boom'); },
+    refinar: function () { return { ok: true, texto: 'Refinado igual.', refinador: 'Haiku', ms: 700 }; },
+  });
+  await m.listo();
+  m.teclear('algo con imagen 1');
+  m.refinar.click();
+  await m.esperar();
+  eq(m.ta.value, 'Refinado igual.', 'queda el refinado sin canonizar, que es mejor que nada');
 });
 
 test('un refinado a mano que falla también queda escrito en el log', async function () {

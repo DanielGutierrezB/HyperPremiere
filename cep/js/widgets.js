@@ -16,6 +16,8 @@
   // un <pre> coloreado por Prism (sirve offline, sin CDN). Devuelve { el,
   // getValue, setValue }. Resalta HTML + CSS + JS embebidos.
   function makeCodeEditor() {
+    var caja = document.createElement("div");
+    caja.className = "code-edit-wrap";
     var box = document.createElement("div");
     box.className = "code-edit";
     var pre = document.createElement("pre");
@@ -28,6 +30,8 @@
     input.spellcheck = false;
     box.appendChild(pre);
     box.appendChild(input);
+    caja.appendChild(box);
+    caja.appendChild(buscador(input));
 
     function paint() {
       var src = input.value;
@@ -53,11 +57,165 @@
     });
 
     return {
-      el: box,
+      el: caja,
       getValue: function () { return input.value; },
       setValue: function (v) { input.value = String(v == null ? "" : v); paint(); sync(); },
       focus: function () { input.focus(); }
     };
+  }
+
+  /**
+   * La barra de BUSCAR del editor de HTML.
+   *
+   * ── Por qué existe ───────────────────────────────────────────────────
+   *
+   * Lo pidió el editor: "al editor del html, ¿podemos agregar una opción de
+   * buscar? La idea es poder buscar una palabra en específico". Un HTML generado
+   * tiene varios cientos de líneas y el arreglo a mano suele ser cambiar un color
+   * o un texto que aparece una vez: sin buscar, hay que barrerlo con la vista.
+   * El `⌘F` del navegador no sirve acá: CEF no lo trae, y aunque lo trajera
+   * buscaría en el panel entero y no en el campo.
+   *
+   * ── Cómo resalta, que es la decisión ─────────────────────────────────
+   *
+   * NO pinta las coincidencias. El editor ya tiene dos capas —el `<pre>` que
+   * colorea Prism y el textarea transparente encima—, y meter marcas adentro del
+   * HTML que genera Prism es reescribir su salida: hay que partir los `<span>`
+   * del resaltado por el medio cuando la palabra cae entre dos, y cualquier
+   * desajuste desalinea las dos capas.
+   *
+   * En vez de eso usa la SELECCIÓN del propio campo, que ya se ve (el textarea
+   * es transparente pero su `::selection` se pinta). Ir a una coincidencia es
+   * seleccionarla, que además deja el cursor donde hay que escribir: el gesto
+   * completo es buscar y corregir, no buscar y después ubicarse.
+   */
+  function buscador(input) {
+    var barra = document.createElement("div");
+    barra.className = "code-find";
+
+    var campo = document.createElement("input");
+    campo.type = "text";
+    campo.className = "code-find-input";
+    campo.placeholder = "Buscar en el HTML…";
+    campo.setAttribute("aria-label", "Buscar en el HTML");
+
+    var cuenta = document.createElement("span");
+    cuenta.className = "code-find-count hp-dato";
+
+    var antes = botonDeBusqueda("subir", "Anterior (⇧↵)");
+    var luego = botonDeBusqueda("bajar", "Siguiente (↵)");
+
+    barra.appendChild(campo);
+    barra.appendChild(cuenta);
+    barra.appendChild(antes);
+    barra.appendChild(luego);
+
+    var encontrados = [];
+    var cual = -1;
+
+    /** Dónde empieza cada coincidencia, sin distinguir mayúsculas ni acentos. */
+    function buscar() {
+      var q = campo.value;
+      encontrados = [];
+      cual = -1;
+      if (q) {
+        // Sin mayúsculas: se busca "DIV" y se encuentra "div", que es lo que uno
+        // espera de un buscador de código. Los acentos SÍ cuentan: en un HTML lo
+        // que se busca suele ser un nombre de clase o una etiqueta, y ahí la
+        // diferencia entre "titulo" y "título" es real.
+        var texto = input.value.toLowerCase();
+        var aguja = q.toLowerCase();
+        var i = texto.indexOf(aguja);
+        while (i !== -1) {
+          encontrados.push(i);
+          // Se salta la coincidencia entera, o sea que no se cuentan las que se
+          // solapan: buscando "aa" en "aaaa" hay dos y no tres, que es lo que
+          // hace cualquier buscador y lo que uno cuenta mirando.
+          i = texto.indexOf(aguja, i + aguja.length);
+        }
+      }
+      pintarCuenta();
+    }
+
+    function pintarCuenta() {
+      var hay = encontrados.length;
+      if (!campo.value) { cuenta.textContent = ""; barra.classList.remove("sin-nada"); return; }
+      // "3 de 12" y no sólo el total: lo que se necesita saber recorriéndolas es
+      // dónde va uno, y si dio la vuelta.
+      cuenta.textContent = hay ? (cual + 1) + " de " + hay : "sin resultados";
+      barra.classList.toggle("sin-nada", !hay);
+      antes.disabled = hay < 2;
+      luego.disabled = hay < 2;
+    }
+
+    /**
+     * Va a la coincidencia `n` (da la vuelta en las dos puntas) y la deja
+     * SELECCIONADA.
+     *
+     * El scroll se calcula a mano contando renglones y no se le deja al
+     * navegador: en un textarea, mover la selección por código no arrastra la
+     * vista, así que la coincidencia quedaba seleccionada fuera de pantalla y
+     * parecía que no había encontrado nada. Se la deja en el medio del campo, que
+     * es donde se puede leer con su contexto.
+     */
+    function ir(n) {
+      if (!encontrados.length) return;
+      cual = (n + encontrados.length) % encontrados.length;
+      var desde = encontrados[cual];
+      var hasta = desde + campo.value.length;
+      input.focus();
+      input.setSelectionRange(desde, hasta);
+
+      var renglon = input.value.slice(0, desde).split("\n").length - 1;
+      var alto = parseFloat(global.getComputedStyle(input).lineHeight) || 18;
+      input.scrollTop = Math.max(0, renglon * alto - input.clientHeight / 2);
+      input.dispatchEvent(new Event("scroll"));
+      pintarCuenta();
+    }
+
+    campo.addEventListener("input", function () { buscar(); ir(0); });
+    campo.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); ir(e.shiftKey ? cual - 1 : cual + 1); }
+      // Escape devuelve el foco al código: se busca para ARREGLAR, así que salir
+      // del buscador tiene que dejar el cursor donde se va a escribir, y donde lo
+      // dejó la última coincidencia.
+      if (e.key === "Escape") { e.preventDefault(); input.focus(); }
+    });
+    antes.addEventListener("click", function () { ir(cual - 1); });
+    luego.addEventListener("click", function () { ir(cual + 1); });
+
+    // ⌘F / Ctrl+F con el cursor en el código: lo natural, y en CEF no lo toma
+    // nadie más. Si hay algo seleccionado, se busca eso, que es el gesto de
+    // "encontrá los otros como éste".
+    input.addEventListener("keydown", function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        var sel = input.value.slice(input.selectionStart, input.selectionEnd);
+        if (sel && sel.indexOf("\n") === -1) campo.value = sel;
+        campo.focus();
+        campo.select();
+        buscar();
+        if (encontrados.length) ir(0);
+      }
+    });
+    // Lo que se escribe cambia dónde están las coincidencias: recontarlas es más
+    // barato que dejar una cuenta que miente.
+    input.addEventListener("input", function () { if (campo.value) buscar(); });
+
+    return barra;
+  }
+
+  function botonDeBusqueda(icono, titulo) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "code-find-btn hp-ico-btn";
+    b.title = titulo;
+    b.disabled = true;
+    // Las mismas flechas con las que la Cola reordena: es el mismo gesto de
+    // "el de arriba" y "el de abajo", y no hace falta un dibujo nuevo.
+    if (global.HPIconos && HPIconos.el) b.appendChild(HPIconos.el(icono));
+    else b.textContent = icono === "subir" ? "\u2191" : "\u2193";
+    return b;
   }
 
   // Un único listener global cierra el desplegable abierto al clicar afuera

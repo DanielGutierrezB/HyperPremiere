@@ -315,7 +315,7 @@ function dibujar(job, opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({

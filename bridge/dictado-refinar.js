@@ -75,6 +75,9 @@ const cursorSession = require('./cursor-session');
 const providerSalud = require('./provider-salud');
 const cliErrors = require('./providers/cli-errors');
 const { getProvider } = require('./providers');
+// Las menciones de referencias que puede traer el texto (`@[curso/logo.svg]`): el
+// refinador no las puede perder, y el control de tamaño de acá abajo lo comprueba.
+const menciones = require('./prompt/menciones');
 
 // Alias del CLI: "haiku" resuelve al Haiku más nuevo que tenga la cuenta, así
 // que un modelo nuevo entra sin tocar código. Si la cuenta no tiene ninguno, el
@@ -126,6 +129,10 @@ const SISTEMA = [
   '   corrigió en voz alta ("azul… no, mejor rojo"), vale lo último que dijo.',
   '5. Español. Si el dictado viene con texto que el editor ya tenía escrito, es LA MISMA idea:',
   '   se refina todo junto en una sola instrucción, no se pega uno abajo del otro.',
+  '6. Lo que venga entre @[ y ] es una REFERENCIA A UN ARCHIVO y va TAL CUAL, carácter por',
+  '   carácter: @[curso/logo.svg] se copia igual, sin traducir, sin reordenarle las palabras',
+  '   y sin sacarle los corchetes. Podés moverla de lugar en la frase; tocarla por dentro la',
+  '   rompe.',
   '',
   'Devolvés SOLO la instrucción. Sin preámbulo, sin comillas, sin listas de qué cambiaste,',
   'sin preguntas.',
@@ -188,6 +195,26 @@ function palabras(s) {
 }
 
 /**
+ * Qué menciones había en el original y no volvieron en el refinado.
+ *
+ * Se compara el token ENTERO —ámbito y nombre— porque eso es lo que identifica una
+ * referencia (ver bridge/prompt/menciones.js): `@[curso/logo.svg]` y
+ * `@[clase/logo.svg]` son dos archivos distintos. Y se compara por conjunto y no
+ * por cantidad: perder la del curso y repetir la de la clase da el mismo número.
+ */
+function mencionesPerdidas(refinado, crudo) {
+  const enCrudo = menciones.encontrar(crudo).map((m) => m.raw);
+  if (!enCrudo.length) return [];
+  const enRefinado = {};
+  menciones.encontrar(refinado).forEach((m) => { enRefinado[m.raw] = true; });
+  const faltan = [];
+  enCrudo.forEach((raw) => {
+    if (!enRefinado[raw] && faltan.indexOf(raw) === -1) faltan.push(raw);
+  });
+  return faltan;
+}
+
+/**
  * ¿Se puede confiar en lo que volvió? Función pura y aparte para poder probar
  * cada caso sin un modelo al lado.
  *
@@ -209,6 +236,24 @@ function verificar(refinado, crudo) {
   // que el modelo se negó. El motivo correcto vale más que el rechazo.
   if (/^(no puedo|lo siento|como (?:modelo|asistente|ia)\b|i (?:can(?:'|no)t|am unable))/i.test(refinado.trim())) {
     return { ok: false, motivo: 'el refinador contestó en vez de refinar' };
+  }
+  // Las MENCIONES de referencias tienen que volver TODAS, y con el nombre intacto.
+  //
+  // Es el tercer modo de falla y el más caro de los tres, porque no se ve: una
+  // mención que el refinador se comió deja la instrucción hablando de "el logo" sin
+  // decir cuál, y una que reescribió a medias (`@[curso/logo]` sin la extensión)
+  // llega al modelo como texto suelto y el gráfico sale sin la marca. Los modelos
+  // chicos reordenan y reescriben, que es para lo que están, y un token con
+  // corchetes es exactamente lo que les da ganas de "arreglar".
+  // Se comparan los tokens crudos y no la cantidad: perder la del curso y agregar
+  // dos veces la de la clase da el mismo número.
+  const faltan = mencionesPerdidas(refinado, crudo);
+  if (faltan.length) {
+    return {
+      ok: false,
+      motivo: 'el refinado perdió la referencia ' + faltan.join(' y ') +
+        ': queda el texto original, que sí la tiene',
+    };
   }
   if (c >= 8 && r < Math.ceil(c * 0.35)) {
     return {

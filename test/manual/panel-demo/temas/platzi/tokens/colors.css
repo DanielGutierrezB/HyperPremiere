@@ -1,0 +1,44 @@
+/* Platzi Sinapsis — M3 color roles as --sin-* custom properties.
+   Source: radiance-web/design-system/design-tokens/inputs/sinapsis/colors.json
+   Platzi ships DARK-FIRST: :root carries the dark scheme so tokens resolve without a scope;
+   [data-theme="sinapsis-dark"|"sinapsis-light"] re-scope subtrees, matching production.
+   NOTE: for Claude Artifacts use tokens/artifacts.css instead (light-first remap + Google Fonts). */
+:root,[data-theme="sinapsis-dark"]{color-scheme:dark;
+--sin-primary:#09E989;--sin-on-primary:#033922;--sin-primary-container:#0A492E;--sin-on-primary-container:#6DEBB4;
+--sin-primary-fixed:#5AFFA3;--sin-primary-fixed-dim:#00E385;--sin-on-primary-fixed:#00210F;--sin-on-primary-fixed-variant:#00522D;--sin-inverse-primary:#007442;
+--sin-secondary:#B6CBB8;--sin-on-secondary:#233527;--sin-secondary-container:#4B6350;--sin-on-secondary-container:#C8DFCB;
+--sin-secondary-fixed:#A7F3BE;--sin-secondary-fixed-dim:#8CD7A3;--sin-on-secondary-fixed:#142318;--sin-on-secondary-fixed-variant:#3A5040;
+--sin-tertiary:#A3CDDB;--sin-on-tertiary:#10353D;--sin-tertiary-container:#2D6671;--sin-on-tertiary-container:#CAE9F2;
+--sin-tertiary-fixed:#C1E8FF;--sin-tertiary-fixed-dim:#7FD0F9;--sin-on-tertiary-fixed:#001E2B;--sin-on-tertiary-fixed-variant:#004D67;
+--sin-error:#FEB4AB;--sin-on-error:#690005;--sin-error-container:#93000A;--sin-on-error-container:#F7CDCB;
+--sin-surface:#121413;--sin-surface-dim:#080B0A;--sin-surface-bright:#434342;
+--sin-surface-container-lowest:#1C1F1E;--sin-surface-container-low:#212422;--sin-surface-container:#252726;--sin-surface-container-high:#2E3130;--sin-surface-container-highest:#383B3A;
+--sin-on-surface:#DCE5E4;--sin-on-surface-variant:#BEC8C9;
+--sin-outline:#899394;--sin-outline-variant:rgba(137,147,148,0.36);
+--sin-inverse-surface:#DCE5E4;--sin-inverse-on-surface:#2B3232;
+--sin-scrim:#000000;--sin-shadow:#000000;
+--sin-warning:#F9D894;--sin-on-warning:#442E04;--sin-warning-container:#65470B;--sin-on-warning-container:#F9E4B8;
+--sin-success:#89E689;--sin-on-success:#0B3D0B;--sin-success-container:#174F17;--sin-on-success-container:#B6EDB6;
+--sin-info:#A0BAEE;--sin-on-info:#091B3E;--sin-info-container:#192E57;--sin-on-info-container:#C0D0F2;
+--sin-organizer:#FF833F;--sin-on-organizer:#411700;--sin-organizer-container:#883700;--sin-on-organizer-container:#FFDBCB;
+/* State layers (state-layers.json): hover 8 / focus 12 / pressed 16 — percentages for color-mix();
+   disabled 0.38 — unitless for opacity:. Never retype the numbers. */
+--sin-state-hover:8%;--sin-state-focus:12%;--sin-state-pressed:16%;--sin-state-disabled:0.38 /* @kind other */}
+[data-theme="sinapsis-light"]{color-scheme:light;
+--sin-primary:#05854D;--sin-on-primary:#FFFFFF;--sin-primary-container:#AEF4D6;--sin-on-primary-container:#0B5133;
+--sin-primary-fixed:#5AFFA3;--sin-primary-fixed-dim:#00E385;--sin-on-primary-fixed:#00210F;--sin-on-primary-fixed-variant:#00522D;--sin-inverse-primary:#09E989;
+--sin-secondary:#4E5F52;--sin-on-secondary:#FFFFFF;--sin-secondary-container:#D8DFD9;--sin-on-secondary-container:#2E3830;
+--sin-secondary-fixed:#A7F3BE;--sin-secondary-fixed-dim:#8CD7A3;--sin-on-secondary-fixed:#142318;--sin-on-secondary-fixed-variant:#3A5040;
+--sin-tertiary:#237485;--sin-on-tertiary:#FFFFFF;--sin-tertiary-container:#C2E5F0;--sin-on-tertiary-container:#204850;
+--sin-tertiary-fixed:#C1E8FF;--sin-tertiary-fixed-dim:#7FD0F9;--sin-on-tertiary-fixed:#001E2B;--sin-on-tertiary-fixed-variant:#004D67;
+--sin-error:#BA1A1A;--sin-on-error:#FFFFFF;--sin-error-container:#FFDAD6;--sin-on-error-container:#410002;
+--sin-surface:#F0F5F4;--sin-surface-dim:#B7C1C0;--sin-surface-bright:#FFFFFF;
+--sin-surface-container-lowest:#F8FCFB;--sin-surface-container-low:#E7EDEC;--sin-surface-container:#DDE4E3;--sin-surface-container-high:#D1D9D8;--sin-surface-container-highest:#C4CDCC;
+--sin-on-surface:#151E1D;--sin-on-surface-variant:#3B4A49;
+--sin-outline:#5E6B6A;--sin-outline-variant:rgba(94,107,106,0.36);
+--sin-inverse-surface:#29332B;--sin-inverse-on-surface:#E9F3E8;
+--sin-scrim:#000000;--sin-shadow:#000000;
+--sin-warning:#8E620B;--sin-on-warning:#FFFFFF;--sin-warning-container:#F6E8CB;--sin-on-warning-container:#533A09;
+--sin-success:#157915;--sin-on-success:#FFFFFF;--sin-success-container:#D1F0D1;--sin-on-success-container:#104110;
+--sin-info:#133986;--sin-on-info:#FFFFFF;--sin-info-container:#D0DBF1;--sin-on-info-container:#10244C;
+--sin-organizer:#A64A10;--sin-on-organizer:#FFFFFF;--sin-organizer-container:#FFDBCB;--sin-on-organizer-container:#411700}

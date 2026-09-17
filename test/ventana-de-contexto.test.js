@@ -59,7 +59,7 @@ function cargarPanel() {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'store.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'store.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   return { HPUtil: ctx.HPUtil, HPStore: ctx.HPStore, disco: disco };
@@ -466,7 +466,7 @@ function armarPanel(cfg, extra) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'store.js', 'config-ui.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'store.js', 'config-ui.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   ctx.HPConfigUI.init();

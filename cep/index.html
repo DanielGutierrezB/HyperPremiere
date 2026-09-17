@@ -22,6 +22,13 @@
          enteras a la fila de abajo. Adentro de .header-tools envolvía por el
          medio del grupo y el ? terminaba encima del ⟳. -->
     <span id="hdr-status" class="hdr-chip is-idle" title="Estado de la secuencia">sin secuencia</span>
+    <!-- Lo único que queda del contador de la sesión acá arriba: el MONTO. El
+         detalle entero (entrada, caché, salida, generaciones, el desglose y el
+         botón de reiniciar) vive en ⚙ desde la v1.6.0 — se mira una vez por
+         sesión y se llevaba una franja fija de 40.5 px. El monto se queda porque
+         es el aviso de que estás gastando, y se dibuja solo si hay costo
+         informado: con Cursor (suscripción, no informa costo) no aparece. -->
+    <span id="hdr-usage" class="hdr-usage" data-hidden="true" title="Lo gastado en esta sesión. El detalle está en ⚙."></span>
     <div class="header-tools">
       <!-- El micrófono del dictado. Lo llena HPMicSelect (el MISMO control que
            la fila de ⚙) y arranca escondido: en una máquina donde no se puede
@@ -31,7 +38,7 @@
       <button id="btn-config" class="icon-btn" type="button" title="Configuración del modelo (proveedor, credenciales)" aria-label="Configuración">⚙</button>
       <button id="btn-help" class="icon-btn" type="button" title="¿Cómo funciona?" aria-label="Ayuda">?</button>
       <button id="btn-update" class="btn-update" type="button" title="Buscar actualización en GitHub y recargar el panel completo (sirve para traer cambios o revivir el motor)">
-        <span class="update-icon">⟳</span> <span id="version-label">v1.5.3</span>
+        <span class="update-icon">⟳</span> <span id="version-label">v1.6.0</span>
       </button>
     </div>
   </header>
@@ -45,10 +52,10 @@
       </div>
       <div class="help-body">
         <p><strong>1. Cargá marcadores.</strong> Poné marcadores con duración en tu secuencia de Premiere y pulsá <em>Cargar marcadores</em>. Cada marcador se vuelve una tarjeta.</p>
-        <p><strong>2. Dale contexto.</strong> Escribí el <em>Objetivo de la clase</em> (o cargá el transcript JSON y lo deriva solo). En <em>Prompt general</em> ponés estilo, marca, tipografía y colores del curso entero (no lo repetís en cada clase ni en cada marcador), y en <em>Prompt de secuencia</em> lo que cambia solo en esta clase — los dos viajan, y donde se contradigan manda el de la secuencia. Por marcador escribís una instrucción específica, podés capturar el frame del programa (📸) y arrastrar imágenes/PDFs/referencias.</p>
+        <p><strong>2. Dale contexto.</strong> Escribí el <em>Objetivo de la clase</em> (o cargá el transcript JSON y lo deriva solo). En <em>Prompt general</em> ponés estilo, marca, tipografía y colores del curso entero (no lo repetís en cada clase ni en cada marcador), y en <em>Prompt de secuencia</em> lo que cambia solo en esta clase — los dos viajan, y donde se contradigan manda el de la secuencia. Por marcador escribís una instrucción específica, podés capturar el frame del programa y arrastrar imágenes, PDFs o referencias <strong>sobre el campo</strong>: quedan adjuntas y mencionadas donde estabas escribiendo.</p>
 
         <p class="help-diff"><strong>— Transcript: generarlo o importarlo —</strong><br>
-        <strong>🎙 Transcribir esta secuencia</strong> usa tu Whisper LOCAL (large-v3): transcribe el video del clip principal de la secuencia, detecta el idioma solo (sirve mezclando español e inglés) y se alinea automáticamente al timeline. Sin nube, sin tokens; guarda un respaldo (transcript-whisper.json) en la carpeta de la secuencia. Requiere <code>whisper</code> (pip install openai-whisper) o <code>mlx_whisper</code> en el PATH. También podés <strong>importar un JSON</strong>: al cargarlo, las <strong>unidades de tiempo se validan y corrigen solas</strong> contra la duración real de la secuencia (frames, milisegundos…) y el estado te muestra el veredicto (transcript vs secuencia ✓/⚠) — un transcript de la misma secuencia debe caer solo, sin ajustar nada. El <strong>Desfase (s)</strong> queda solo para transcripts de OTRA base de tiempo (video original + timeline editado): positivo = recortaste el inicio; negativo = agregaste intro; <strong>Detectar del timeline</strong> lo estima. Cada transcript nuevo reinicia el desfase a 0.</p>
+        <strong>Transcribir esta secuencia</strong> usa tu Whisper LOCAL (large-v3): transcribe el video del clip principal de la secuencia, detecta el idioma solo (sirve mezclando español e inglés) y se alinea automáticamente al timeline. Sin nube, sin tokens; guarda un respaldo (transcript-whisper.json) en la carpeta de la secuencia. Requiere <code>whisper</code> (pip install openai-whisper) o <code>mlx_whisper</code> en el PATH. También podés <strong>importar un JSON</strong>: al cargarlo, las <strong>unidades de tiempo se validan y corrigen solas</strong> contra la duración real de la secuencia (frames, milisegundos…) y el estado te muestra el veredicto (transcript vs secuencia ✓/⚠) — un transcript de la misma secuencia debe caer solo, sin ajustar nada. El <strong>Desfase (s)</strong> queda solo para transcripts de OTRA base de tiempo (video original + timeline editado): positivo = recortaste el inicio; negativo = agregaste intro; <strong>Detectar del timeline</strong> lo estima. Cada transcript nuevo reinicia el desfase a 0.</p>
         <p><strong>3. Generá.</strong> El modelo diseña una animación HTML (HyperFrames), la renderiza y la coloca en el timeline sobre el marcador. Todo pasa por una <strong>cola</strong> que procesa de a uno (mientras uno renderiza, el siguiente ya se va diseñando).</p>
 
         <p class="help-diff"><strong>— Imágenes: referencia vs. usar —</strong><br>
@@ -101,7 +108,7 @@
     <div id="ep-progress" class="hp-bar" data-hidden="true"><div id="ep-fill" class="hp-bar-fill"></div></div>
     <div id="ep-msg" class="ep-msg muted"></div>
     <div id="ep-row-whisper" class="ep-row" data-hidden="true">
-      <span id="ew-text" class="ep-text">Falta el Whisper local: sin él, 🎙 no puede transcribir la secuencia.</span>
+      <span id="ew-text" class="ep-text">Falta el Whisper local: sin él no se puede transcribir la secuencia ni dictar.</span>
       <button id="btn-install-whisper" type="button" class="btn-primary" title="Baja e instala el Whisper local en una carpeta del panel. Te dice cuánto pesa antes de empezar.">Instalar Whisper</button>
     </div>
     <div id="ew-progress" class="hp-bar" data-hidden="true"><div id="ew-fill" class="hp-bar-fill"></div></div>
@@ -110,13 +117,6 @@
   </div>
 
   <div id="batch-status" class="muted"></div>
-
-  <!-- Contador de uso de la sesión de Claude (tokens acumulados). -->
-  <div id="session-usage" class="session-usage" title="Uso acumulado en esta sesión">
-    <span class="su-label">Sesión</span>
-    <span id="su-value" class="su-value">↑0 ↓0</span>
-    <button id="su-reset" type="button" class="su-reset" title="Reiniciar contador">reiniciar</button>
-  </div>
 
   <!-- Pestañas: marcadores / cola (para colas largas) / correcciones. -->
   <div class="tabs">
@@ -130,19 +130,19 @@
          el contexto de la anterior hasta que recargues los marcadores. -->
     <div id="seq-notice" class="seq-notice" data-hidden="true" aria-live="polite"></div>
 
-    <div id="output" class="output" aria-live="polite">
-      <span class="placeholder">Pulsá "Cargar marcadores" para leer la secuencia activa.</span>
-    </div>
-
-    <!-- El estilo del CURSO entero, arriba de todo y AFUERA del área de
-         marcadores: no es de ninguna clase ni de ningún marcador, es la marca, y
-         se queda al cambiar de secuencia. Lo propio de esta clase está abajo, en
-         "Estilo de esta secuencia", adentro de Marcadores. Los dos viajan al
-         modelo y el de abajo manda donde se contradigan; eso lo dice el renglón
-         de cada bloque (ver describe() en js/general-prompt.js). Viene
-         pre-replegado: el badge cuenta qué hay adentro sin abrirlo. -->
-    <details id="general-section" class="context-section general-section">
-      <summary><span class="section-title">Estilo del curso</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
+    <!-- Los TRES alcances, como tres tarjetas hermanas al ras: el curso, esta
+         clase y el estilo de esta secuencia. El alcance lo dice el título de
+         cada una, no una escalera de sangrías (ver la sección 8 de style.css).
+         Los tres viajan al modelo y el más específico manda donde se
+         contradigan; eso lo dicen los dos renglones que se nombran entre sí y
+         la insignia de cada bloque (ver describe() en js/general-prompt.js).
+         El del curso viene pre-replegado: el badge cuenta qué hay adentro sin
+         abrirlo.
+         Dos van arriba del rótulo "Marcadores" y el de la SECUENCIA va abajo,
+         con la lista: el separador separa lo que es del curso de lo que es de
+         esta clase (ver el comentario de ese bloque). -->
+    <details id="general-section" class="context-section general-section hp-tarjeta">
+      <summary class="hp-sumario"><span class="section-title">Estilo del curso</span><span class="cfg-summary section-state" id="general-summary"></span></summary>
       <div class="context-body">
         <!-- Dos editores, un mismo .prproj: el que abre el proyecto tiene que
              ver QUÉ contexto va a viajar con el que genera. El cartel de
@@ -150,29 +150,33 @@
              —sin secuencia abierta el otro no existe— y de sus tres respuestas
              la cara reemplaza justo este archivo, el que comparten los dos. -->
         <div id="general-conflict" class="general-conflict" data-hidden="true"></div>
+        <!-- Las referencias del curso —el manual de marca, el logo, la paleta—
+             viven ARRIBA de este campo desde la v1.6.0, y no en una caja aparte
+             más abajo: van con el prompt, y el editor escribe mirándolas. La tira
+             y la barra de controles (📸 capturar, el clip de adjuntar, 🎙 dictar,
+             ✨ refinar) las arma HPPromptCard con la MISMA gramática que la ficha
+             de un marcador, y por eso este HTML no las nombra.
+             Este `<textarea>` es la DECLARACIÓN del campo —su id, su placeholder y
+             su rótulo— y HPCampo lo reemplaza por el campo con chips heredando las
+             tres, en el mismo lugar: un campo que pinta las menciones como chips no
+             puede ser un textarea (ver cep/js/campo.js). El rótulo lo nombra con
+             `aria-labelledby` y no con `for=`, que sólo alcanza a un control de
+             formulario. -->
         <div class="general-level">
-          <label class="field-label" for="general-instruction">Prompt general · TODO el curso</label>
-          <textarea id="general-instruction" rows="3" placeholder="Marca, paleta, tipografía, tono… lo que vale para todas las clases del curso. Se queda al cambiar de secuencia."></textarea>
+          <label class="field-label" id="general-label">Prompt general · TODO el curso</label>
+          <textarea id="general-instruction" rows="3" placeholder="Marca, paleta, tipografía, tono… lo que vale para todas las clases del curso. Se queda al cambiar de secuencia. Arrastrá acá el logo o el manual de marca para adjuntarlo y mencionarlo."></textarea>
         </div>
         <span id="general-source" class="general-source"></span>
-        <!-- Las referencias del curso: el manual de marca, el logo, la paleta.
-             Van acá arriba porque su alcance es el de este bloque —todo el
-             curso— y viven en archivos al lado del .prproj, como los dos
-             textos. Hasta la 1.5.1 este bloque no las tenía y las de abajo se
-             quedaban en el localStorage de la máquina: el renglón prometía
-             "viaja con el .prproj" y las imágenes eran la excepción muda. -->
-        <label class="field-label" title="Se guardan en la carpeta del proyecto: viajan con el .prproj y las ve cualquiera que lo abra.">Referencias del curso (capturas, logos, PDFs)</label>
-        <div id="general-course-refs"></div>
       </div>
     </details>
 
-    <details id="context-section" class="context-section" open>
-      <summary><span class="section-title">Contexto de la clase</span><span class="section-state" id="context-summary"></span></summary>
+    <details id="context-section" class="context-section hp-tarjeta" open>
+      <summary class="hp-sumario"><span class="section-title">Contexto de la clase</span><span class="section-state" id="context-summary"></span></summary>
       <div class="context-body">
         <label class="field-label" for="objective">Objetivo de la clase</label>
         <textarea id="objective" rows="3" placeholder="Describe qué debe lograr el estudiante al terminar esta clase. Se usa como contexto para generar instrucciones por marcador."></textarea>
         <div class="transcript-row">
-          <button id="btn-transcribe-seq" type="button" class="btn-primary" title="Transcribe el video de esta secuencia con tu Whisper local (large-v3, detecta el idioma solo — sirve para clases que mezclan español e inglés) y lo alinea automáticamente al timeline. Sin nube, sin tokens. Si no tenés Whisper instalado, el panel te ofrece instalarlo solo con el botón “Instalar Whisper” (arriba, junto a “Preparar motor”).">🎙 Transcribir esta secuencia</button>
+          <button id="btn-transcribe-seq" type="button" class="btn-primary" title="Transcribe el video de esta secuencia con tu Whisper local (large-v3, detecta el idioma solo — sirve para clases que mezclan español e inglés) y lo alinea automáticamente al timeline. Sin nube, sin tokens. Si no tenés Whisper instalado, el panel te ofrece instalarlo solo con el botón “Instalar Whisper” (arriba, junto a “Preparar motor”)."><svg class="btn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2a2.9 2.9 0 0 1 2.9 2.9v4.8a2.9 2.9 0 0 1-5.8 0V6.1A2.9 2.9 0 0 1 12 3.2z"/><path d="M5.8 10.9a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.1v3.7"/><path d="M9.2 20.8h5.6"/></svg><span>Transcribir esta secuencia</span></button>
           <button id="whisper-badge" type="button" class="whisper-badge" data-hidden="true"></button>
           <button id="btn-load-transcript" type="button" title="Cargá el JSON del transcript de la clase; se usa como contexto y para derivar el objetivo">Cargar JSON</button>
           <input type="file" id="transcript-file" accept="application/json,.json" hidden>
@@ -190,33 +194,45 @@
 
     <div class="section-label">Marcadores</div>
 
-    <!-- Encabezado PERSISTENTE de los marcadores de abajo: lo que vale para
-         TODOS los de esta clase y para ninguno de otra. Va acá adentro, y el del
-         curso arriba y afuera, porque son dos alcances distintos y mezclarlos en
-         una sola caja hacía parecer que el del curso también era de acá.
+    <!-- Lo que vale para TODOS los marcadores de esta clase y para ninguno de
+         otra, y por eso va DEBAJO del rótulo "Marcadores", con la lista.
+
+         La 1.6.0 (etapa 1) lo movió arriba del rótulo creyendo que estaba
+         corrigiendo el mismo error que se había corregido para el prompt del
+         curso. No lo era: el editor lo había puesto acá a propósito, y el
+         argumento es mejor que el de la simetría — lo que está debajo del
+         separador es de la SECUENCIA en la que estás y cambia al cambiar de
+         clase, y el estilo del curso se mantiene. Así que el separador no
+         separa "los bloques" de "la lista": separa lo que es del curso de lo
+         que es de esta clase.
+
+         (Por esa misma regla "Contexto de la clase" también sería de la
+         secuencia. Queda arriba: nunca molestó ahí y el editor señaló solo
+         éste. Anotado, no tocado.)
+
          Sin secuencia abierta el bloque entero no se ofrece: no hay carpeta
          donde guardar ni el texto ni las referencias. -->
-    <details id="general-sequence-section" class="context-section general-section">
-      <summary><span class="section-title">Estilo de esta secuencia</span><span class="cfg-summary section-state" id="general-sequence-summary"></span></summary>
+    <details id="general-sequence-section" class="context-section general-section hp-tarjeta">
+      <summary class="hp-sumario"><span class="section-title">Estilo de esta secuencia</span><span class="cfg-summary section-state" id="general-sequence-summary"></span></summary>
       <div class="context-body">
         <div class="general-level is-sequence" id="general-sequence-row">
-          <label class="field-label" for="general-sequence-instruction" id="general-sequence-label">Prompt de secuencia</label>
-          <textarea id="general-sequence-instruction" rows="2" placeholder="Lo que cambia SOLO en esta clase (“esta va en blanco y negro”). Se suma al del curso y manda donde se contradigan."></textarea>
+          <label class="field-label" id="general-sequence-label">Prompt de secuencia</label>
+          <textarea id="general-sequence-instruction" rows="2" placeholder="Lo que cambia SOLO en esta clase (“esta va en blanco y negro”). Se suma al del curso y manda donde se contradigan. Arrastrá acá una imagen o un PDF para adjuntarlo y mencionarlo."></textarea>
         </div>
         <span id="general-sequence-source" class="general-source"></span>
-        <!-- Las referencias de ESTA clase, en la carpeta de esta secuencia. Ya
-             no en el localStorage: viajan con el .prproj igual que las del
-             curso, pero adentro de su carpeta, que es el alcance de este
-             bloque. El cartel de abajo es lo que queda de la migración: lo que
-             esta máquina tenía guardado cuando el proyecto ya tenía otras. -->
-        <label class="field-label" title="Se guardan en la carpeta de esta secuencia, adentro del proyecto: viajan con el .prproj y valen solo para esta clase.">Referencias de esta secuencia (capturas, logos, PDFs)</label>
+        <!-- Las referencias de ESTA clase viven en la carpeta de esta secuencia y
+             se dibujan arriba de su campo, igual que las del curso (ver el
+             comentario del bloque de arriba). Lo que queda acá es el cartel de la
+             migración: lo que esta máquina tenía guardado cuando el proyecto ya
+             tenía otras. -->
         <div id="general-refs-conflict" class="general-conflict" data-hidden="true"></div>
-        <div id="general-stills-mount"></div>
       </div>
     </details>
 
     <div class="markers-scroll">
-      <div id="markers" class="markers"></div>
+      <!-- `hp-lista` es la separación entre tarjetas, y es la misma en las tres
+           pestañas: el `gap` de la lista y nada más (ver la sección 9 del CSS). -->
+      <div id="markers" class="markers hp-lista"></div>
     </div>
 
   </main>
@@ -324,6 +340,23 @@
           <div id="mic-meter"></div>
         </div>
 
+        <!-- Lo gastado en esta sesión. Vive en ⚙ y no en el encabezado: es un
+             dato que se mira una vez por sesión y arriba se llevaba una franja
+             fija de 40.5 px. Y va al FINAL de la lista, no en el medio: es una
+             LECTURA entre ajustes, y ⚙ ya tiene 214 elementos — meterle 200 px
+             de números entre dos controles que sí se cambian (el modelo y el
+             nivel de pensamiento) es justo lo que Hick penaliza.
+             El desglose se muestra escrito y no en un tooltip: si abriste ⚙ y
+             bajaste hasta acá, es porque lo querés leer. -->
+        <div id="row-session" class="cfg-row">
+          <label class="field-label">Uso de esta sesión</label>
+          <div id="session-usage" class="session-usage">
+            <span id="su-value" class="su-value">sin generaciones todavía</span>
+            <button id="su-reset" type="button" class="su-reset" title="Vuelve el contador a cero. Desde acá se mide limpio.">reiniciar</button>
+          </div>
+          <span id="su-detail" class="su-detail muted"></span>
+        </div>
+
         <div class="config-actions">
           <button id="btn-save-config" type="button" class="btn-primary" title="Guarda la configuración del modelo (proveedor, modelo y credenciales)">Guardar</button>
           <span id="config-status" class="muted"></span>
@@ -357,13 +390,27 @@
          recursos, que es lo normal al volver de la revisión con la clase
          re-cortada. -->
     <div id="corr-picker" class="corr-picker"></div>
-    <div id="corr-list" class="corr-list"></div>
+    <div id="corr-list" class="corr-list hp-lista"></div>
   </div>
+
+  <!-- La línea de estado del panel. Va acá abajo y AFUERA de las tres vistas,
+       por dos motivos medidos (está explicado en la sección 4 de style.css):
+       arriba, aparecer empujaba 30 px hacia abajo todo el contenido, y adentro
+       de #view-markers los mensajes que escribe la Cola se pintaban en una
+       vista escondida. No ocupa lugar cuando no hay nada que atender: la
+       muestra y la esconde setOutput() en js/main.js. -->
+  <div id="output" class="output" data-hidden="true" aria-live="polite"></div>
 
   <!-- Orden de carga: helpers → log → fronteras (motor/host) → estado → widgets → cola → vistas → orquestador -->
   <script src="js/CSInterface.js"></script>
   <script src="js/vendor/prism.js"></script>
   <script src="js/util.js"></script>
+  <!-- Los iconos de trazo (antes emojis tipeados en el JS) y la gramática de las
+       menciones de referencias. Van temprano y sin dependencias: los usan tanto
+       las vistas como el widget del dictado. -->
+  <script src="js/iconos.js"></script>
+  <script src="js/menciones.js"></script>
+  <script src="js/campo.js"></script>
   <script src="js/log.js"></script>
   <script src="js/engine-client.js"></script>
   <script src="js/host-client.js"></script>
@@ -375,6 +422,10 @@
   <script src="js/transcript.js"></script>
   <script src="js/widgets.js"></script>
   <script src="js/dictado.js"></script>
+  <!-- El cuerpo de ficha que comparten los tres lugares donde se le pide algo al
+       modelo (marcador, estilo del curso, estilo de esta secuencia). Va después de
+       dictado.js porque la barra de controles ES la barra del micrófono. -->
+  <script src="js/prompt-card.js"></script>
   <script src="js/stills.js"></script>
   <script src="js/refs-view.js"></script>
   <script src="js/queue.js"></script>

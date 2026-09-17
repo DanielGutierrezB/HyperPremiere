@@ -31,11 +31,30 @@ function elemento(tag) {
     addEventListener: function (ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
     click: function () { (this.listeners.click || []).forEach(function (f) { f({ stopPropagation: function () {} }); }); },
     change: function () { (this.listeners.change || []).forEach(function (f) { f({}); }); },
-    querySelector: function () { return null; },
+    /**
+     * `querySelector` de mentira, pero de verdad: entiende una lista de clases
+     * separadas por coma (`.still-thumb, .resource-chip`), que es la única forma
+     * que el panel usa contra la tira.
+     *
+     * Era un stub que devolvía `null` siempre, y eso hacía INVISIBLE para los
+     * tests al código que pregunta "¿la tira tiene algo?" — que es justo donde
+     * estaba el bug de la tira que no se destapaba. Un stub que contesta que no
+     * hay nada es peor que no tenerlo: el test pasa y no mide.
+     */
+    querySelector: function (sel) {
+      const clases = String(sel || '').split(',')
+        .map(function (s) { return s.trim().replace(/^\./, ''); })
+        .filter(Boolean);
+      for (const c of clases) {
+        const hit = this.buscar && this.buscar(c);
+        if (hit) return hit;
+      }
+      return null;
+    },
     querySelectorAll: function () { return []; },
     buscar: function (clase) {
       for (const h of this.children) {
-        if (h.className === clase) return h;
+        if (String(h.className || "").split(" ").indexOf(clase) !== -1) return h;
         const hit = h.buscar && h.buscar(clase);
         if (hit) return hit;
       }
@@ -109,7 +128,16 @@ function dibujar(jobs, opts) {
     HPEngine: { call: function () { return Promise.resolve({ ok: true }); } },
     HPStills: {
       fbInit: function () {}, fbClear: function () {}, fbCollect: function () { return [0]; },
-      createControl: function () { const el = elemento('div'); el.className = 'marker-stills'; return el; },
+      // La tira de referencias de la ronda, que desde la 1.6.x es la misma que la
+      // de una ficha de marcador (`crearTira`, no la caja completa de antes).
+      crearTira: function () {
+        const el = elemento('div'); el.className = 'hp-tira-propia';
+        return { el: el, estado: elemento('div'), refrescar: function () {}, cuantasImagenes: function () { return 0; } };
+      },
+      // El inventario que mira el resaltado de menciones. Vacío: lo que se fija
+      // acá es el cableado, y el inventario tiene sus propios tests.
+      inventario: function () { return []; },
+      capturar: function () {}, ingerir: function () {},
     },
     HPQueue: {
       jobs: function () { return jobs; },
@@ -135,7 +163,11 @@ function dibujar(jobs, opts) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'queue-view.js']) {
+  // `menciones.js`, `campo.js` y `prompt-card.js` entran desde la 1.6.x: la ronda
+  // de feedback es el cuerpo de ficha compartido, con su campo de chips y su barra
+  // de controles. Los tres son reales, no dobles: es justo lo que se vino a
+  // compartir.
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -162,7 +194,7 @@ function terminado(extra) {
 }
 
 function abrirFeedback(d) {
-  const btn = d.panel.porTexto('✎ Feedback');
+  const btn = d.panel.porTexto('Feedback');
   ok(btn, 'el job terminado ofrece dar feedback');
   btn.click();
   return d.panel;
@@ -184,7 +216,7 @@ test('el nombre lleva al timeline, sin arrastrar el panel a otra pestaña', func
 
 test('a Marcadores se sigue llegando por “Editar HTML”, que sí lo necesita', function () {
   const d = dibujar([terminado()]);
-  d.panel.porTexto('✎ Editar HTML').click();
+  d.panel.porTexto('Editar HTML').click();
   eq(d.espia.aMarcadores.length, 1);
   eq(d.espia.aMarcadores[0].abrirEditor, true, 'y con el editor abierto');
   eq(d.espia.timeline.length, 0);
@@ -195,15 +227,32 @@ test('a Marcadores se sigue llegando por “Editar HTML”, que sí lo necesita'
 test('la caja de feedback ofrece las dos salidas', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  ok(d.panel.porTexto('↻ Aplicar el ajuste'), 'refinar sobre lo que hay');
-  ok(d.panel.porTexto('⟲ Regenerar desde cero'), 'o tirarlo y rediseñar');
+  ok(d.panel.porTexto('Aplicar el ajuste'), 'refinar sobre lo que hay');
+  ok(d.panel.porTexto('Regenerar desde cero'), 'o tirarlo y rediseñar');
 });
+
+/**
+ * Escribe en el campo de la ronda como escribe el editor: se le pone el texto y
+ * después se emite el `input`, que es el orden del navegador.
+ *
+ * Antes alcanzaba con emitir el evento con un `target` de mentira, porque el
+ * handler leía `e.target.value`. Ya no: el campo es un `contenteditable` con chips
+ * (cep/js/campo.js) y su `value` sale de serializar lo que tiene adentro, así que
+ * el texto tiene que estar EN el campo. Que el test tenga que ponerlo ahí es lo
+ * correcto: es lo que pasa de verdad.
+ */
+function escribir(d, texto) {
+  const campo = d.panel.buscar('qj-fb-input');
+  campo.value = texto;
+  campo.listeners.input.forEach(function (f) { f({}); });
+  return campo;
+}
 
 test('refinar manda el texto y las imágenes que quedaron activas', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  d.panel.buscar('qj-fb-input').listeners.input[0]({ target: { value: 'subí el título' } });
-  d.panel.porTexto('↻ Aplicar el ajuste').click();
+  escribir(d, 'subí el título');
+  d.panel.porTexto('Aplicar el ajuste').click();
 
   eq(d.espia.regenerados.length, 1);
   eq(d.espia.regenerados[0].texto, 'subí el título');
@@ -216,7 +265,7 @@ test('refinar sin escribir nada avisa, en vez de rediseñar por su cuenta', func
   // regeneración total. El editor se enteraba al ver el resultado.
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  d.panel.porTexto('↻ Aplicar el ajuste').click();
+  d.panel.porTexto('Aplicar el ajuste').click();
 
   eq(d.espia.regenerados.length, 0, 'no se encoló nada');
   eq(d.espia.desdeCero.length, 0);
@@ -228,7 +277,7 @@ test('refinar sin escribir nada avisa, en vez de rediseñar por su cuenta', func
 test('desde cero pregunta siempre: está pegado a Refinar y se le apunta mal', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  d.panel.porTexto('⟲ Regenerar desde cero').click();
+  d.panel.porTexto('Regenerar desde cero').click();
 
   eq(d.espia.desdeCero.length, 0, 'un clic no arranca nada');
   eq(d.espia.confirmaciones.length, 1);
@@ -242,8 +291,8 @@ test('desde cero pregunta siempre: está pegado a Refinar y se le apunta mal', f
 test('con feedback escrito, la confirmación avisa que ese texto no se usa', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  d.panel.buscar('qj-fb-input').listeners.input[0]({ target: { value: 'el fondo tapa el texto' } });
-  d.panel.porTexto('⟲ Regenerar desde cero').click();
+  escribir(d, 'el fondo tapa el texto');
+  d.panel.porTexto('Regenerar desde cero').click();
 
   has(d.espia.confirmaciones[0].cuerpo, 'NO se usa');
   has(d.espia.confirmaciones[0].cuerpo, 'Aplicar el ajuste', 'y dice cuál es el botón que sí lo usa');
@@ -251,31 +300,55 @@ test('con feedback escrito, la confirmación avisa que ese texto no se usa', fun
 
 // Los dos botones estaban AL COSTADO del campo, en dos columnas altas y
 // angostas, y el campo se quedaba con lo que sobraba: 137 px con el panel en 400
-// y 57 px en 320, medido en la maqueta. Ahora van debajo, cada uno a lo ancho.
+// y 57 px en 320, medido en la maqueta. Desde la 1.6.x la ronda ES el cuerpo de
+// ficha compartido, así que el campo se lleva el ancho entero por estructura —no
+// comparte renglón con nada— y las dos salidas viven en el PIE de la ficha, el
+// mismo lugar y la misma regla que en la ficha de un marcador.
 // Lo que se puede fijar acá es la ESTRUCTURA (qué nodo cuelga de cuál y en qué
 // orden); el tamaño y el color se fijan leyendo el CSS, en
 // panel-caja-feedback.test.js, porque este DOM de mentira no tiene layout.
 
-test('la fila del campo es solo el campo: los botones se fueron abajo', function () {
+test('el campo de la ronda es el campo de una ficha, y está solo en su caja', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  const fila = d.panel.buscar('qj-feedback');
-  ok(fila, 'la fila del campo sigue ahí');
-  eq(fila.children.length, 1, 'y no comparte el renglón con nada');
-  eq(fila.children[0].className, 'qj-fb-input', 'lo único adentro es el cuadro de texto');
+  const envoltorio = d.panel.buscar('hp-campo');
+  ok(envoltorio, 'el campo vive en el envoltorio de la ficha');
+  // El campo y nada más: ningún botón le come ancho. Hubo un ESPEJO de resaltado
+  // acá adentro —un `<div>` detrás pintando el mismo texto con las menciones en
+  // `<span>`— y se fue con los chips: un chip muestra `@Imagen_1` donde el texto
+  // guardado tiene 38 caracteres, así que no hay nada que alinear.
+  eq(envoltorio.children.map(function (c) { return c.className; }).join(' | '),
+    'qj-fb-input hp-campo-input',
+    'el campo solo; nada que le pelee el ancho');
 });
 
-test('las dos salidas van juntas en su propia fila, y el ajuste primero', function () {
+test('las dos salidas van en el pie de la ficha, y el ajuste a la derecha', function () {
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  const acciones = d.panel.buscar('qj-fb-actions');
-  ok(acciones, 'las dos salidas tienen fila propia debajo del campo');
+  const pie = d.panel.buscar('hp-acciones');
+  ok(pie, 'la ronda tiene el mismo pie que la ficha de un marcador');
+  // A la izquierda lo que descarta trabajo hecho, a la derecha lo que se aprieta
+  // todos los días: es la regla del pie, y acá se cumple igual que allá.
+  eq(pie.buscar('hp-acciones-izq').children.map(function (b) { return b.textContent; }).join(),
+    'Regenerar desde cero', 'lo destructivo, lejos del dedo');
   // El rótulo se fija acá a propósito: NO puede volver a decir "Refinar". El
   // ✨ Refinar del dictado queda a seis píxeles y reescribe el texto del pedido,
   // no la animación; dos botones con la misma palabra pegados era una trampa.
-  eq(acciones.children.map(function (b) { return b.textContent; }).join(' | '),
-    '↻ Aplicar el ajuste | ⟲ Regenerar desde cero',
-    'en ese orden: arriba la de todos los días, abajo la que descarta trabajo');
+  eq(pie.buscar('hp-acciones-der').children.map(function (b) { return b.textContent; }).join(),
+    'Aplicar el ajuste', 'y la de todos los días en el vértice');
+});
+
+test('la ronda trae los chips de mención, que antes no tenía', function () {
+  // El motor ya traducía las menciones del campo `adjustment` igual que las de la
+  // instrucción de un marcador (ver CAMPOS_CON_MENCIONES en bridge/engine.js), así
+  // que un `@[curso/logo.svg]` escrito acá viajaba traducido y el panel no lo
+  // pintaba ni avisaba si quedaba colgado. Lo trae el cuerpo compartido.
+  const d = dibujar([terminado()]);
+  abrirFeedback(d);
+  const campo = d.panel.buscar('hp-campo-input');
+  ok(campo, 'el campo que pinta las menciones como chips');
+  eq(campo.contenteditable, 'true', 'y es editable: acá se escribe');
+  ok(d.panel.buscar('hp-aviso'), 'y el renglón que dice si alguna no apunta a nada');
 });
 
 test('el ajuste es de la familia “rehacer” y desde cero es la apagada', function () {
@@ -283,8 +356,8 @@ test('el ajuste es de la familia “rehacer” y desde cero es la apagada', func
   // botones vuelven a ser dos `.qbtn` cualquiera y se pierde la jerarquía.
   const d = dibujar([terminado()]);
   abrirFeedback(d);
-  eq(d.panel.porTexto('↻ Aplicar el ajuste').className, 'qbtn qbtn-react');
-  eq(d.panel.porTexto('⟲ Regenerar desde cero').className, 'qbtn qbtn-fresh');
+  eq(d.panel.porTexto('Aplicar el ajuste').className, 'qbtn qbtn-react');
+  eq(d.panel.porTexto('Regenerar desde cero').className, 'qbtn qbtn-fresh');
 });
 
 // ── 3. Ver solo esta secuencia ───────────────────────────────────────
@@ -349,4 +422,58 @@ test('si no hay nada de la secuencia abierta, se dice en vez de quedar en blanco
   has(t, 'No hay nada de “Clase 99”');
   has(t, '4 marcador(es) de otras secuencias ocultos');
   ok(d.panel.buscar('queue-filter'), 'y el filtro sigue ahí para poder destildarlo');
+});
+
+// ── El material cambia y los chips se enteran ─────────────────────────
+//
+// Una ficha montada se anota en `HPPromptCard` para poder repintarse cuando
+// cambia la lista de referencias. Es la mitad de arriba del arreglo que pidió el
+// editor —"si elimino la imagen, sigue apareciendo referenciada normal"—: la de
+// abajo es que la tira avise (lo fija `feedback-imagenes`) y la del medio, que el
+// campo sepa repintar (lo fija `menciones-campo`).
+//
+// Acá se mide que la ronda de feedback, que es una ficha como cualquier otra,
+// quede anotada y se repinte cuando alguien avisa.
+test('la ronda de feedback se anota para repintarse cuando cambia el material', function () {
+  const d = dibujar([terminado({ id: 'j1', seqName: 'Clase 23', label: 'Marcador 1' })]);
+  const antes = d.ctx.HPPromptCard._montadas();
+  d.panel.porTexto('Feedback').click();
+  ok(d.ctx.HPPromptCard._montadas() > antes, 'abrir la ronda monta una ficha, y queda anotada');
+
+  // Y repintar no explota ni pierde lo escrito, que es lo único que el editor
+  // notaría si esto se hiciera mal.
+  const campo = d.panel.buscar('qj-fb-input');
+  campo.value = 'el cartel tapa la cara del profe';
+  d.ctx.HPPromptCard.repintarTodas();
+  eq(campo.value, 'el cartel tapa la cara del profe', 'el texto sigue ahí después de repintar');
+});
+
+// La tira se esconde cuando no tiene nada (`.hp-tira[data-vacia="true"]`), y esa
+// marca la calculaba UNA sola vez, al montar. El problema es que hay dos maneras
+// de que la tira cambie y sólo una pasa por ahí: la ficha la redibuja entera,
+// pero los dueños del material —`HPStills` y `HPRefsView`— escriben adentro por su
+// cuenta cuando se captura un cuadro o se suelta un archivo.
+//
+// Con la marca vieja, el material se guardaba y la miniatura quedaba en el DOM
+// adentro de un contenedor con `display: none`. Lo reportó el editor sobre los dos
+// bloques de estilo, que es donde más se nota porque ahí la tira suele arrancar
+// vacía: "al darle captura […] no aparecen", y después "sí los trae pero no
+// aparecen en sus interfaces".
+test('la tira escondida se destapa cuando le aparece material', function () {
+  const d = dibujar([terminado({ id: 'j1', seqName: 'Clase 23', label: 'Marcador 1' })]);
+  d.panel.porTexto('Feedback').click();
+
+  const tira = d.panel.buscar('hp-tira');
+  ok(tira, 'la ronda tiene su tira');
+  eq(tira.getAttribute('data-vacia'), 'true', 'arranca vacía, o sea escondida');
+
+  // Como cuando el 📸 guarda un cuadro: el dueño escribe adentro de la tira sin
+  // volver a dibujarla.
+  const propia = tira.buscar('hp-tira-propia');
+  const thumb = d.ctx.document.createElement('div');
+  thumb.className = 'still-thumb';
+  propia.appendChild(thumb);
+
+  d.ctx.HPPromptCard.repintarTodas();
+  eq(tira.getAttribute('data-vacia'), 'false', 'y al aparecer material deja de estar escondida');
 });

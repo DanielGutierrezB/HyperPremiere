@@ -40,20 +40,54 @@ const puerto = (function () {
 
 function fileUrl(p) { return "file://" + encodeURI(p).replace(/#/g, "%23"); }
 
-/** cep/index.html + <base> + los dos scripts de la maqueta. */
-function armar(basePath, datosSrc, dobleSrc) {
+/**
+ * Los temas en prueba viven en `temas/<nombre>/tema.css` y se cargan DESPUÉS
+ * del CSS del panel, así que solo pisan lo que redefinen. Sin `?tema=` no se
+ * carga ninguno y se ve la interfaz tal como está publicada: probar una
+ * propuesta no puede dañar la que los editores tienen hoy.
+ */
+const temasDir = path.join(__dirname, "temas");
+
+function temasDisponibles() {
+  try {
+    return fs.readdirSync(temasDir).filter(function (n) {
+      return fs.existsSync(path.join(temasDir, n, "tema.css"));
+    });
+  } catch (e) { return []; }
+}
+
+/** cep/index.html + <base> + los dos scripts de la maqueta (+ el tema). */
+function armar(basePath, datosSrc, dobleSrc, temaHref) {
   let html = fs.readFileSync(indexReal, "utf8");
   if (html.indexOf("<head>") === -1) {
     throw new Error("cep/index.html cambió de forma: no encuentro <head>.");
   }
   html = html.replace("<head>", '<head>\n  <base href="' + basePath + '">');
 
+  if (temaHref) {
+    // Al final del <head>, para quedar después de css/style.css.
+    if (html.indexOf("</head>") === -1) {
+      throw new Error("cep/index.html cambió de forma: no encuentro </head>.");
+    }
+    html = html.replace("</head>",
+      '  <!-- TEMA EN PRUEBA (test/manual/panel-demo/temas): no existe en el panel real ni en el ZXP -->\n' +
+      '  <link rel="stylesheet" href="' + temaHref + '">\n</head>');
+  }
+
   const marca = '<script src="js/CSInterface.js"></script>';
   if (html.indexOf(marca) === -1) {
     throw new Error("cep/index.html cambió de forma: no encuentro el <script> de CSInterface.");
   }
+  // La versión de VERDAD, leída de version.json y puesta antes de los datos
+  // falsos. Estaba escrita a mano en `datos.js` y se quedó en "1.5.0", así que
+  // las capturas de la maqueta decían una versión y el panel real otra — y eso
+  // se descubre justo cuando uno mira una captura para decidir si publica.
+  // `datos.js` la usa si está y si no cae en su valor propio, así que el archivo
+  // sigue abriéndose solo por `file://` sin el servidor.
+  const real = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "..", "version.json"), "utf8"));
   return html.replace(marca,
     "<!-- MAQUETA (test/manual/panel-demo): no existe en el panel real ni en el ZXP -->\n" +
+    "  <script>window.HP_VERSION_REAL = " + JSON.stringify(String(real.version || "")) + ";</script>\n" +
     '  <script src="' + datosSrc + '"></script>\n' +
     '  <script src="' + dobleSrc + '"></script>\n' +
     "  " + marca);
@@ -88,9 +122,14 @@ function servirArchivo(res, abs) {
 const server = http.createServer(function (req, res) {
   const ruta = decodeURIComponent((req.url || "/").split("?")[0]);
   if (ruta === "/" || ruta === "/panel.html") {
-    // Se rearma en cada recarga: tocás cep/ o datos.js, apretás F5 y está.
+    // Se rearma en cada recarga: tocás cep/, datos.js o un tema, apretás F5.
+    const q = new URLSearchParams((req.url || "").split("?")[1] || "");
+    const tema = (q.get("tema") || "").replace(/[^a-z0-9-]/gi, "");
+    const temaHref = (tema && temasDisponibles().indexOf(tema) !== -1)
+      ? "/temas/" + tema + "/tema.css"
+      : "";
     let html;
-    try { html = armar("/cep/", "/demo/datos.js", "/demo/doble.js"); }
+    try { html = armar("/cep/", "/demo/datos.js", "/demo/doble.js", temaHref); }
     catch (e) { res.writeHead(500); res.end(String(e.message)); return; }
     res.writeHead(200, { "Content-Type": TIPOS[".html"], "Cache-Control": "no-store" });
     res.end(html);
@@ -98,6 +137,11 @@ const server = http.createServer(function (req, res) {
   }
   if (ruta.indexOf("/demo/") === 0) {
     return servirArchivo(res, path.join(__dirname, ruta.slice("/demo/".length)));
+  }
+  if (ruta.indexOf("/temas/") === 0) {
+    const abs = path.normalize(path.join(temasDir, ruta.slice("/temas/".length)));
+    if (abs.indexOf(temasDir) !== 0) { res.writeHead(403); res.end("nope"); return; }
+    return servirArchivo(res, abs);
   }
   if (ruta.indexOf("/cep/") === 0) {
     const abs = path.normalize(path.join(cepDir, ruta.slice("/cep/".length)));
@@ -129,6 +173,14 @@ server.listen(puerto, "127.0.0.1", function () {
   console.log("  " + url + "?e=cursor-sin-cli   Cursor elegido y sin el binario (spawn cursor-agent ENOENT)");
   console.log("  " + url + "?e=cursor-sin-cupo  Cursor con credencial pero la cuenta sin cupo (⚙ en ámbar)");
   console.log("  (se combinan con coma: ?e=whisper,otra-secuencia)\n");
+
+  const temas = temasDisponibles();
+  if (temas.length) {
+    console.log("Temas en prueba — se combinan con los escenarios (?tema=x&e=y):");
+    temas.forEach(function (t) { console.log("  " + url + "?tema=" + t); });
+    console.log("  " + url + "                    sin ?tema= : la interfaz tal como está publicada\n");
+  }
+
   console.log("Los datos falsos se editan en test/manual/panel-demo/datos.js — recargás y listo.");
   console.log("Ctrl+C para cortar.\n");
 

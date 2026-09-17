@@ -12,7 +12,7 @@
 // Medido en la maqueta (`test/manual/panel-demo/medir-botones.js` y una corrida
 // puntual sobre la caja), a 320 y 400 px:
 //
-//              campo   ↻ Aplicar el ajuste   ⟲ Regenerar desde cero
+//              campo   Aplicar el ajuste   Regenerar desde cero
 //   antes 320    57    61 (pide 62)       147 (pide 148)
 //   antes 400   137    61 (pide 62)       147 (pide 148)
 //   después 320 278   278 (pide 87)       278 (pide 142)
@@ -61,7 +61,9 @@ function reglas(css) {
       if (b) {
         const cuerpo = limpio.slice(b.desde, i);
         if (cuerpo.indexOf('{') === -1) {
-          out.push({ selector: b.selector, cuerpo: cuerpo, dentroDeMedia: abiertos.length > 0 });
+          // El selector se normaliza: los de varias líneas se escriben con un
+          // salto por selector y se buscan acá con espacios.
+          out.push({ selector: b.selector.replace(/\s+/g, ' '), cuerpo: cuerpo, dentroDeMedia: abiertos.length > 0 });
         }
       }
       selDesde = i + 1;
@@ -84,35 +86,54 @@ function declaraciones(selector) {
   return d;
 }
 
-/** Los px de una declaración de tamaño ("12px" → 12). */
+/**
+ * Los px de una declaración de tamaño ("12px" → 12), resolviendo los tokens de
+ * la retícula ("var(--sp-2)" → 4). Desde la v1.6.0 el espaciado del panel sale
+ * de seis tokens y no de números sueltos, así que un lector que solo entienda
+ * "12px" mediría `NaN` en media hoja.
+ */
 function px(valor) {
-  const m = /^([\d.]+)px$/.exec(String(valor || '').trim());
+  let v = String(valor || '').trim();
+  const token = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v);
+  if (token) v = String(declaraciones(':root')[token[1]] || '').trim();
+  const m = /^([\d.]+)px$/.exec(v);
   return m ? Number(m[1]) : NaN;
 }
 
-const ACCIONES = declaraciones('.qj-fb-actions');
-const REFINAR = declaraciones('.qj-fb-actions .qbtn-react');
-const DESDE_CERO = declaraciones('.qj-fb-actions .qbtn-fresh');
+// Desde la 1.6.x la ronda de feedback ES el cuerpo de ficha compartido, así que
+// las dos salidas viven en su PIE: el mismo contenedor y la misma regla que el
+// pie de una ficha de marcador (`.hp-acciones`, que fija panel-ficha-marcador).
+const ACCIONES = declaraciones('.hp-acciones');
+const REFINAR = declaraciones('.hp-acciones .qbtn-react');
+const DESDE_CERO = declaraciones('.qbtn-fresh');
 
-// ── 1. Los dos, a lo ancho y debajo del campo ─────────────────────────
+// ── 1. Las dos, en el pie de la ficha ─────────────────────────────────
 
-test('las acciones tienen contenedor propio, y es el que reparte', function () {
-  // El reparto se pide acá y no en los botones: el default del panel es que un
-  // botón valga su etiqueta (panel-botones-flex.test.js), y acá hace falta lo
-  // contrario. Que la regla viva en mi contenedor es lo que evita el `flex`
-  // suelto por las dudas, que es cómo empezó el lío de la 1.4.50.
-  eq(ACCIONES.display, 'flex', 'la fila de las dos salidas');
-  eq(ACCIONES['flex-wrap'], 'wrap', 'y tiene que poder envolver, o el 100% no tiene a dónde ir');
-  ok(px(ACCIONES.gap) > 0, 'con aire entre los dos: ' + ACCIONES.gap);
-  ok(px(ACCIONES['margin-top']) > 0, 'y separadas del campo');
+test('las dos salidas viven en el pie del cuerpo compartido', function () {
+  // Tuvieron contenedor propio (`.qj-fb-actions`) con su propio reparto, y ahora
+  // no hace falta: el pie de la ficha ya reparte en las dos puntas, que es la
+  // regla que esta caja necesitaba —lo que se aprieta lejos de lo que descarta
+  // trabajo hecho—. Un contenedor menos, y la misma jerarquía que en la ficha.
+  eq(ACCIONES.display, 'flex', 'el pie de la ficha');
+  eq(ACCIONES['justify-content'], 'space-between', 'reparte en las dos puntas');
+  eq(ACCIONES['flex-wrap'], 'wrap-reverse',
+    'y al envolver, lo destructivo queda arriba: sigue lejos del dedo');
+  const viejas = REGLAS.filter(function (r) { return /qj-fb-actions/.test(r.selector); });
+  eq(viejas.length, 0, 'sin reglas huérfanas del contenedor viejo: ' + viejas.map((r) => r.selector).join(' | '));
 });
 
-test('cada botón se lleva el renglón entero: nadie decide el ancho del otro', function () {
-  // `1 1 100%` con `wrap` es "uno por renglón, a lo ancho" sin un número elegido
-  // a ojo. Es lo que saca del medio el problema de fondo: que "Regenerar desde
-  // cero" son 20 caracteres y antes eso le comía el ancho al cuadro de texto.
-  eq(REFINAR.flex, '1 1 100%', 'Refinar, a lo ancho');
-  eq(DESDE_CERO.flex, '1 1 100%', 'y desde cero también: los dos son largos');
+test('el campo ya no comparte renglón con nadie, así que nadie le come ancho', function () {
+  // Éste era el problema de fondo, medido: "Regenerar desde cero" son 20
+  // caracteres y pedía 147 px de los 278 de la fila, o sea que la etiqueta más
+  // larga decidía el ancho del cuadro donde se escribe el feedback. Se arreglaba
+  // con `flex: 1 1 100%` en cada botón; ahora se arregla por estructura, que es
+  // mejor: el campo es el `.hp-campo-input` de la ficha y mide el 100 % de ella.
+  eq(declaraciones('.hp-campo-input').width, '100%');
+  const enLaFila = REGLAS.filter(function (r) {
+    return !r.dentroDeMedia && /^\.qj-feedback\b/.test(r.selector);
+  });
+  eq(enLaFila.length, 0,
+    'y la fila que los tenía al lado no existe más: ' + enLaFila.map((r) => r.selector).join(', '));
 });
 
 test('ninguno de los dos vuelve a los blindajes de la 1.4.50', function () {
@@ -120,32 +141,28 @@ test('ninguno de los dos vuelve a los blindajes de la 1.4.50', function () {
   // se invirtió la regla global. Un botón con `min-width` propio y `nowrap` es un
   // botón que puede quedar más chico que su texto y pintarlo afuera.
   [['Refinar', REFINAR], ['desde cero', DESDE_CERO]].forEach(function (par) {
-    eq(par[1]['min-width'], undefined, par[0] + ' no necesita un piso a mano: su renglón es entero');
+    eq(par[1]['min-width'], undefined, par[0] + ' no necesita un piso a mano');
     ok(par[1].flex !== 'none', par[0] + ' no se blinda con `flex: none`');
   });
 });
 
-test('la fila del campo ya no estira ningún botón al alto del cuadro', function () {
-  // Era `align-self: stretch` en los dos, que es lo que los hacía columnas
-  // altas. Si vuelve, vuelve el desbalance de la captura.
-  const enLaFila = REGLAS.filter(function (r) {
-    return !r.dentroDeMedia && /^\.qj-feedback\s+\.qbtn/.test(r.selector);
-  });
-  eq(enLaFila.length, 0,
-    'la fila del campo no tiene que estilar botones: ' + enLaFila.map((r) => r.selector).join(', '));
-  eq(declaraciones('.qj-fb-input').flex, '1', 'y el campo se lleva la fila entera');
-});
-
 // ── 2. La jerarquía entre los dos ─────────────────────────────────────
 
-test('Refinar se ve como la acción, con el mismo trato que en Corrections', function () {
-  // Es la MISMA acción en los dos lugares donde se da feedback —aplicá lo que
-  // escribí sobre lo que ya existe—, así que se ve igual. Si alguna vez cambia
-  // una, este test pide que se cambien las dos o que se explique la diferencia.
-  const enCorrecciones = declaraciones('.corr-actions .qbtn-react');
-  eq(REFINAR['font-size'], enCorrecciones['font-size'], 'mismo cuerpo que “↻ Regenerar”');
-  eq(REFINAR['font-weight'], enCorrecciones['font-weight'], 'y mismo peso');
-  eq(REFINAR.background, enCorrecciones.background, 'y el mismo relleno ámbar de la familia “rehacer”');
+test('Refinar y el Regenerar de Corrections ya son LA MISMA regla', function () {
+  // Es la misma acción en los dos lugares donde se da feedback —aplicá lo que
+  // escribí sobre lo que ya existe— y hasta la 1.6.0 eran dos reglas de CSS que
+  // se mantenían parecidas a mano (`.qj-fb-actions .qbtn-react` y
+  // `.corr-actions .qbtn-react`, con el mismo cuerpo y el mismo peso escritos dos
+  // veces). Ahora las dos filas usan el pie de la misma ficha, así que hay UNA
+  // regla y la pregunta "¿siguen iguales?" no se puede contestar mal.
+  const viejas = REGLAS.filter(function (r) {
+    return /\.corr-actions|\.qj-fb-actions/.test(r.selector);
+  });
+  eq(viejas.length, 0, 'ninguna de las dos reglas viejas quedó: ' + viejas.map((r) => r.selector).join(' | '));
+  eq(REFINAR['font-size'], '12px', 'el cuerpo de la acción de la ronda');
+  eq(px(REFINAR['min-height']) >= 28, true, 'y su alto: ' + REFINAR['min-height']);
+  eq(declaraciones('.qbtn-react, .queue-react').background, 'rgba(245, 180, 60, 0.10)',
+    'con el relleno ámbar de la familia “rehacer”, que sale de `.qbtn-react`');
 });
 
 test('desde cero se ve más chico y más apagado que Refinar', function () {
@@ -157,12 +174,23 @@ test('desde cero se ve más chico y más apagado que Refinar', function () {
   eq(DESDE_CERO.background, undefined, 'y sin relleno, que es lo que hace mirar a Refinar');
 });
 
-test('desde cero es gris pero se lee: no se va a `--text-muted`', function () {
-  // Hay una observación registrada de que lo apagado en este panel se pasa de
-  // apagado. Es una acción de verdad, con su tooltip y su confirmación: tiene
-  // que poder leerse. `--text-muted` es para las notas al pie.
-  eq(DESDE_CERO.color, 'var(--text-secondary)');
-  const hover = declaraciones('.qj-fb-actions .qbtn-fresh:hover');
+test('desde cero es gris pero SE LEE: sale de los tres niveles, no de un apagón', function () {
+  // Lo que este test protege es que "desde cero" se pueda leer. Cuando se
+  // escribió decía textualmente "no se va a `--text-muted`", y tenía razón
+  // entonces: el muted estaba en #5c6675, o sea entre 2.84:1 y 3.25:1 según la
+  // superficie, y no pasaba AA en ninguna. En la v1.6.0 el muted ES el tercer
+  // nivel de voz y mide 4.83:1 en el peor caso (medido con
+  // `temas/estudiado/contrastes.js`), así que el motivo de esa prohibición
+  // desapareció con el valor.
+  // Lo que sigue valiendo, y es lo que se fija: el gris tiene que salir de los
+  // TRES niveles del panel —no de un `opacity`, no de un color inventado— y al
+  // pasar por encima se prende del todo. Lo que protege del clic errado sigue
+  // siendo la confirmación (eso lo fija cola-mirar-y-rehacer.test.js).
+  ok(['var(--text-secondary)', 'var(--text-muted)'].indexOf(DESDE_CERO.color) !== -1,
+    'el gris sale de un nivel de voz del panel, no de cualquier lado: ' + DESDE_CERO.color);
+  eq(DESDE_CERO.opacity, undefined,
+    'y no se apaga con opacity, que desvanece el texto, el borde y el fondo juntos');
+  const hover = declaraciones('.qbtn-fresh:hover');
   eq(hover.color, 'var(--text-primary)', 'y al pasar por encima se prende del todo');
 });
 
@@ -170,8 +198,8 @@ test('los colores salen de las variables del panel, sin paleta nueva', function 
   // El panel vive dentro de Premiere: un color inventado se ve como un injerto.
   // Se permite el ámbar en rgba porque es el de `--warn` con transparencia, que
   // es como lo escribe todo el resto de la familia "rehacer" en esta hoja.
-  const cuerpos = [REFINAR, DESDE_CERO, declaraciones('.qj-fb-actions .qbtn-fresh:hover'),
-    declaraciones('.qj-fb-actions .qbtn-react:hover')];
+  const cuerpos = [REFINAR, DESDE_CERO, declaraciones('.qbtn-fresh:hover'),
+    declaraciones('.qbtn-react:hover')];
   cuerpos.forEach(function (d) {
     Object.keys(d).forEach(function (prop) {
       if (!/color|background/.test(prop)) return;

@@ -210,21 +210,25 @@
   function pintarBoton(estado, datos) {
     var d = datos || {};
     if (estado === "averiguando") {
-      return { texto: "🎙", titulo: "Averiguando si se puede dictar en esta máquina…", apagado: true, clase: "" };
+      return { icono: "microfono", texto: "", titulo: "Averiguando si se puede dictar en esta máquina…", apagado: true, clase: "" };
     }
     if (estado === "no-disponible") {
       return {
-        texto: "🎙",
+        icono: "microfono", texto: "",
         // El motivo va entero en el tooltip: es lo único que le dice al editor
         // por qué el botón está apagado y qué haría falta para prenderlo.
         titulo: "Dictado por voz no disponible. " + (d.motivo || "No se pudo averiguar por qué."),
         apagado: true,
+        // Y NADA de verde. El verde de acá abajo quiere decir "podés dictar", así
+        // que en una máquina donde no se puede dictar el botón no lo puede tener:
+        // sería el mismo color prometiendo lo contrario. Queda gris, apagado y
+        // diciendo por qué en el tooltip, que es lo que ya hacía.
         clase: "is-off",
       };
     }
     if (estado === "preparando") {
       return {
-        texto: "…",
+        icono: "", texto: "…",
         titulo: d.faltaBajarModelo
           ? "Bajando el modelo de dictado (~480 MB). Es una sola vez; después arranca en un segundo."
           : "Preparando el dictado…",
@@ -233,7 +237,12 @@
     }
     if (estado === "escuchando") {
       return {
-        texto: "■",
+        // ROJO mientras escucha, que es lo que pidió el editor, y el dibujo
+        // cambia además de color: pasa a ser el CUADRADO de parar. El color no
+        // puede ser el único canal (SC 1.4.1 «Use of Color»), y acá el dibujo es
+        // el canal fuerte: el que está mirando el campo mientras habla ve un
+        // cuadrado rojo, y el que no distingue el rojo ve un cuadrado.
+        icono: "parar", texto: "",
         titulo: "Escuchando" + (d.segundos ? " (" + Math.round(d.segundos) + " s)" : "") + ". Tocá para parar y refinar.",
         apagado: false, clase: "is-rec",
       };
@@ -246,26 +255,31 @@
       // DICTADO es al revés: el que venía trabajando es el 🎙 y ahí sí va el "…".
       if (d.aMano) {
         return {
-          texto: "🎙",
+          icono: "microfono", texto: "",
           titulo: "Esperá: se está refinando lo que escribiste en este campo. Cuando termine podés dictar.",
           apagado: true, clase: "",
         };
       }
       return {
-        texto: "…",
+        icono: "", texto: "…",
         titulo: "Refinando el dictado con " + (d.refinador || "el modelo") + "…",
         apagado: true, clase: "is-busy",
       };
     }
     var mic = textoDeMicrofono(d.microfono);
     return {
-      texto: "🎙",
+      icono: "microfono", texto: "",
       titulo: "Dictar por voz. Un clic arranca, otro para. Al parar, " +
         (d.sinRefinador
           ? "el texto queda como lo dictaste: no hay refinador en esta máquina (" + d.sinRefinador + ")."
           : (d.refinador || "un modelo chico") + " lo deja como una instrucción clara, y podés volver al dictado crudo.") +
         (mic ? " " + mic : ""),
-      apagado: false, clase: "",
+      apagado: false,
+      // VERDE, y solo acá: quiere decir "se puede dictar y no estoy escuchando",
+      // que es la pregunta que el editor se hace antes de hablar. Es el único
+      // estado en el que eso es verdad — con el micrófono cerrado y la máquina
+      // capaz—, y por eso ninguno de los otros lo lleva.
+      clase: "is-lista",
     };
   }
 
@@ -319,11 +333,11 @@
     var d = datos || {};
     var con = d.refinador || "un modelo chico";
     if (estado === "averiguando") {
-      return { texto: "✨", titulo: "Averiguando con qué se puede refinar en esta máquina…", apagado: true, clase: "" };
+      return { icono: "refinar", texto: "", titulo: "Averiguando con qué se puede refinar en esta máquina…", apagado: true, clase: "" };
     }
     if (estado === "sin-refinador") {
       return {
-        texto: "✨",
+        icono: "refinar", texto: "",
         // El motivo entero, que es lo único que dice qué habría que hacer. No se
         // esconde el botón: que la función exista y no esté disponible es
         // información, y que no esté es un misterio.
@@ -340,42 +354,42 @@
     }
     if (estado === "refinando") {
       return {
-        texto: "…",
+        icono: "", texto: "…",
         titulo: "Refinando con " + con + "…" + (d.segundos ? " (" + Math.round(d.segundos) + " s)" : ""),
         apagado: true, clase: "is-busy",
       };
     }
     if (estado === "dictando") {
       return {
-        texto: "✨",
+        icono: "refinar", texto: "",
         titulo: "Mientras dictás, no hace falta: al parar el dictado el texto se refina solo.",
         apagado: true, clase: "",
       };
     }
     if (estado === "ocupado") {
       return {
-        texto: "✨",
+        icono: "refinar", texto: "",
         titulo: "Hay un refinado andando en otro campo. Esperá a que termine: se refina de a uno.",
         apagado: true, clase: "",
       };
     }
     if (estado === "vacio") {
       return {
-        texto: "✨",
+        icono: "refinar", texto: "",
         titulo: "Escribí el pedido y después tocá acá: por ahora no hay nada que refinar.",
         apagado: true, clase: "",
       };
     }
     if (estado === "ya-refinado") {
       return {
-        texto: "✨",
+        icono: "refinar", texto: "",
         titulo: "Ya está refinado con " + con + ". Volver a refinar lo refinado gasta tokens para empeorar el " +
           "texto: cambiá algo, o volvé al original, y se prende de nuevo.",
         apagado: true, clase: "",
       };
     }
     return {
-      texto: "✨",
+      icono: "refinar", texto: "",
       titulo: "Refinar lo que escribiste: " + con + " lo deja como una instrucción clara, conservando todo lo " +
         "que pediste y sin agregar nada, y después podés volver al original. No necesita micrófono ni Whisper.",
       apagado: false, clase: "",
@@ -392,13 +406,18 @@
    * dos deshacer que puedan desincronizarse.
    */
   function etiquetaDeVolver(origen, viendoOriginal) {
+    // Los dos sentidos comparten dibujo y se distinguen ESPEJÁNDOLO, que es la
+    // única vez en el panel que eso se hace bien: las dos acciones son
+    // literalmente la misma en sentidos opuestos (volver al original ⇄ volver al
+    // refinado). Donde no lo son —"aplicar el ajuste" y "regenerar desde cero"—
+    // el dibujo tiene que ser otro, y por eso son dos iconos distintos.
     if (viendoOriginal) {
-      return { texto: "↪ volver al refinado", titulo: "Vuelve al texto que dejó el refinador." };
+      return { icono: "volver", espejo: true, texto: "volver al refinado", titulo: "Vuelve al texto que dejó el refinador." };
     }
     if (origen === "escrito") {
-      return { texto: "↩ texto original", titulo: "Deja en el campo exactamente lo que habías escrito, sin refinar." };
+      return { icono: "volver", espejo: false, texto: "texto original", titulo: "Deja en el campo exactamente lo que habías escrito, sin refinar." };
     }
-    return { texto: "↩ dictado crudo", titulo: "Deja en el campo exactamente lo que dictaste, sin refinar." };
+    return { icono: "volver", espejo: false, texto: "dictado crudo", titulo: "Deja en el campo exactamente lo que dictaste, sin refinar." };
   }
 
   /**
@@ -429,7 +448,11 @@
     if (s.fase === "refinado") {
       return {
         texto: "Refinado con " + (s.refinador || "el modelo") +
-          (s.ms ? " en " + (s.ms / 1000).toFixed(1) + " s" : "") + ".",
+          (s.ms ? " en " + (s.ms / 1000).toFixed(1) + " s" : "") + "." +
+          // Qué referencias escritas a mano quedaron canonizadas, o cuál no pudo.
+          // Va pegado acá y no en un renglón aparte porque es parte de lo que hizo
+          // ese botón: el editor apretó "refinar" y esto es lo que le cambió.
+          (s.canon ? " " + s.canon + "." : ""),
         clase: "is-ok",
       };
     }
@@ -455,7 +478,36 @@
    *               el que llama persista como ya lo hace (HPStore, el borrador
    *               de la Cola, lo que sea). Sin esto, un dictado se pierde al
    *               cambiar de pestaña.
+   *   `extras`  — elementos que van EN ESTA BARRA, entre el ✨ y la línea de
+   *               estado. Son los controles propios del campo (📸 capturar, el
+   *               clip de adjuntar): comparten fila con el dictado porque son la
+   *               misma cosa —las herramientas de este campo— y porque una fila
+   *               aparte los mandaría abajo siempre (ver HPPromptCard).
+   *   `canonizar(texto)` → `{ texto, nota }` — se aplica al texto REFINADO antes de
+   *               escribirlo en el campo. La pone quien conoce las referencias del
+   *               pedido (HPPromptCard), porque es lo que convierte "imagen 2" en
+   *               la mención del archivo que de verdad es la 2. Sin ella, refinar
+   *               hace exactamente lo que hacía.
    */
+  /**
+   * Deja en `span` el dibujo o el texto que pide un estado.
+   *
+   * Los estados tienen las dos formas y no una: el micrófono, el cuadrado de
+   * parar y las chispas son ICONOS (`p.icono`), y el "…" de "estoy trabajando" es
+   * TEXTO, porque no es un objeto que se pueda dibujar de una manera reconocible
+   * a 15 px — es el paso del tiempo. Poner los dos por el mismo camino es lo que
+   * deja que el botón no cambie de tamaño al cambiar de estado.
+   */
+  function ponerIcono(span, p, base) {
+    if (!span) return;
+    var clase = base || "hp-ico";
+    if (p.icono) { HPIconos.poner(span, p.icono); span.className = clase; return; }
+    span.innerHTML = "";
+    span.textContent = p.texto || "";
+    span.className = clase + " hp-ico-texto";
+    if (typeof span.setAttribute === "function") span.setAttribute("data-icono", "");
+  }
+
   function attachMic(ta, opts) {
     opts = opts || {};
     var id = String(opts.id || "campo");
@@ -465,7 +517,12 @@
     bar.className = "mic-bar";
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "mic-btn";
+    btn.className = "mic-btn hp-ico-btn";
+    // El dibujo del 🎙 vive en su propio span y se cambia ahí: recrear el botón
+    // en cada estado le perdería el lugar en la fila y el foco del teclado.
+    var micIco = document.createElement("span");
+    micIco.className = "hp-ico";
+    btn.appendChild(micIco);
     // El ✨ va JUNTO al 🎙, y con la palabra "Refinar" al lado cuando el panel da
     // el ancho. "Estrellitas" no nombra ninguna acción —el 🎙 sí, y por eso ése
     // se queda solo—, así que sin la palabra el botón se aprende apretándolo.
@@ -480,7 +537,7 @@
     refBtn.className = "mic-btn mic-refine";
     // El emoji, que es lo único que cambia con el estado (✨ ↔ …).
     var refIco = document.createElement("span");
-    refIco.className = "mic-refine-ico";
+    refIco.className = "hp-ico mic-refine-ico";
     // Y la palabra, que NO cambia: es el nombre del botón, no su estado. Un
     // "Refinando" mientras trabaja movería el ancho del botón en medio del
     // refinado —la línea de estado, que está al lado, saltaría de lugar— y
@@ -499,6 +556,13 @@
     volver.setAttribute("data-hidden", "true");
     bar.appendChild(btn);
     bar.appendChild(refBtn);
+    // Los controles PROPIOS de la ficha (📸 capturar, el clip de adjuntar, "Con
+    // fondo") entran acá adentro, entre el ✨ y la línea de estado, y no en una
+    // fila aparte. Si fueran dos filas, la línea de estado —que reclama su ancho
+    // y se lleva el sobrante— los empujaría al renglón de abajo siempre, y el
+    // editor tendría dos barras de controles para un solo campo. Ver
+    // HPPromptCard, que es quien los manda.
+    (opts.extras || []).forEach(function (e) { if (e) bar.appendChild(e); });
     bar.appendChild(linea);
     bar.appendChild(volver);
 
@@ -530,10 +594,11 @@
         faltaBajarModelo: info.faltaBajarModelo, segundos: (extra && extra.segundos) || 0,
         microfono: micActual || info.microfono, aMano: origen === "escrito",
       });
-      btn.textContent = p.texto;
+      ponerIcono(micIco, p);
       btn.disabled = p.apagado;
       btn.title = p.titulo;
-      btn.className = "mic-btn" + (p.clase ? " " + p.clase : "");
+      btn.setAttribute("aria-label", p.titulo);
+      btn.className = "mic-btn hp-ico-btn" + (p.clase ? " " + p.clase : "");
       pintarElDeRefinar(extra);
       var l = lineaDeEstado(Object.assign({ fase: fase, microfono: micActual || info.microfono }, extra || {}));
       linea.textContent = l.texto;
@@ -560,8 +625,8 @@
         refinador: info.refinador, sinRefinador: info.sinRefinador,
         segundos: (extra && extra.segundos) || 0,
       });
-      // Solo el emoji: la palabra la puso `attachMic` una vez y se queda.
-      refIco.textContent = p.texto;
+      // Solo el icono: la palabra la puso `attachMic` una vez y se queda.
+      ponerIcono(refIco, p, "hp-ico mic-refine-ico");
       refBtn.disabled = p.apagado;
       refBtn.title = p.titulo;
       refBtn.className = "mic-btn mic-refine" + (p.clase ? " " + p.clase : "");
@@ -576,6 +641,35 @@
     function escribir(texto) {
       ta.value = texto;
       avisar(texto);
+    }
+
+    /**
+     * Pasa el texto refinado por la CANONIZACIÓN de referencias, si el que colgó el
+     * micrófono la ofreció.
+     *
+     * Convierte "imagen 2" en la mención del archivo que de verdad es la 2 (ver
+     * `canonizar` en cep/js/menciones.js). Se hace acá, DESPUÉS del refinado y
+     * antes de escribir en el campo, por dos motivos: el control de tamaño del
+     * refinador compara lo que volvió contra lo que se le mandó —y una de sus
+     * comprobaciones es justamente que no se pierda ninguna mención—, así que
+     * canonizar antes le cambiaría el texto que tiene que verificar; y lo que
+     * queda en el campo tiene que ser lo que el editor va a leer y aceptar.
+     *
+     * El "↩" no se entera y está bien: vuelve a `original`, que es lo que había
+     * antes de todo esto.
+     *
+     * Nunca lanza: una canonización que falla no puede tirarle un refinado que ya
+     * se pagó.
+     */
+    function canonizado(texto) {
+      if (typeof opts.canonizar !== "function") return { texto: texto, nota: "" };
+      try {
+        var r = opts.canonizar(texto) || {};
+        return {
+          texto: typeof r.texto === "string" ? r.texto : texto,
+          nota: String(r.nota || "")
+        };
+      } catch (e) { return { texto: texto, nota: "" }; }
     }
 
     // ── El campo, mientras se dicta ──────────────────────────────────
@@ -661,7 +755,9 @@
     function mostrarVolver(hay) {
       volver.setAttribute("data-hidden", hay ? "false" : "true");
       var e = etiquetaDeVolver(origen, viendoOriginal);
+      // El texto primero y el icono después: `textContent` reemplaza los hijos.
       volver.textContent = e.texto;
+      HPIconos.enBoton(volver, e.icono, e.espejo ? "is-espejo" : "");
       volver.title = e.titulo;
     }
 
@@ -809,12 +905,14 @@
         // número que el editor mira para saber cuánto le costó una clase.
         if (r.usage) HPStore.addDictadoUsage(r.usage);
         if (r.ok) {
-          refinado = r.texto;
+          var can = canonizado(r.texto);
+          refinado = can.texto;
           escribir(refinado);
           asentarCampo();
           mostrarVolver(true);
-          mostrarFase("refinado", { refinador: r.refinador, ms: r.ms });
-          hpLog("Dictado (" + id + "): refinado con " + r.refinador + " en " + (r.ms / 1000).toFixed(2) + " s.");
+          mostrarFase("refinado", { refinador: r.refinador, ms: r.ms, canon: can.nota });
+          hpLog("Dictado (" + id + "): refinado con " + r.refinador + " en " + (r.ms / 1000).toFixed(2) + " s." +
+            (can.nota ? " Referencias canonizadas: " + can.nota : ""));
           return;
         }
         // No se pudo refinar. El campo se queda con el dictado —que es útil— y
@@ -886,12 +984,14 @@
         // refinar es refinar, lo haya escrito una persona o Whisper.
         if (r.usage) HPStore.addDictadoUsage(r.usage);
         if (r.ok) {
-          refinado = r.texto;
+          var canM = canonizado(r.texto);
+          refinado = canM.texto;
           escribir(refinado);
           asentarCampo();
           mostrarVolver(true);
-          mostrarFase("refinado", { refinador: r.refinador, ms: r.ms });
-          hpLog("Refinado a mano (" + id + "): con " + r.refinador + " en " + (r.ms / 1000).toFixed(2) + " s.");
+          mostrarFase("refinado", { refinador: r.refinador, ms: r.ms, canon: canM.nota });
+          hpLog("Refinado a mano (" + id + "): con " + r.refinador + " en " + (r.ms / 1000).toFixed(2) + " s." +
+            (canM.nota ? " Referencias canonizadas: " + canM.nota : ""));
           return;
         }
         // Falló, o el control de tamaño lo rechazó. No se escribe NADA: el campo
@@ -915,15 +1015,23 @@
       refinarEscrito();
     });
 
-    // La línea de resultado sobrevive al botón volviendo a "listo": el editor
-    // tiene que poder leer con qué se refinó después de que terminó.
+    /**
+     * La línea de resultado sobrevive al botón volviendo a "listo": el editor
+     * tiene que poder leer con qué se refinó después de que terminó.
+     *
+     * El botón se repinta con `pintar()` y no a mano. Escribirlo a mano acá
+     * —`btn.textContent = p.texto`, `btn.className = "mic-btn"`— era del tiempo en
+     * que el botón ERA su emoji: desde que su dibujo vive en un `<span>` adentro,
+     * ese `textContent` lo BORRABA y el className le quitaba el verde de "listo" y
+     * la caja de icono. O sea que el 🎙 quedaba en blanco después de cada refinado.
+     * Se pinta primero y se escribe la línea después, porque `pintar()` también la
+     * escribe (y para "listo" la deja vacía).
+     */
     function mostrarFase(f, extra) {
+      pintar();
       var l = lineaDeEstado(Object.assign({ fase: f }, extra || {}));
       linea.textContent = l.texto;
       linea.className = "mic-state" + (l.clase ? " " + l.clase : "");
-      var p = pintarBoton("listo", info);
-      btn.textContent = p.texto; btn.disabled = false; btn.title = p.titulo; btn.className = "mic-btn";
-      pintarElDeRefinar();
     }
 
     pintar();

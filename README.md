@@ -69,14 +69,16 @@ ZXP firmado: `dist/HyperPremiere.zxp`.
    **no esperan**: se van generando mientras otra se transcribe.
    Arriba de todo, en
    **Estilo del curso**, el **Prompt general** lleva estilo/marca/tipografía/colores que
-   aplican a TODO el curso; abajo, en **Estilo de esta secuencia** (dentro del área de
-   marcadores), el **Prompt de secuencia** lleva lo que sea propio de esa clase (no lo
-   repetís en cada marcador). Los dos viajan juntos al modelo y, donde se contradigan,
+   aplican a TODO el curso; abajo del rótulo **Marcadores**, en **Estilo de esta
+   secuencia**, el **Prompt de secuencia** lleva lo que sea propio de esa clase (no lo
+   repetís en cada marcador). El rótulo separa lo que es del curso —y se mantiene al
+   cambiar de clase— de lo que es de la secuencia en la que estás. Los dos viajan juntos al modelo y, donde se contradigan,
    manda el de la secuencia. Los dos bloques aceptan además **referencias** —capturas,
    logos, manuales de marca, PDFs—, y como los dos textos, se guardan en archivos del
    proyecto: las del curso las ve cualquiera que abra el `.prproj`.
-3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa**
-   (📸) y arrastrar **imágenes / PDFs / referencias** (drag & drop).
+3. Por marcador escribís una **instrucción**, podés **capturar el frame del programa** y
+   arrastrar **imágenes / PDFs / referencias** sobre el campo: quedan adjuntas y
+   **mencionadas** donde tenías el cursor (ver **Mencionar una referencia sin contar**).
 4. La IA diseña una animación **HyperFrames**, se **renderiza** y se **coloca sobre el
    marcador**, importada a un bin **`HyperPremiere > <secuencia>`** dentro del proyecto.
    Todo pasa por una **cola** que procesa de a uno.
@@ -102,15 +104,21 @@ Cada imagen adjunta se etiqueta:
 - **✓ usar** — se **incrusta tal cual** (`<img src="assets/…">`): un logo, ícono o foto,
   respetando su proporción (el motor le pasa al modelo las dimensiones reales en px).
 
-Las imágenes van **numeradas** en orden, así las referenciás en la instrucción:
-"imagen 1 arriba, imagen 2 es solo referencia". Las capturas del programa **se acumulan**
-(cada 📸 suma una) y se guardan en la carpeta de la secuencia (`_capturas/`).
+Las imágenes van **numeradas** en el orden en que le llegan al modelo, y así se las
+nombra en la instrucción: *"imagen 1 arriba, imagen 2 es solo referencia"*. Las capturas
+del programa **se acumulan** (cada una suma) y se guardan en la carpeta de la secuencia
+(`_capturas/`).
 
-Se adjuntan en **tres lugares**, y el orden en que llegan al modelo es el del alcance: las
-del **curso**, las de **esta secuencia** y las del **marcador**. Las dos primeras se guardan
-en archivos del proyecto y viajan con el `.prproj` (ver *Las referencias viajan con el
-proyecto*); las del marcador siguen siendo de esta máquina, porque son de un marcador de una
-clase y no le sirven a nadie más.
+**Pero ese número ya no hay que contarlo**: se toca la referencia en la tira de arriba del
+campo y en el texto queda un chip que dice `@Imagen_2` y que guarda
+`@[curso/logo-platzi.svg]`, que al mandar se traduce al número que le toca (ver **Mencionar
+una referencia sin contar**).
+
+Se adjuntan en **tres lugares** y el orden en que llegan al modelo es del más específico al
+más general: las del **marcador**, las del **curso** y las de **esta secuencia**. Las dos
+últimas se guardan en archivos del proyecto y viajan con el `.prproj` (ver *Las referencias
+viajan con el proyecto*); las del marcador siguen siendo de esta máquina, porque son de un
+marcador de una clase y no le sirven a nadie más.
 
 **Viajan en toda generación, también al refinar.** Cada llamada al modelo es nueva y no
 recuerda la anterior: lo único que sobrevive es el HTML previo que le mandamos. Cuando
@@ -122,6 +130,321 @@ que estaba esquivando. Antes de cada llamada, el ⬇ Log dice qué entró ("Entr
 2 img de referencia · … · objetivo sí"), y **avisa fuerte si una referencia no se pudo
 leer del disco** — con el proyecto en un disco externo desmontado, el panel te muestra la
 miniatura desde su caché y el modelo diseña sin ella, sin que nada lo delate.
+
+## Mencionar una referencia sin contar
+
+Escribir "imagen 2" obligaba a **contar en la cabeza**, y a contar sobre tres listas que se
+concatenan y que se mueven solas: agregás una captura al marcador y todas las del curso se
+corren un lugar; borrás una y se corren para el otro lado; una que el disco no tiene no
+viaja, así que no ocupa número. La instrucción que escribiste ayer queda apuntando a otra
+imagen y **nada falla**: el gráfico sale distinto.
+
+Ahora la referencia se **menciona por su nombre** y el número lo pone la herramienta al
+mandar. Escribís `@` y la elegís de la lista (o tocás la miniatura, o la soltás sobre el
+campo, o apretás *Capturar del programa*) y en el texto queda escrito, donde tenías el cursor:
+
+```
+Copiá la disposición de @[marcador/boceto-3-bloques.png], la tipografía de
+@[curso/manual-de-marca-nova.png] y el encuadre de @[clase/captura-00-03-41.png].
+```
+
+que en el campo **se ve** así, como chips (y abajo está el por qué):
+
+```
+Copiá la disposición de @Imagen_1, la tipografía de @Imagen_2 y el encuadre de @Imagen_5.
+```
+
+y al modelo le llega esto:
+
+```
+Copiá la disposición de imagen 1, la tipografía de imagen 2 y el encuadre de imagen 5.
+```
+
+**El contrato con el modelo no cambió** y eso es a propósito: sigue recibiendo N imágenes
+numeradas de 1 a N y sigue entendiendo "imagen 1" como siempre. Lo que cambió es del lado
+del editor. Por eso la traducción se hace en el último momento, contra las imágenes que **de
+verdad viajan**, y no al escribir la mención: escrita, la mención no tiene número.
+
+**Por qué se guarda así.** La instrucción es un texto y viaja por seis lugares —el
+`localStorage` del panel, el payload del job, el `queue.json` del proyecto, el `.meta.json`
+de cada versión, la pestaña Corrections y el prompt—, así que la mención es texto y nada
+más: cualquier otra forma habría que enseñársela a los seis. Lleva el **nombre** y no el
+número, que es lo único que sobrevive a que la lista se mueva; lleva el **ámbito**
+(`marcador` / `curso` / `clase`), porque un `captura.png` del marcador y otro del curso son
+dos archivos distintos; va **delimitada** con `@[…]` porque los nombres de archivo tienen
+espacios (*"Captura de pantalla 2026-09-15 a la(s) 11.04.32.png"* es lo que escribe macOS);
+y **se lee**: si algún día aparece sin traducir —una fila de Corrections, un panel más viejo
+que el archivo— lo que se ve es el nombre de un archivo y no un identificador opaco.
+
+### En el campo se ve `@Imagen_1` y se guarda el nombre
+
+El editor lo pidió mirando su instrucción: *"me gustaría que en vez de decir '@' y la ruta,
+fuera '@Imagen_1, @Imagen_2', '@Documento_3', algo más simple"*. Tenía razón: un
+`@[curso/manual-de-marca-nova.png]` en medio de una frase es largo y ensucia la lectura de
+lo que uno está escribiendo.
+
+Y el costo estaba escrito desde el principio, tres párrafos más arriba: la mención lleva el
+**nombre** y no el número porque es lo único que sobrevive a que la lista se mueva. Así que
+se le planteó la disyuntiva y eligió sabiéndola: **el chip MUESTRA `@Imagen_1` y GUARDA
+`@[curso/manual-de-marca-nova.png]`**. El número es capa de presentación y nada más. La
+consecuencia buena es que **nada de lo que se guarda cambió**: el texto en disco, el payload
+del job, el `queue.json`, los `.meta.json`, el `localStorage` y el prompt dicen exactamente
+lo que decían, y el contrato con el motor quedó donde estaba (se rehace entero con
+`node test/manual/menciones-al-modelo.js`).
+
+Lo que eso pide a cambio es que **el número que se muestra sea el del motor**, porque un chip
+que dice «Imagen_2» sobre lo que va a llegar como «imagen 3» es *peor* que el token largo: el
+token largo no miente. La cuenta es una sola —la posición entre las imágenes que de verdad
+viajan, en orden marcador → curso → clase— y la hacen las mismas líneas que usa el ✨ para
+canonizar. Los **documentos** el motor no los numera (los nombra: *el documento
+«manual.pdf»*), así que el `_3` de `@Documento_3` es un identificador del panel nomás y no
+viaja a ninguna parte.
+
+**Y las tres cosas que un chip corto tiene que devolver:**
+
+- **Hover.** La miniatura de la imagen, o el icono del tipo de documento, pegada al chip y
+  **arriba** —abajo taparía el renglón que se está escribiendo—, con el nombre del archivo al
+  pie. Es lo que el chip corto se llevó puesto: `@Imagen_2` no dice *qué* imagen es. La fuente
+  del `<img>` sale del inventario ya convertida, por la misma función que las miniaturas de la
+  tira: las del marcador son data URLs y las de los dos niveles generales son rutas en disco,
+  que en Windows hay que **convertir** a `file:///C:/…` y no concatenar.
+- **Borrado entero.** Con el chip seleccionado o el cursor pegado a él, una sola tecla se lo
+  lleva completo, de los dos lados. Lo que no se puede dejar pasar es medio token suelto:
+  medio token viaja al modelo como texto y el gráfico sale sin la referencia.
+- **Doble clic para cambiar el número.** El chip se abre como un **campo de texto de verdad**
+  —un `<input>` adentro del chip— con el número ya seleccionado, así escribir lo reemplaza de
+  una. Cursor, selección con el mouse, flechas y Backspace son los del navegador, no una
+  emulación. El editor escribe `2` y el chip **repunta a la referencia que HOY es la 2** y
+  guarda su nombre; Enter o Tab confirman, Escape cancela.
+  Y un número que no existe —un `7` con seis referencias— **no se deshace**: queda escrito, el
+  chip pasa a rojo y el renglón de abajo dice qué pasó y cuántas hay (ver abajo).
+
+Las que **no apuntan a nada** se ven ahí mismo, y la regla de qué muestra un chip roto es de
+tres casos porque son tres cosas distintas de arreglar. El chip muestra **lo que hay que
+corregir**: el *nombre del archivo* cuando la referencia ya no está adjunta o cuando el disco
+no la tiene —es lo que hay que volver a adjuntar, y un «@Imagen_?» no diría nada—, y el
+*número* cuando lo que está mal es el número que el editor escribió. Ámbar si el archivo no
+está en el disco o si el nombre es ambiguo, rojo para los dos casos que no apuntan a nada: los
+mismos colores que ya significan eso en todo el panel. Medido sobre el DOM y a los cuatro
+anchos: el chip que apunta bien **9.24:1**, el colgado **6.91:1**, el del número inválido
+**6.91:1** (el mismo rojo), el que el disco no tiene **8.21:1**, el nombre en el preview
+**7.69:1**. Cero textos por debajo de AA, que es lo que consiguió la etapa 1 y no se podía
+perder.
+
+#### Un número que no apunta a nada queda escrito, en rojo
+
+La primera versión deshacía lo escrito: si el editor ponía `7` y había seis referencias, el
+chip volvía solo a su número anterior y se decía en un renglón. El argumento era no inventar
+nada, y el editor lo corrigió con razón: *"si lo modifico a algo que no está, pues debería
+dejar de aparecer azul ya que no está referenciando nada. O que aparezca rojo avisando que no
+referencia a nada"*. **Deshacerle lo que escribió es peor que mostrárselo mal**: el chip
+volviendo solo al 3 se siente como que el panel le pelea el teclado, y lo deja creyendo que
+quedó el 3 cuando quería el 7.
+
+Así que el estado inválido pasó a ser **representable**, y para eso hay que poder guardarlo. Lo
+que se guarda es el número, escrito como el nombre de una referencia que no existe:
+`@[Imagen_7]`. Y eso no contradice por qué se guarda el nombre y no el número: **el nombre
+existe para que una mención válida sobreviva a que la lista se reordene**; una que no apunta a
+nada no tiene nombre que guardar, y ahí el número es el único registro fiel de lo que el editor
+pidió — y lo único que puede corregir.
+
+El motor ya trata bien ese token sin saber nada de esto: no encuentra ninguna referencia que se
+llame «Imagen_7», así que lo resuelve como una mención colgada y **el modelo lee que falta, no
+otra imagen en su lugar** (está fijado desde antes en `menciones.test.js`). Y se sigue
+leyendo, que es el otro requisito de siempre: un `@[Imagen_7]` sin traducir dice exactamente lo
+que se quiso pedir.
+
+Tres cosas que lo hacen usable, y las tres hicieron falta:
+
+- **Se arregla con el mismo gesto.** Doble clic en el chip rojo, que reabre con el número que
+  se había escrito (no vacío), un número que sí existe, y vuelve a azul guardando el nombre.
+  Ida y vuelta, sin quedar pegado en rojo.
+- **El renglón de abajo y el tooltip lo dicen en palabras.** El tooltip es más importante que
+  nunca: en un chip rojo que dice `@Imagen_7` el color es lo único que avisa, así que dice las
+  tres cosas —cuántas hay, que el modelo va a leer que falta, y que se corrige con doble clic—.
+  Y el aviso **no lo confunde con una referencia borrada**: las dos están en rojo, pero una se
+  arregla volviendo a adjuntar el archivo y la otra escribiendo otro número, así que un aviso
+  que dijera *"volvé a adjuntar «Imagen_7»"* mandaría a buscar un archivo que no existe.
+- **El Escape recuperó su sentido.** Antes cancelar y confirmar terminaban en lo mismo, porque
+  el número inválido se deshacía igual. Ahora son dos cosas distintas de verdad: Escape deja el
+  chip apuntando a lo que apuntaba, Enter guarda lo que el editor escribió.
+
+Y el aviso de una sola vez se fue con la regla vieja. Era un mensaje transitorio para un estado
+permanente —lo decía una vez y se perdía al cambiar de pestaña—; ahora el chip rojo y su
+renglón siguen ahí porque lo que los produce es el token guardado.
+
+Y la mención **sigue leyéndose**, que era el argumento para guardar el nombre y no un
+identificador opaco: el tooltip del chip dice el token entero y con qué número le va a llegar
+al modelo. Lo que se movió es dónde se lee, no si se puede.
+
+#### Cómo, y por qué el cambio no se propaga
+
+El campo dejó de ser un `<textarea>`. Hubo un **espejo** —un `<div>` detrás con la misma
+tipografía pintando el mismo texto con las menciones en `<span>`, y el textarea encima con el
+texto transparente— y andaba, con 28 de 28 mediciones alineadas, porque el espejo decía
+*exactamente* los mismos caracteres que el campo. Un chip no puede: dice `@Imagen_1` donde el
+texto guardado tiene 38 caracteres, así que no hay nada que alinear. El campo es ahora un
+`contenteditable` con los chips de verdad adentro (`contenteditable="false"` en cada uno, que
+es lo que los hace atómicos para el navegador).
+
+Pero al campo le hablan seis cosas que existían antes de esto —el dictado, que lo reescribe
+entero cada segundo y medio y le maneja el alto; el ✨; la inserción de menciones; el control
+de alto; el guardado de cada pestaña; y el aviso— y las seis hablan en `value`,
+`selectionStart`, `selectionEnd`, `setSelectionRange()` y el evento `input`. Así que el campo
+nuevo **imita la interfaz de un textarea, en coordenadas del texto canónico**: el getter de
+`value` serializa el DOM (los nodos de texto tal cual, cada chip como su `@[…]`), el setter
+parsea texto canónico y redibuja con chips, y los offsets se traducen en los dos sentidos
+tratando cada chip como **una** unidad que aporta `token.length` caracteres y no admite el
+cursor adentro. `HPMenciones.insertar` no se tocó ni una línea, y eso es la prueba de que la
+fachada está completa.
+
+Dos reglas sostienen eso. La primera: la aritmética de offsets vive en **una** función que
+recorre los hijos y arma el mapa; las cuatro operaciones salen de ahí. Repartirla es cómo se
+llega a que el cursor caiga un carácter corrido sólo cuando hay dos chips seguidos. La
+segunda: un `contenteditable` con el foco adentro **no se redibuja en cada tecleo** —se come
+el undo nativo—, así que los chips se crean al cargar el texto, al insertar una mención, al
+refinar y cuando cambia la lista de referencias, y nunca tecleando; tecleando sólo se editan
+nodos de texto.
+
+Y **copiar** un pedazo de instrucción se lleva el texto canónico, no lo que se ve. Sin eso,
+copiar una frase con un chip adentro ponía `@Imagen_3` en el portapapeles: pegado en el
+marcador de al lado le llega al modelo como texto suelto, y ahí el número vuelve a ser el
+dato. Pegando el token se recupera el chip, y copiar la instrucción entera afuera del panel
+da el texto que el motor entiende.
+
+### Escribir `@` abre la lista de referencias
+
+El editor lo pidió así: *"al escribir a mano '@' debería salir un menú de selección de las
+referencias. Así puedo solo seleccionar lo que deseo rápidamente"*. Es el complemento de la
+tira: para mencionar tocando una miniatura hay que sacar la mano del teclado en medio de una
+frase. Ahora se escribe `@`, se filtra tecleando y se sigue escribiendo sin soltar el teclado.
+
+Se abre cuando el `@` está **al principio del campo o después de un espacio**. Pegado a una
+palabra no se abre, y eso es la mitad del diseño: `escribile a dani@nova.com` y
+`como dice @marcelo` son un mail y un handle, y abrir un menú ahí convierte cada dirección de
+correo en un tropiezo donde encima un Enter elegiría una referencia que nadie pidió. Tampoco
+se abre **adentro de una mención ya escrita**: ofrecer reemplazar lo que se acaba de elegir no
+es ayuda.
+
+Filtra por **nombre de archivo, sin mayúsculas y sin acentos** —hay archivos que se llaman
+*"Guía de estilo"* y *"Captura de pantalla"*, y tener que acertarle al acento para encontrar
+uno es peor que abrir la tira con el mouse—. Y muestra **lo mismo que va a decir el chip**: la
+miniatura (o el icono del tipo de documento), el número y el nombre, agrupados por ámbito con
+los rótulos que la tira ya usa (*de este marcador*, *del curso*, *de esta clase*) y en el
+orden en que le llegan al modelo. La etiqueta de cada fila sale de la **misma función** que la
+del chip, así que lo que se lee en la lista es, carácter por carácter, lo que va a quedar en el
+campo — con dos cuentas, la lista diría «Imagen_5» y el chip que aparece en su lugar otra cosa.
+
+Teclado primero: flechas para moverse, **Enter o Tab** para elegir, **Esc** para cerrar sin
+elegir, y el mouse hace lo mismo moviendo la *misma* marca de selección (con dos, dos filas
+dirían a la vez que son la que entra con Enter). Al elegir queda el chip y el `@` con lo
+tecleado desaparece; los espacios de alrededor los cuida `HPMenciones.insertar`, el mismo
+camino que tocar una miniatura, así que no hay una segunda regla de espaciado que pueda decir
+otra cosa.
+
+Las que el disco **no tiene** aparecen igual, dichas como tales, y elegirlas deja la mención
+con el aviso de siempre. Esconderlas es peor: el editor sabe que agregó ese archivo, no lo
+vería en la lista y se iría a buscar el motivo al lugar equivocado. Y **sin ninguna referencia
+adjunta** no hay un menú vacío: hay una línea con los dos caminos para conseguirlas (arrastrar
+un archivo sobre el campo, o los bloques de estilo del curso), que es la duda real de alguien
+que recién abrió el panel.
+
+Está medido, no supuesto: `node test/manual/panel-demo/medir-chips.js` comprueba, en los tres
+campos con menciones y a 320 / 400 / 600 / 900 px, que el número del chip coincida con el de
+la tira, que `value` siga siendo el texto canónico con Chromium editando, que el preview
+aparezca arriba del chip, que Backspace se lleve el token entero **y se pueda deshacer**, que
+tecleando el chip siga siendo el mismo nodo, que el doble clic repunte (y que un número que no
+existe no toque el texto), y que el menú del `@` se abra tecleando, filtre, no quede cortado y
+**su Enter no deje un salto de línea**. 120 de 120 en verde.
+
+Fue lo que encontró los dos únicos defectos reales que tuvo esto, y ninguno de los dos lo
+podía ver un test del repo. El primero: el número se editaba volviendo el chip
+`contenteditable`, y con el foco puesto ahí Chromium le entregaba el Backspace y el Enter **al
+campo de afuera**, así que "borrar el número" borraba el chip entero y "confirmar" metía un
+salto de línea en la instrucción. El segundo: el menú elegía de qué lado abrirse pero no se
+**acotaba** al hueco, así que a 320×700 con el campo a media altura "hay lugar abajo" era
+verdad (132 px) y el menú de 232 igual salía 18 px por debajo del borde. Ahora se acota al
+hueco del lado que elige y scrollea adentro: en el caso apretado se ven tres filas en vez de
+seis, que es lo correcto — tres que se leen valen más que seis de las que dos se cortan.
+
+### El undo, hasta dónde llega
+
+El undo de un `contenteditable` lo lleva el navegador, con sus propios snapshots, y **no se le
+puede empujar nada a mano**: todo lo que el panel cambia por su cuenta, Cmd+Z lo saltea. En un
+campo donde se escriben instrucciones largas eso no es un detalle, así que:
+
+- **Borrar un chip SE DESHACE.** En vez de sacar el nodo, se selecciona el chip entero y se le
+  pide al navegador que borre la selección, así el paso entra en su pila. Y acá sí se puede
+  confiar en él porque la ambigüedad se la sacamos: lo que no se podía dejar pasar era *"el
+  cursor está pegado a un elemento atómico, adiviná qué quiso borrar"* —de ahí salía el medio
+  token de basura—, y con la selección puesta exactamente sobre el chip no queda nada que
+  adivinar. Medido en los tres campos y a los cuatro anchos.
+- **Cambiarle el número a un chip no se deshace, y queda así a propósito.** Ahí no hay nada
+  que borrar ni insertar: cambia el *token* de un nodo que se queda donde está, y la pila
+  nativa sólo entiende de texto insertado y borrado. Se podría hacer pasar por un borrado más
+  una inserción, pero lo insertado sería TEXTO (el comando de edición no inserta elementos),
+  así que el chip se volvería el token crudo hasta el próximo redibujado: se cambiaría un paso
+  que el undo saltea por un parpadeo visible en cada cambio de número. Y no hace tanta falta,
+  que es la otra mitad de la decisión: repuntar un chip es **reversible con el mismo gesto** —
+  doble clic otra vez y el número anterior, que es el que el chip mostraba un segundo antes—.
+  Y desde que un número inválido queda escrito en rojo en vez de deshacerse, ese camino de
+  vuelta es además **visible**: el chip dice qué hay que corregir. Está escrito en el módulo
+  para que no se intente de nuevo a ciegas.
+
+**Lo que ya estaba escrito sigue andando.** Una instrucción que dice *"como en la imagen 2"*
+en texto plano viaja exactamente así: la herramienta **no** busca "imagen N" para
+reescribirlo al mandar. Lo único que traduce son las menciones.
+
+**Pero el ✨ Refinar sí las arregla, si se lo pedís.** Apretar *Refinar* con un
+*"como en la imagen 2"* escrito a mano lo convierte en la mención del archivo que de verdad
+es la 2 —y de ahí en adelante ese texto ya no depende de contar—. La diferencia con el
+párrafo de arriba es quién lo pidió: al mandar, reescribir el texto del editor a espaldas
+suyas sería peligroso; acá apretó un botón que dice que se lo arregle, el cambio queda a la
+vista en el campo y el **↩** lo devuelve carácter por carácter.
+
+Y lo hace el **panel**, no el modelo. El orden del pedido —marcador → curso → clase,
+salteando lo que no viaja— lo conoce el panel exactamente; pedírselo al refinador sería que
+adivine un mapeo que ya sabemos, y si adivina mal cambia la imagen sin que nada falle. El
+modelo sigue haciendo lo suyo (ordenar y aclarar el pedido) y la canonización la hace quien
+la sabe. Tres cosas que no hace: si un *"imagen 5"* no tiene a qué apuntar porque solo
+viajan tres, **no inventa** nada —queda como estaba y se dice—; no toca una enumeración
+(*"las imágenes 1 y 2"*), porque reemplazar solo el primer número dejaría el resto suelto; y
+no reescribe por dentro una mención que ya está, aunque el archivo se llame *"imagen 2.png"*.
+
+Y los tres casos en que una mención no puede apuntar a un número se **dicen**, en el panel
+mientras escribís y en el ⬇ Log antes de gastar la llamada. Ninguno frena la generación —no
+se puede no generar por un error de tipeo— y ninguno se calla:
+
+- **la referencia ya no está en la lista** (la mencionaste y después la borraste): el modelo
+  lee *«paleta.png» (referencia que ya no está adjunta a este pedido)*, y no el número de la
+  imagen que quedó en ese lugar. En el panel, en rojo.
+- **el archivo no está en el disco** (el disco externo desmontado): esa imagen no viaja, así
+  que no ocupa número; se dice, y el aviso de siempre sobre las referencias que no se
+  pudieron leer sigue saliendo por su cuenta. En el panel, en ámbar.
+- **el nombre está en dos niveles y la mención no dice cuál** (solo pasa escribiéndola a
+  mano: el panel siempre escribe el ámbito): va la primera en llegarle al modelo, y se dice
+  cuál se eligió.
+
+Un **documento** mencionado no recibe número, porque los documentos no se numeran: se
+traduce a *el documento «manual-de-marca.pdf»*, que es exactamente como lo nombra el prompt.
+Con eso siguen valiendo las reglas de siempre: un `.md` se pega en el pedido y llega por
+cualquier proveedor; un PDF solo llega por los dos CLI de agente, y con los otros tres se
+avisa antes de gastar la llamada.
+
+Un detalle que no es cosmético: si mencionás una imagen marcada **✓ usar**, la traducción
+dice además cuál es su archivo — *imagen 3 (el archivo assets/asset-01)*. El bloque de
+assets del prompt lista los archivos embebibles pero no dice cuál es cuál, así que con dos
+logos "usá la imagen 3" dejaba al modelo eligiendo entre dos.
+
+Y el **✨ Refinar** no puede perder una mención: si el refinador devuelve un texto al que le
+falta alguna, se rechaza y queda el original, con el motivo escrito. Un modelo chico
+reordena y reescribe —es para lo que está— y un token con corchetes es justo lo que le da
+ganas de "arreglar"; una mención a medias llega al modelo como texto suelto y el gráfico
+sale sin la marca.
+
+La evidencia de punta a punta —proyecto real, panel real, motor real, y un solo doble: el
+proveedor, que anota lo que recibió— se rehace con
+`node test/manual/menciones-al-modelo.js`, que imprime **el prompt real** de cada caso.
 
 ## Repetir el diseño de otro marcador
 
@@ -173,14 +496,312 @@ borrador **quedaron como están**, en café: si querés alguno en alta, regenera
   una corrección de un corte que nunca abriste acá—, el transcript se **recupera de su
   carpeta** antes de llamar al modelo.
 - **Las imágenes NO son un lugar donde ahorrar**: se reenvían siempre (ver arriba). En la
-  caja de feedback de la Cola cada miniatura tiene su **📤** por si querés dejar alguna
+  ronda de feedback de la Cola cada miniatura tiene su **reenviar** por si querés dejar alguna
   afuera a propósito; las marcadas **✓ usar** se **incrustan igual**, viajen o no.
 - La **continuidad** con otros marcadores solo se inyecta si la instrucción lo pide
   (retomar/continuar/mismo estilo, o nombrar un marcador), no siempre. Nombrando el
   marcador gastás **más por recurso pero en el correcto**: va uno entero (~3k tok) en vez
   de dos ajenos recortados a la mitad.
 
-## Qué dice el contador de la sesión
+## Cómo se lee el panel (v1.6.0)
+
+El panel hace tres trabajos y hay que poder distinguirlos de un vistazo: **decidir** (los
+tres alcances de prompt), **escanear** (la cola) y **confirmar** (estados, costos,
+estimados). Hasta la v1.5.3 los tres se leían al mismo volumen. Medido sobre la maqueta a
+400×700: **nueve** tamaños de letra a la vez, cinco pesos, **quince** colores de texto, y
+los dos tamaños que cargaban el 60 % del texto se diferenciaban en **un píxel** (11 y 12).
+Eso no es jerarquía, es ruido parejo. Y peor: el nivel que WCAG no aprobaba —2.84:1— era el
+que cargaba la **estructura**, o sea cada rótulo de campo y cada título de sección.
+
+Ahora son **tres niveles de voz** construidos con **peso y color**, con el tamaño casi
+quieto (13 / 12 / 11 px). El tamaño no puede ser el canal y no es una elección: en 400 px de
+ancho el techo tipográfico son ~15 px y el piso legible 11, así que el rango da tres pasos
+de un píxel, y un paso de un píxel no se lee. Es el mismo modelo del escritorio de Apple,
+donde Body y Headline miden **los dos** 13 pt y solo cambian de peso.
+
+Lo que se movió, medido con las herramientas de `test/manual/panel-demo` (`auditar.js` mide
+contraste real sobre el DOM, altos de fila y presupuesto vertical; `medir-botones.js`,
+desborde y solapes caja por caja):
+
+| | antes | ahora |
+| --- | --- | --- |
+| textos que no llegan a AA (por vista) | 52 a 71 | **0** |
+| el peor contraste del panel | 1.75:1 | **4.83:1** |
+| tamaños de letra a la vez | 9 | **4** |
+| rótulos en MAYÚSCULAS | 10 | **0** |
+| cromo fijo a 400 px de ancho | 232.5 px (33.2 %) | **150.9 px (21.6 %)** |
+| cromo fijo a 320 px | 277.3 px (39.6 %) | **182.9 px (26.1 %)** |
+| fila de marcador plegada | 55.5 px | **32.8 px** |
+| marcadores que entran sin scrollear | 3 | **7** |
+| controles por debajo de 24×24 px (SC 2.5.8) | 40 de 154 | **7 de 225** |
+| el peor contraste de las vistas de marcadores | 1.75:1 | **5.53:1** |
+
+Los siete que quedan son las casillas nativas de 16×16 (*Con fondo* y las etiquetas de las
+miniaturas): reemplazarlas pide un control propio en el HTML y quedó pendiente. Los blancos
+de clic pasaron de 153 a 225 —los controles de la ficha nueva y las referencias heredadas—
+y ninguno de los nuevos entró por debajo del mínimo.
+
+### Y el interior de la ficha
+
+Lo de arriba ordenó la *voz* del panel; adentro de la ficha de un marcador la
+**distribución** seguía siendo la vieja, y el editor lo dijo sin vueltas: *"dejamos mucho
+espacio vacío"*, *"deberíamos tener un área de controles y otra de input"*. Tenía razón, y el
+número lo explica: arriba del campo había **90 px de cromo** —una zona de arrastre de 52 px
+que repetía una instrucción que se aprende la primera vez, un botón *Capturar del programa*
+de ancho completo, y la separación entre los dos— para un campo de escritura de 72.
+
+Ahora la ficha es, de arriba a abajo: **la tira de referencias** · **el campo**, de 110 px ·
+**el aviso de menciones** · **la barra de controles** (dictar, refinar, capturar, adjuntar,
+*Con fondo*, todo en un renglón y con iconos de trazo) · un desplegable **Avanzado** con el
+transcript del tramo y el editor de HTML · y el **pie**, con *Generar* en el vértice de abajo
+a la derecha, *Enviar a la cola* a su izquierda y *Regenerar desde cero* en la otra punta.
+Los 90 px del cromo se los quedó el campo. Con la tira vacía no ocupa nada: lo que dice que
+se puede arrastrar un archivo es el `placeholder` del campo, que se está viendo justo
+entonces.
+
+Y **el encabezado de la ficha lleva los cuatro datos** que se quieren ver sin desplegarla:
+el nombre y lo que **tardó** la última versión a la izquierda; el tramo, lo que va a
+**costar** mandarla y el estado a la derecha. Los dos datos de confirmación vivían en una
+fila del cuerpo, o sea que se veían solo con la ficha abierta y a cambio de una fila de
+alto. Ahora se leen con la ficha **plegada**, que es cuando de verdad sirven: mirás la lista
+y ves cuál costó cuánto. A 320 px no entra todo, así que el orden de prioridad está escrito:
+el nombre y el estado no se caen nunca, el tramo cede después, y los dos datos de
+confirmación son los primeros en recortarse — se quedan con su número (`v3: 4m 12s`,
+`≈ 41k`) y sueltan el desglose por etapa, que aparece a partir de 640 px y sigue entero en
+el tooltip. Medido: la fila plegada sigue midiendo **32.8 px** y siguen entrando **siete**
+marcadores en el primer viewport.
+
+Y **"Regenerar desde cero" pregunta siempre**, igual que el de la caja de feedback de la
+Cola. Acá hacía más falta que allá: está en la misma fila que *Generar*. Están en las dos
+puntas, pero un clic de más sigue tirando una animación que estaba bien y arrancando una
+generación completa. La pregunta dice las tres cosas: que se descarta el diseño anterior, lo
+que cuesta, y —si hay algo escrito en el campo— que ese texto se usa como la instrucción del
+marcador pero **no** como un ajuste sobre la versión anterior.
+
+Y es **un solo cuerpo de ficha** (`cep/js/prompt-card.js`) para los tres lugares donde se le
+pide algo al modelo: la instrucción del marcador, *Estilo del curso* y *Estilo de esta
+secuencia*. Los tres tienen su tira de referencias arriba del campo y su barra de controles
+abajo; los dos de estilo no tienen pie, porque no generan nada. Antes eran tres layouts para
+el mismo problema.
+
+Se archivan (en `test/manual/panel-demo/capturas-1.6.0/`) las capturas de la ficha cerrada,
+abierta, con los chips de mención, con una mención que apunta a un archivo que no está, con un
+documento mencionado, con el **menú del `@`** abierto y filtrado, con el **doble clic abierto**
+como campo de texto y con un **número que no apunta a nada** en rojo, los dos bloques de
+estilo, y el micrófono en sus tres estados, a 400 y a 320 px. Se rehacen con `node test/manual/panel-demo/capturar-ficha.js`, que **falla** si la
+página tira un error de JS en vez de sacar la foto de un panel roto.
+
+### Y las tres pestañas son la misma lista
+
+**Marcadores**, **Cola** y **Corrections** son la misma cosa tres veces: una lista de
+marcadores con su estado y sus acciones. Hasta la v1.6.0 estaban dibujadas con tres
+gramáticas distintas, y la peor parte no era que fueran distintas: era que **la misma barra
+de la izquierda quería decir dos cosas** según la pestaña. En Marcadores, una guarda de 2 px
+decía «esta ficha está abierta». En la Cola, una de 3 px decía **el estado del trabajo**, y
+esa columna alineada es lo mejor que tiene esa pestaña: es lo que permite barrerla con la
+vista, que es su función. En Corrections no había guarda salvo la ámbar de «no sé dónde iba
+este recurso», que es —otra vez— un estado.
+
+**La guarda dice el ESTADO, en las tres.** Un canal, un significado. Dos de las tres
+pestañas ya la usaban así, la que no la usaba para eso tenía dos canales para lo mismo (la
+guarda y el chevron), y el estado es lo único que una fila plegada no puede mostrar de otra
+manera. Lo que se pierde: la ficha de marcador abierta ya no se marca con la guarda. Se
+marca con lo que ya venía marcándola —el chevron girado y el cuerpo desplegado, que es la
+evidencia más directa que hay— más el **recuadro encendido** a `--border-field`, que es el
+mismo 3.37:1 con el que la guarda cumplía el 3:1 que WCAG 1.4.11 pide para «whether a
+component is selected or focused». O sea que el requisito se paga con el mismo valor, sobre
+los otros tres lados, y el que cambia de trabajo es sólo el borde izquierdo.
+
+**Y el estado no es sólo color en ninguna de las tres.** Al lado de la guarda va la
+PALABRA: `en cola`, `por rendir`, `diseñando`, `rindiendo`, `listo`, `sin colocar`, `falló`,
+`sin cupo`. Ocho situaciones, ocho palabras, **cinco** colores —lo que cambia de color es
+qué *pide* el estado, no en qué etapa del pipeline está: modelar y renderizar son dos etapas
+y un solo «está pasando ahora»—. Las escribe un solo lugar para las dos pestañas que
+muestran el mismo trabajo, y hacía falta: el `⏳` quería decir «está corriendo» en la ficha
+del marcador y «se quedó sin tokens» en la Cola.
+
+De paso se arregló algo que el CSS daba por imposible y tenía escrito como tal: un trabajo
+**terminado sin colocar** llevaba la misma guarda verde y el mismo «listo» que uno que
+entró al timeline, porque las dos filas tenían la misma clase. Ahora se distinguen —la
+distinción la hace la misma función que decide si ofrecer **Colocar**— y esa fila queda en
+ámbar diciendo `sin colocar`, que es lo que es: falta hacer algo.
+
+**El cuerpo es uno.** La caja de feedback de la Cola y la fila de Corrections tenían las dos
+un campo de prompt con su micrófono, su refinado y sus imágenes: o sea el mismo problema que
+la etapa anterior ya había resuelto para la ficha del marcador, resuelto otras dos veces.
+Ahora las cuatro fichas son `HPPromptCard` con otras acciones, y con eso las dos pestañas
+**ganan tres cosas que ya existían y que nadie les había cableado**: los chips que muestran
+las menciones, el aviso de la mención colgada y la canonización del ✨. No es un agregado
+cosmético: el motor traduce las menciones del campo de ajuste igual que las de la
+instrucción de un marcador, así que un `@[curso/logo-platzi.svg]` escrito en la caja de
+feedback **ya viajaba traducido** y el panel no lo pintaba ni avisaba si quedaba colgado.
+
+Con el cuerpo compartido se fue **la última zona de arrastre** del panel (52 px punteados
+para repetir una instrucción que se aprende la primera vez) y el último botón **📸 Capturar
+del programa** de ancho completo (30 px de fila propia): los dos eran del cuerpo viejo y
+seguían vivos en esas dos pestañas. Ahora el archivo se suelta sobre el campo y queda
+**mencionado** donde estaba el cursor, y capturar y adjuntar son dos iconos de la barra de
+controles. Los 82 px se los quedó el campo, que pasó de 34 px en la Cola y dos renglones en
+Corrections a **tres renglones enteros** en las dos.
+
+Lo que sigue siendo de cada pestaña, porque son interacciones distintas:
+
+- **La Cola** lleva sus acciones en el ENCABEZADO y no en el pie, que es lo contrario de la
+  ficha de un marcador. Es a propósito: *Reintentar* el que falló, *Colocar* el que no entró
+  y reordenar los que esperan se aprietan mirando la lista, con la fila plegada. Y el
+  mensaje de estado, la línea de «qué está haciendo ahora» y la barra de progreso viven
+  **adentro del encabezado**, no del cuerpo plegable: un desplegable esconde todo lo que va
+  después de su resumen, y el `✓ Listo y colocado (v3) · 4m 12s (IA 3m 05s · render 1m 07s)`
+  de un trabajo terminado tiene que leerse sin abrir nada.
+- **Un mensaje que no dice más que la pastilla no se dibuja.** «En cola…» al lado de una
+  pastilla que dice `en cola` son 19 px por fila para repetir la palabra que está tres
+  centímetros a la izquierda; en una cola de diez trabajos en espera, un tercio de la
+  pantalla. Los que sí dicen algo («Reencolado, esperando turno…») se siguen viendo.
+- **Corrections se pliega.** Era la fila más cargada del panel y estaba toda desplegada:
+  mediana medida **487.7 px**, o sea que con seis recursos generados —una clase normal— hay
+  casi 3.000 px de scroll para encontrar el que hay que corregir, y para encontrarlo alcanzan
+  el nombre y el segundo en que entra. Ahora el encabezado dice nombre · tramo · versiones ·
+  estado, y abrir una cierra las demás (el mismo acordeón de la lista de marcadores). Abierta
+  muestra exactamente lo que mostraba.
+- **Y su pastilla dice otra cosa**, porque acá no hay trabajo en curso: dice si de esa versión
+  se **puede saber** con qué se generó (`listo`) o si lo que se ofrece es una reconstrucción
+  de los archivos de hoy (`reconstruido`), que antes sólo se veía abriendo el desplegable del
+  contexto de a una fila.
+
+**Los emojis que quedaban** eran los de estas dos pestañas, y el problema era el de siempre
+con otra cara: **tres botones con el mismo `↻`** para tres cosas que no se parecen. Son tres
+significados y ahora son tres dibujos:
+
+| | qué es | el dibujo |
+| --- | --- | --- |
+| **Aplicar el ajuste** | rediseñar SOBRE lo que hay, con lo que escribiste | dos rieles con su perilla |
+| **Regenerar desde cero** | tirar el diseño y volver a diseñar | el lazo que vuelve al principio |
+| **Reintentar** | el trabajo FALLÓ: lo mismo otra vez, desde donde se cayó | dos flechas encadenadas |
+| **Reactivar** | no falló, se quedó sin cupo: vuelve a la cola como estaba | la flecha que entra a la lista |
+
+Y lo mismo el `✎`, que estaba en dos botones que hacen cosas distintas —*Feedback* y *Editar
+HTML*—: un globo de diálogo y un `< >`. El `📌` de *Colocar* es una flecha que baja a una
+pista; el `🧹` de limpiar versiones viejas es un cesto, porque eso **borra archivos del
+disco**, y el `⏹` de *vaciar cola* es la lista con una ✕, porque eso **no borra nada**: saca
+todo de la lista. Dos dibujos se repiten a propósito, y por el mismo motivo por el que
+*generar* y *encolar* se repiten entre la ficha y la barra de arriba: son la misma acción con
+otro alcance (limpiar un recurso o todos; iniciar la cola o reanudarla).
+
+El `📤` de cada miniatura también pasó a ser un icono, y **hace exactamente lo mismo**:
+decide si esa imagen viaja en este pedido. Lo que cambió es que ahora hereda el color del
+estado, que es justo lo que un emoji no puede hacer.
+
+**Lo que costó, medido.** Con los mismos diez trabajos en la cola y los mismos seis
+recursos en Corrections, a 400 px de ancho:
+
+| | antes | ahora |
+| --- | --- | --- |
+| la lista de la Cola, entera | 951 px | **1.145 px** |
+| ídem a 320 px | 1.048 px | **1.259 px** |
+| la fila de un trabajo en espera | 2 renglones | **1 renglón (34 px)** |
+| la lista de Corrections, entera | no entraba en una ventana de 1.500 px | **885 px** |
+| ídem a 320 px | no entraba | **929 px** |
+| fila de marcador plegada | 32.8 px | **32.8 px** (no se movió) |
+| textos por debajo de AA en las tres pestañas | 0 | **0** |
+| el peor contraste de las tres | 5.53:1 | **5.53:1** |
+| controles por debajo de 24×24 px en la Cola | 0 de 40 | **0 de 41** |
+| ídem en Corrections | 0 de 105 | **0 de 105** |
+| botones con el texto pintado afuera de su caja (23 vistas × 4 anchos) | 0 | **0 de 13.511** |
+| solapes | 0 | **0** |
+
+**La Cola creció un 20 %**, y hay que decirlo con nombre: son ~19 px por fila y salen del
+recuadro (1 px arriba y abajo más los 4 del `gap` de la lista) y del renglón que a veces se
+lleva la pastilla del estado. Lo que se compró con eso: la misma gramática que las otras dos
+pestañas, el estado en palabras, lo que costó cada trabajo, y que la fila que se repite diez
+veces en una cola larga —la que está en espera— pase a UN renglón, que antes eran dos.
+A 320 px cede el número del costo, que es lo que el orden de prioridad del encabezado dice
+que cede primero; sin eso la lista medía 1.345 px en vez de 1.259.
+
+**Corrections se redujo a menos de un tercio** y es donde el cambio se siente: encontrar el
+recurso que hay que corregir era scrollear 3.000 px de formularios abiertos.
+
+Las capturas del antes y el después de las dos pestañas, a 400 y a 320 px y con la cola
+mostrando los siete estados a la vez, se rehacen con
+`node test/manual/panel-demo/capturar-listas.js --prefijo antes|despues`. El alto de una
+lista se mide sobre las capturas con `medir-capturas.js`, y eso es a propósito: las tres
+etapas de la 1.6.0 se hicieron sobre el árbol sin commitear, así que el «antes» de cada una
+no se puede volver a correr — lo único que queda de él son las fotos, y una foto sí se puede
+medir (se busca la última fila de píxeles que no es el fondo del panel).
+
+**La Cola, antes y ahora, a 400 px** (los diez trabajos, en los siete estados):
+
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/antes-cola-400.png)
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/despues-cola-400.png)
+
+**Y a 320 px**, que es donde el panel acoplado aprieta de verdad:
+
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/antes-cola-320.png)
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/despues-cola-320.png)
+
+**La ronda de feedback de un trabajo terminado**, que es la que pasó a ser el cuerpo de
+ficha compartido (antes / ahora, a 400 px):
+
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/antes-cola-feedback-400.png)
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/despues-cola-feedback-400.png)
+
+**Corrections, antes y ahora, a 400 px.** Es el cambio más grande de la etapa: seis filas
+abiertas contra seis filas que se pueden barrer.
+
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/antes-corrections-400.png)
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/despues-corrections-400.png)
+
+**Y a 320 px:**
+
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/antes-corrections-320.png)
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/despues-corrections-320.png)
+
+**Una fila de corrección abierta**, con su contexto y su editor de HTML desplegados (antes /
+ahora, a 400 px): lo que muestra es lo mismo, y ahora hay que abrirla.
+
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/antes-corrections-abierta-400.png)
+![](/Users/danielgutierrez/Desktop/Codigo/HyperPremiere/test/manual/panel-demo/capturas-1.6.0/despues-corrections-abierta-400.png)
+
+**El inventario de referencias ya no se esconde detrás de un scroll.** La caja de los dos
+bloques de estilo estaba acotada a 108 px con barra propia, y era lo peor del sistema: escondía
+contenido con la barra como única señal. Existía por un número medido —el inventario del curso
+empujaba el campo de la clase 234 px hacia abajo— pero 90 de esos 108 px eran el botón y la zona
+de arrastre, que ya no están. Sin techo y envolviendo, cuatro referencias miden 68 px a 400 px de
+ancho: **40 menos** que el techo que las escondía, y sin esconder ninguna.
+
+Dos cosas más que salieron de mirar los números:
+
+- **El número que mostraba una referencia del curso era el equivocado.** Cada caja numeraba
+  dentro de su propio nivel, y el modelo numera el pedido entero (marcador → curso → clase):
+  con dos capturas en el marcador, la "imagen 1" del curso era la **imagen 3** para el modelo.
+  O sea que el número que el panel ofrecía para copiar era, casi siempre, otro. En los bloques
+  de estilo el número se fue (ahí no se puede saber: depende de qué marcador esté generando) y
+  en la ficha del marcador se muestran **todas** las que viajan, en su orden, con su número de
+  verdad.
+- **Los `position: sticky` de los tres encabezados se fueron.** El número que los motivaba lo
+  arregló otra cosa: con un marcador abierto, el acordeón pliega los tres bloques y los tres
+  encabezados quedan a la vista sin scrollear. Un `sticky` que no despega nunca es una capa de
+  apilamiento y una superficie opaca que hay que mantener sincronizada, a cambio de nada.
+
+Dos bugs de raíz se fueron en el camino, los dos por la misma causa —una regla y su
+contra-regla en el mismo archivo—: la tarjeta de marcador tenía **doble padding** (una regla
+vieja la redefinía sin resetear el `padding: 9px 12px` de la original, así que el nombre
+quedaba a 17 px del borde) y **doble separación** entre tarjetas (`gap: 6px` de la lista más
+`margin-bottom: 6px` de la tarjeta = 12). Juntas explicaban casi todo el 55.5 → 32.8.
+
+La propuesta de la que salió todo esto, con su tesis, sus fuentes y sus capturas del antes y
+el después, quedó en `test/manual/panel-demo/temas/estudiado/` para poder comparar.
+
+## Qué dice el contador de la sesión, y dónde vive
+
+**Está en ⚙, al final de la lista, y en el encabezado queda solo el monto.** Hasta la
+v1.5.3 era una franja fija a lo ancho del panel: 40.5 px de alto permanentes —el 6 % de un
+panel de 700— para un renglón que se mira una vez por sesión. Ahora el detalle entero
+(entrada, caché, salida, costo, generaciones, el desglose y el botón de **reiniciar**) vive
+adentro de ⚙, y arriba queda el **$15.37** pelado, como pastilla al lado del nombre de la
+secuencia, para no perder el aviso de que estás gastando. El monto **solo se dibuja si hay
+costo informado**: con Cursor, que va por suscripción y no informa ninguno, el encabezado
+queda igual que si esta línea no existiera. Y el desglose, que antes era un tooltip, en ⚙
+se lee escrito: si abriste el diálogo y bajaste hasta ahí, es porque lo querés leer.
 
 La barra **Sesión** mostraba una fracción de lo que pasaba. Con 164 generaciones encima
 marcaba *75.256 tokens de entrada · 2.341.682 de salida*: 459 de entrada por generación,
@@ -202,7 +823,7 @@ conviven —4 sueltos, 84.015 leídos de caché, 49.316 escritos— y el contado
 
 Ahora la línea dice la entrada **completa**, y aparte cuánto de eso fue caché, que es lo
 que explica por qué la entrada real es diez veces el prompt que armamos: es contexto que el
-agente vuelve a leer en cada llamada, no algo que podamos recortar. El tooltip desarma los
+agente vuelve a leer en cada llamada, no algo que podamos recortar. El desglose de ⚙ desarma los
 tres números, da el promedio por generación y aclara el **costo**, que también engañaba:
 Cursor va por suscripción y no informa costo, y la API de Anthropic no lo devuelve, así que
 un "$15.37" pelado se leía como el costo de la sesión entera cuando en realidad cubría doce
@@ -210,8 +831,13 @@ de ciento sesenta y cuatro generaciones. Se dice: `$15.37 en 12 de 164`.
 
 Una advertencia para el día de la actualización: **el acumulado que ya tenías no se puede
 reparar hacia atrás** (los tokens de caché de esas generaciones no los guardaba nadie), así
-que queda marcado como mezclado —lo dice el ⬇ Log al abrir y el tooltip— hasta que toques
-**reiniciar**. De ahí en adelante, todo se cuenta igual.
+que queda marcado como mezclado —lo dice el ⬇ Log al abrir y el desglose de ⚙— hasta que
+toques **reiniciar**, que está al lado del renglón, en ⚙.
+
+Un detalle de dónde quedó: el bloque va al **final** de la lista de ⚙ y no en el medio. Es
+una lectura entre ajustes, y ⚙ ya tiene 214 elementos en el primer viewport; meterle 200 px
+de números entre el selector de modelo y el nivel de pensamiento sería empujar hacia abajo
+justo los dos controles que sí se cambian. De ahí en adelante, todo se cuenta igual.
 
 El mismo gasto se lleva además **por proveedor**, y de ahí sale el "una generación con X
 gastó ≈ N" que dice ⚙ debajo del selector de modelo. Va aparte del total porque el promedio
@@ -258,6 +884,48 @@ caras: un número fijo donde había que mirar el contenido. Medido: con un `.md`
 26.600 caracteres el semáforo decía 5.131 y se mandaban 8.679 —**41% corto**—; ahora da el
 mismo número que se paga. Con una referencia borrada del disco cobraba 3 imágenes y viajaban
 2: **2.064 tokens de más**.
+
+## La línea de estado aparece cuando pide acción
+
+Arriba de todo había una franja fija de **47 px** que decía cosas —"7 marcadores cargados",
+"Cola vaciada", "Log descargado en: …"— y arrancaba con un *"Pulsá Cargar marcadores para
+leer la secuencia activa"* que repetía el botón que está tres centímetros más arriba. De los
+**23 avisos** que la escriben, **20 son informativos** y **tres** paran de verdad y piden
+que decidas algo: *no generé nada todavía porque hay referencias en esta máquina*,
+*cancelaste la transcripción, así que no generé nada* y *la secuencia activa no tiene
+marcadores*.
+
+Desde la v1.6.0 la franja **no ocupa lugar cuando no hay nada que atender**, y hay tres
+clases de mensaje:
+
+- **informativo** — se muestra un rato y se esconde solo. El rato se calcula por largo del
+  texto (4 s más 60 ms por carácter, con techo de 15), que es holgado contra las ~17
+  letras por segundo de la lectura corrida. No desaparece del todo a propósito: la mitad de
+  estos mensajes son el acuse de un clic, y un clic sin respuesta visible se lee como un
+  panel colgado. Uno además trae un dato que hay que leer una vez (la ruta donde bajó el
+  log).
+- **paré y hay que decidir** — se queda, en ámbar. Son esos tres, y los tres terminan en una
+  pregunta: esconderla a los ocho segundos sería esconder la pregunta.
+- **falló** — se queda, en rojo.
+
+Y **todo** lo que pasa por ahí queda en el **⬇ Log**, también lo que se esconde solo: la
+franja es el aviso, el log es el registro. Así que esconder lo informativo no pierde nada.
+
+Dos cosas más, que son las que hacían falta para que esto no empeorara otra cosa:
+
+- **La franja se mudó abajo, afuera de las tres pestañas.** Arriba, aparecer empujaba 30 px
+  hacia abajo *todo* el contenido —los tres bloques de contexto, el rótulo y la lista—.
+  Abajo, lo único que cambia de tamaño es la vista, que cede esos píxeles del área que
+  scrollea. Medido elemento por elemento a 320, 400 y 600 px con un mensaje de dos
+  renglones: de las **935 cajas** del panel se mueve **una**, que es la franja apareciendo.
+  Cero salto.
+- **Y ahora sirve para las tres pestañas.** Vivía adentro de la vista de *Marcadores*, así
+  que los mensajes que escribe la **Cola** ("Escribí qué ajustar…", "Cola vaciada") se
+  pintaban en una vista **escondida**: no los veía nadie. Eso era un bug y se fue con la
+  mudanza.
+
+Sigue siendo la región `aria-live` del panel, y el texto se escribe **después** de
+mostrarla: una región escondida no anuncia lo que le cambia adentro.
 
 ## La cola
 
@@ -355,15 +1023,17 @@ mismo número que se paga. Con una referencia borrada del disco cobraba 3 imáge
   orden, **vaciar** todo.
 - **Enviar a la cola** (staging sin arrancar), **Agregar listos a la cola**, **Generar listos**.
 - **Reactivar sin tokens**: si una generación falla por límite/cuota (429, usage limit), el
-  job queda **esperando tokens** ⏳ con **↻ Reactivar** (individual o todos).
+  job queda **esperando tokens** —la fila lo dice con la palabra `sin cupo`— con
+  **Reactivar** (individual o todos).
 - **Ver**: clic en el nombre del clip terminado → abre esa secuencia y **para el cursor
   donde está el recurso**, y nada más. Es para mirarlo: el panel se queda en la Cola. (A
-  la pestaña Marcadores se llega con **✎ Editar HTML**, que es el que la necesita.)
-- **✎ Feedback** abre la ronda ahí mismo, con las **dos salidas** de la tarjeta del
-  marcador: **↻ Aplicar el ajuste** trabaja sobre la última versión con lo que escribiste, y
-  **⟲ Regenerar desde cero** la descarta y vuelve a diseñar con la instrucción y el
-  material de hoy. Las dos van **debajo del campo, a lo ancho** (v1.5.1): el ajuste
-  destacado, porque es la de todos los días, y desde cero chico y gris, porque descarta
+  la pestaña Marcadores se llega con **Editar HTML**, que es el que la necesita.)
+- **Feedback** abre la ronda ahí mismo —es el cuerpo de ficha compartido, el mismo de un
+  marcador— con las **dos salidas** de siempre: **Aplicar el ajuste** trabaja sobre la
+  última versión con lo que escribiste, y **Regenerar desde cero** la descarta y vuelve a
+  diseñar con la instrucción y el material de hoy. Las dos van en el **pie de la ficha**
+  (v1.6.0): el ajuste a la derecha y destacado, porque es la de todos los días, y desde
+  cero a la otra punta, chico y gris, porque descarta
   trabajo hecho. No dice "Refinar" a propósito: el **✨ Refinar** del dictado queda a
   seis píxeles y hace otra cosa —reescribe el texto del pedido, no la animación—, y
   además "aplicar el ajuste" se lee como lo contrario de "desde cero", que es lo que son.
@@ -391,10 +1061,14 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
 
 - **Cargar secuencia** arma una fila por recurso ya generado con **en qué segundo entraba
   y cuánto duraba**, la última versión y con qué modelo se hizo. Ese tramo sale de la
-  ficha `.meta.json` que se escribe con cada generación.
-- **Regenerar**: cada fila es una **ronda de feedback completa**, igual que en la Cola.
+  ficha `.meta.json` que se escribe con cada generación. La fila viene **plegada** y su
+  encabezado es el de una ficha de marcador: nombre · tramo · versiones · estado (ver *Y
+  las tres pestañas son la misma lista*). Abrir una cierra las demás.
+- **Regenerar**: cada fila es una **ronda de feedback completa**, igual que en la Cola —es
+  literalmente el mismo cuerpo de ficha, con su resaltado de menciones y su barra de
+  controles—.
   Escribís qué está mal, **mandás imágenes nuevas** (arrastrando o con 📸 del programa),
-  decidís con 📤 **cuáles viajan** y marcás las que se **incrustan** (✓ usar), y elegís
+  decidís con **reenviar** **cuáles viajan** y marcás las que se **incrustan** (✓ usar), y elegís
   **sobre qué versión** se rediseña (no siempre la última). Vuelve a su segundo original,
   con la misma duración.
   Las imágenes son las **del marcador en la secuencia donde nació**, incluso si estás
@@ -413,8 +1087,11 @@ Todo lo que necesita lo lee **del disco**, no de los marcadores:
   el texto que viajó, editables. Está plegado porque la fila ya tiene bastante y esto es
   algo que se mira cuando hace falta, no siempre; lo que se necesita saber sin abrirlo está
   en el renglón del resumen. Ver el detalle abajo, en *Lo que recibió, y qué se puede saber
-  de una versión vieja*.
-- **＋ Enviar a la cola** (al lado de Regenerar): la misma corrección, pero **en espera**.
+  de una versión vieja*. Y **cuál de los dos casos es** se lee ahora sin abrir nada: la
+  pastilla del encabezado dice `listo` cuando la ficha guardó el contexto y `reconstruido`
+  cuando lo que se ofrece son los archivos de hoy. Antes había que desplegar las seis filas
+  de a una para saberlo.
+- **Enviar a la cola** (al lado de Regenerar): la misma corrección, pero **en espera**.
   Sirve para revisar la clase entera —ir fila por fila escribiendo qué está mal— y largar
   todo junto con **Iniciar cola**, en vez de que la primera arranque mientras todavía estás
   revisando el resto. Es el mismo par que en las tarjetas de Marcadores: *Enviar a la cola*
@@ -545,11 +1222,11 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
 - **Regenerar desde cero**: descarta lo anterior y crea uno nuevo con la instrucción +
   recursos actuales.
 - **Editar HTML manualmente**: abrís una versión, la retocás a mano y la renderizás sin IA.
-- **🧹 Limpiar previas** (en cada recurso terminado de la Cola): cuando ya estás feliz con
+- **Limpiar previas** (en cada recurso terminado de la Cola): cuando ya estás feliz con
   una animación, borra sus **versiones anteriores** — del disco **y de las secuencias donde
   estén**— y deja la aprobada. Va de a un recurso porque los demás pueden estar a medio
   revisar. No aparece en una v1, que no tiene nada atrás.
-- **🧹 Limpiar versiones viejas** (arriba, en la Cola): lo mismo para **todas** las
+- **Limpiar versiones viejas** (arriba, en la Cola): lo mismo para **todas** las
   secuencias de la cola de una vez, al cerrar la tanda.
 
   Las dos piden confirmación mostrando archivo por archivo qué se borra y qué se conserva.
@@ -570,11 +1247,27 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
   (`HPTabs`, conmuta las tres vistas), `js/store.js`
   (`HPStore`, persiste por proyecto+secuencia), `js/transcript.js`, `js/widgets.js`
   (select propio, editor de código, tooltips — CEF no dibuja los `title` nativos),
+  `js/iconos.js` (`HPIconos`, los iconos de trazo escritos una sola vez: heredan el color
+  del texto, que es lo que un emoji no puede),
+  `js/menciones.js` (`HPMenciones`, la mitad del panel de las menciones de referencias:
+  escribirlas donde está el cursor, avisar antes de generar, decir con qué número se muestra
+  cada una y decidir cuándo se abre el menú del `@` y qué ofrece — la gramática está también
+  en `bridge/prompt/menciones.js`, que es quien las resuelve, y un test corre las dos sobre el
+  mismo corpus),
+  `js/campo.js` (`HPCampo`, **el campo donde se escribe un pedido**: un `contenteditable`
+  que pinta las menciones como chips —`@Imagen_1` a la vista, `@[curso/manual.png]`
+  guardado—, con el menú que se abre al escribir `@`, y que imita la interfaz de un
+  `<textarea>` en coordenadas del texto canónico, para que el dictado, el ✨ y el control de
+  alto no se enteren de nada),
+  `js/prompt-card.js` (`HPPromptCard`, **el cuerpo de ficha que comparten los tres lugares
+  donde se le pide algo al modelo**: tira de referencias arriba, campo, barra de controles
+  abajo),
   `js/stills.js` (control de imágenes/recursos **por marcador**, que siguen en esta
   máquina), `js/refs.js` (`HPRefs`, las referencias de los dos niveles generales, que
   viven en archivos del proyecto, con la caché partida por alcance y la migración de lo
   que quedó en el `localStorage`) y `js/refs-view.js` (su caja: miniaturas, chips,
-  arrastrar y soltar, y el cartel de la migración), `js/queue.js` (cola
+  arrastrar y soltar, las referencias heredadas de la ficha de un marcador, y el cartel de
+  la migración), `js/queue.js` (cola
   `HPQueue`, máquina de estados), `js/queue-view.js` (pestaña Cola + limpieza),
   `js/corrections.js` (pestaña Corrections, que lee lo generado del disco),
   `js/config-ui.js` (proveedor/modelo/credenciales) y `js/main.js` (tarjetas de
@@ -628,7 +1321,11 @@ Entonces trabaja con **dos secuencias a la vez**, y conviene tenerlo claro:
     **PLAN → CÓDIGO → AUDITORÍA**: el modelo diseña regiones que no se pisan,
     codea, y se auto-audita con checklist; si declara `AUDIT: FALLA`, el motor
     pide UNA corrección dirigida (solo gasta llamada extra cuando hay falla).
-    + build-context (prompt por marcador, lean en refinamiento, imágenes numeradas).
+    + build-context (prompt por marcador, lean en refinamiento, imágenes numeradas)
+    + `menciones.js`, que traduce `@[curso/logo.svg]` al número que le toca en ESE pedido.
+    Vive acá y no en el panel porque el número de una imagen es su posición entre las que
+    **de verdad llegan**, y el único que sabe si un archivo se pudo leer del disco es el que
+    está armando la llamada.
     Lo que **no** dice es cómo llegan las imágenes, porque no lo sabe: eso depende de
     quién atienda. Cuando lo afirmaba ("se adjuntan N imágenes a este mensaje"), con los
     proveedores de línea de comandos le mentía al modelo — no hay adjuntos ahí, hay
@@ -895,10 +1592,10 @@ Qué cambió:
    mientras la cola trabaja es lo más normal del mundo). Si no está en ninguno, ofrece el
    nombre **más parecido**, que en una clase re-cortada suele ser el sospechoso: `…_106595`
    contra `…_106595_01`.
-3. **📌 Colocar.** El render ya se pagó; que no entre tiene que costar un botón. En la fila
+3. **Colocar.** El render ya se pagó; que no entre tiene que costar un botón. En la fila
    del recurso terminado aparece primero, con el `.mov` que ya está en el disco y el color
    que le correspondía (una corrección sigue entrando en amarillo). Antes la única salida
-   era **✎ Feedback** —otra generación entera para repetir un archivo que ya existía— o
+   era **Feedback** —otra generación entera para repetir un archivo que ya existía— o
    arrastrarlo a mano desde la carpeta. La marca **se guarda en `queue.json`**, porque la
    causa típica se arregla reabriendo Premiere y para entonces el panel ya se reinició; y
    si el job es viejo y no la trae —el del caso, por ejemplo— se lo reconoce por su
@@ -1371,15 +2068,30 @@ ya se guardaba desde antes.
 ### Dos campos, dos archivos, y ninguna duda de dónde estás escribiendo
 
 En el panel los dos niveles se editan en **dos bloques separados**, cada uno en el lugar
-que le corresponde por alcance. **Estilo del curso** va arriba de todo, pegado a *Contexto
-de la clase*: adentro está **Prompt general · TODO el curso**. **Estilo de esta secuencia**
-va abajo del rótulo *Marcadores*, arriba de las tarjetas: adentro está **Prompt de
-secuencia · solo "<nombre de la clase>"**, con la guía de color al costado que lo marca
-como el más acotado de los dos. Cada bloque tiene además **su caja de referencias**, con el
-alcance del bloque. El rótulo nombra la secuencia porque
+que le corresponde por alcance. Son **tres tarjetas hermanas**, al ras y en orden de
+alcance: **Estilo del curso** (adentro, **Prompt general · TODO el curso**), **Contexto de
+la clase** y **Estilo de esta secuencia** (adentro, **Prompt de secuencia · solo "<nombre
+de la clase>"**). Y **después** de las tres viene el rótulo *Marcadores* con la lista. Cada
+bloque tiene además **su caja de referencias**, con el alcance del bloque. El rótulo nombra
+la secuencia porque
 nombrar el alcance en abstracto —"esta secuencia"— obliga a mirar otra parte del panel para
 saber cuál es. Sin secuencia abierta el bloque de abajo **no se ofrece**, entero: no hay
 carpeta donde guardar ni el texto ni las referencias.
+
+Las tres se ven **iguales**: el mismo recuadro, el mismo desplegable y el mismo aire que una
+tarjeta de marcador, sin sangrías distintas. Hubo una escalera —cada alcance un poco más
+adentro que el anterior, con su guardita de color y su título un punto más chico— y se fue
+en la v1.6.0. Dos motivos. Uno: el tercer nivel no es una caja con rótulo, es el `<textarea>`
+de la tarjeta, así que la sangría se le dibujaba **al campo** y de ahí salieron un borde de
+arriba de otro color que los otros tres y el texto arrancando tres píxeles más abajo que el
+cursor. Otro: en 400 px de ancho la sangría se paga en ancho de escritura, y un canal que
+funciona en dos de tres casos hay que aprenderlo. **El alcance lo dice el título**, que es
+lo que se lee igual sin aprender nada.
+
+Y hasta la v1.5.3 *Estilo de esta secuencia* vivía **abajo** del rótulo *Marcadores*, o sea
+adentro del área de una lista a la que no pertenece: es el encabezado de esas tarjetas, no
+una de ellas. Es el mismo error que se había corregido para el prompt del curso y que se
+arrastró al separarlos.
 
 Vivieron juntos, en una sola caja llamada *Prompts generales*, y estaban abajo del rótulo
 *Marcadores* los dos. Juntos tenían algo bueno que se perdió: la relación entre los niveles
@@ -1643,14 +2355,35 @@ día el mismo logo aparece en veinte clases, se revisa entonces.
 
 ## Dictar la instrucción en vez de escribirla
 
-Al lado de cada campo donde se escribe un pedido —la instrucción de cada marcador, las
-Indicaciones generales, el feedback de la Cola y el de Corrections— hay un botón **🎙**.
-Un clic arranca, otro para; no hay que mantenerlo apretado. Mientras se habla, el texto va
-apareciendo de a frases con un par de segundos de retraso, y al parar un modelo chico lo
-convierte en una instrucción de diseño legible: reordena y estructura, conserva todo lo que
-se pidió y **no inventa** nada que no se haya dicho. Queda en español, con los términos
-técnicos en inglés como se dijeron —nadie quiere leer *fotograma clave*. Y al lado aparece
-un **↩ dictado crudo** que devuelve lo que se dijo textual, por si el refinado no gustó.
+**Abajo** de cada campo donde se escribe un pedido —la instrucción de cada marcador, los dos
+prompts de estilo, el objetivo de la clase, el feedback de la Cola y el de Corrections— hay
+una barra de controles, y el primero es el **micrófono**. Un clic arranca, otro para; no hay
+que mantenerlo apretado. Mientras se habla, el texto va apareciendo de a frases con un par de
+segundos de retraso, y al parar un modelo chico lo convierte en una instrucción de diseño
+legible: reordena y estructura, conserva todo lo que se pidió y **no inventa** nada que no se
+haya dicho. Queda en español, con los términos técnicos en inglés como se dijeron —nadie
+quiere leer *fotograma clave*. Y al lado aparece un **↩ dictado crudo** que devuelve lo que
+se dijo textual, por si el refinado no gustó.
+
+**El micrófono está en verde cuando se puede dictar y en rojo mientras escucha**, que es lo
+que pidió el editor. Y el verde quiere decir exactamente una cosa: *se puede dictar y no
+estoy escuchando*. En una máquina donde el dictado no está disponible —Windows, sin ffmpeg,
+sin el Whisper de Apple Silicon— el botón queda **gris** y no verde: sería el mismo color
+prometiendo lo contrario de lo que pasa. Mientras prepara o mientras refina queda apagado, y
+antes de saber qué tiene la máquina queda neutro. El color tampoco es el único canal, que es
+lo que pide WCAG: el **dibujo cambia** —un micrófono cuando está listo, un cuadrado de parar
+mientras escucha— y el tooltip lo dice con palabras. Quien no distingue el rojo del verde ve
+un cuadrado.
+
+Y son **dibujos y no emojis**. El 🎙, el ✨, el 📸 y compañía estaban tipeados en el JS, así que
+los dibujaba la fuente de emoji del sistema: el panel se veía distinto en cada máquina, cada
+uno traía su propio alto de caja —la fila quedaba desalineada por dentro— y, sobre todo, un
+emoji **no hereda el color del texto**, o sea que un micrófono en rojo era imposible. Ahora
+son SVG de líneas, con un dibujo por concepto. Eso arregló además algo que se venía
+arrastrando: los dos botones de "rehacer" de la caja de feedback (↻ y ⟲) eran **el mismo
+dibujo** —una flecha en círculo— para las dos acciones más opuestas que hay ahí, una que sigue
+el diseño anterior y otra que lo tira. Ahora *Aplicar el ajuste* son dos rieles con su perilla
+(calibrar algo que ya existe) y *Regenerar desde cero* es el lazo que vuelve al principio.
 
 Lo que ya estaba escrito en el campo no se pisa nunca: el dictado se agrega abajo mientras
 se habla, y al parar las dos partes se refinan **juntas, como una sola idea**, no una atrás
@@ -1752,9 +2485,10 @@ modelo refinó y cuánto tardó, que es lo primero que hace falta cuando alguien
 dictado me sale raro"*. Y el gasto va a un bolsillo **aparte** en el contador de la sesión,
 para que no se confunda con lo que cuestan las animaciones.
 
-**Y el mismo refinado, para lo que se escribió a mano.** Al lado del 🎙 hay un **✨ Refinar**
-—con la palabra desde 381 px de ancho de panel, o sea también en el que abre Premiere; por
-debajo queda el emoji solo, que es donde el panel ya se queda sin lugar para las palabras—:
+**Y el mismo refinado, para lo que se escribió a mano.** Al lado del micrófono hay un
+**✨ Refinar** —con la palabra desde 381 px de ancho de panel, o sea también en el que abre
+Premiere; por debajo queda el dibujo solo, que es donde el panel ya se queda sin lugar para
+las palabras—:
 toma lo que hay tecleado en ese campo y lo pasa por el refinador de arriba —la misma cadena, el
 mismo control de tamaño, el mismo bolsillo del contador—, dejando el resultado en el campo
 y un **↩ texto original** al lado, que devuelve lo que había *carácter por carácter*, con
@@ -1770,10 +2504,10 @@ texto tal cual y el motivo escrito abajo.
 
 **Refinar no necesita micrófono, ni ffmpeg, ni Whisper, ni ser una Mac**: es una llamada de
 texto a texto. Por eso "se puede dictar" y "se puede refinar" son dos respuestas separadas
-y no una, y **el ✨ funciona en Windows**, donde el 🎙 no. Ese es el punto de todo esto: el
-editor que escribe todo a mano *porque* no puede dictar es justamente el que más lo
+y no una, y **el ✨ funciona en Windows**, donde el micrófono no. Ese es el punto de todo
+esto: el editor que escribe todo a mano *porque* no puede dictar es justamente el que más lo
 necesita, y colgar el botón nuevo de la respuesta del micrófono se lo escondía a él. Cada
-botón apagado dice en su tooltip qué le falta a esa máquina —el 🎙 el avfoundation o el
+botón apagado dice en su tooltip qué le falta a esa máquina —el micrófono el avfoundation o el
 Whisper, el ✨ la API key, la sesión del CLI o el Ollama que no está corriendo— y ninguno
 de los dos se esconde: que una función exista y no esté disponible es información, que no
 esté es un misterio. Una aspereza medida acá, con el CLI de Claude como refinador: de siete
@@ -2201,7 +2935,7 @@ pestaña (y que a Marcadores se siga llegando por "Editar HTML"), que refinar co
 vacío **avise** en vez de rediseñar por su cuenta —que era lo que pasaba antes y se
 descubría viendo el resultado—, que desde cero **pregunte siempre** (y que la pregunta
 aclare que el feedback escrito no se usa) y no arrastre **nada** de la ronda anterior (ni HTML previo, ni el ajuste, ni la selección de
-imágenes), que el "📌 Colocar" del intento viejo deje de ofrecerse al reencolar, y del
+imágenes), que el "Colocar" del intento viejo deje de ofrecerse al reencolar, y del
 filtro: que solo aparezca cuando hay más de una secuencia, que oculte sin tocar la cola
 —los contadores siguen siendo del total—, que diga cuántos quedaron afuera y que se
 recuerde entre sesiones.
@@ -2255,20 +2989,140 @@ Aparte, dos scripts a mano para cuando se toca el render:
 fue aprendiendo; `node test/manual/mutaciones-render.js` mete a propósito cada regresión
 que estos tests dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando
 rompés el código no está probando nada. Acepta un filtro por nombre
-(`node test/manual/mutaciones-render.js sesión`) para cuando se tocó una sola parte y
-correr las cuarenta y pico es un rato largo de espera.
+(`node test/manual/mutaciones-render.js sesión`) para cuando se tocó una sola parte, y hace
+falta: son **318** y la corrida entera son casi tres horas.
+
+Y al lado, `node test/manual/mutaciones-verificar.js`, que no corre ninguna: para cada
+mutación comprueba que el texto ORIGINAL siga en su archivo. Contesta dos preguntas en un
+segundo. La primera es «¿quedó una mutación puesta?» —el corredor restaura en un `finally`,
+y un `finally` no corre si al proceso lo matan; cortar una corrida de tres horas es algo que
+se hace—. La segunda es «¿cuáles hay que actualizar?»: una mutación cuyo texto original ya no
+existe no prueba nada y no se queja, sólo dice *el código cambió* en el medio de trescientas
+líneas de salida.
 
 Y `node test/manual/live-providers.js` habla con los CLI de verdad (gasta tokens y tarda):
 es lo que hay que correr cuando un CLI se actualiza, para ver si sigue hablando el mismo
 idioma.
 
-Y dos que contestan la pregunta que se hace mirando un recurso que salió mal, armando un
+Y tres que contestan la pregunta que se hace mirando un recurso que salió mal, armando un
 pedido de punta a punta con un proyecto de verdad y un solo doble —el proveedor, que anota
 lo que le mandaron en vez de contestar—: `node test/manual/prompt-tres-niveles.js` vuelca el
-**texto** exacto que recibe el modelo con los tres niveles puestos, y
+**texto** exacto que recibe el modelo con los tres niveles puestos;
 `node test/manual/referencias-al-modelo.js` hace lo mismo con las **referencias**, corriendo
 el mismo proyecto con un proveedor que abre archivos y con uno que no, para poder ver de qué
-manera llega —o no llega— cada documento. Los dos aceptan `--out archivo.md`.
+manera llega —o no llega— cada documento; y `node test/manual/menciones-al-modelo.js`
+imprime el prompt real de cinco pedidos con **menciones** (tres niveles en una frase, la
+misma instrucción después de reordenar la lista, una mención colgada, una referencia que el
+disco no tiene, y una instrucción vieja con "imagen 2" en texto plano). Los tres aceptan
+`--out archivo.md`.
+
+Y las **menciones** tienen su propia mitad en la suite, porque tocan el camino más caro que
+hay acá. Del lado del motor: que una mención se traduzca al número del pedido y no al de la
+pantalla; que **sobreviva a reordenar** —agregar una imagen antes corre los números y la
+mención sigue apuntando a la misma imagen—; que dos referencias con el mismo nombre en dos
+niveles no se confundan; que una que el disco no tiene **no reciba número** (no viaja, así
+que no ocupa lugar) y que eso no tape el aviso de siempre; que una colgada se diga y **no se
+le preste el número de otra**; que un documento no se numere; que una instrucción vieja con
+"imagen 2" en texto plano vuelva **byte por byte** como entró; y que un `@[` sin cerrar no se
+coma media instrucción. Del lado del panel: que la mención entre donde estaba el cursor
+—aunque el campo ya haya perdido el foco, que es lo que pasa al tocar la miniatura—, que los
+espacios de alrededor queden bien, y que el aviso distinga rojo (colgada) de ámbar (el disco).
+Y una que las abraza a todas: el **corpus compartido**, con el que se corren las dos
+gramáticas —la del panel y la del motor, que están escritas dos veces porque el panel no tiene
+`require`— sobre los mismos catorce textos raros para que no puedan decir cosas distintas.
+
+Del **campo con chips**, dos familias. Que **nada de lo que se guarda cambió**: `value`
+devuelve el mismo string que devolvía el textarea, sobre el corpus entero más los casos con
+`<`, `>`, `&`, saltos, espacios dobles, chips pegados y espacios adentro del token; que el
+token se guarde tal cual vino y no reconstruido (`partir` recorta espacios, así que un token
+reconstruido mediría menos y correría todos los offsets); y que un `@[]` sin nombre quede como
+texto, igual que en el motor. Y que **el número del chip sea el del motor**: las dos cuentas
+—`etiqueta()` del panel y `indice()` del motor— se corren sobre el mismo pedido, y el círculo
+se cierra traduciendo de vuelta.
+
+En el medio, la **fachada**: la traducción de offsets en los dos sentidos y sobre todos los
+offsets del texto; el chip como unidad atómica (un offset en medio de un token se acerca al
+borde, no parte la mención); el borrado que se lleva el token entero de los dos lados, también
+con dos chips seguidos; Enter como `"\n"` de verdad; pegar como texto plano y **copiar** como
+texto canónico; que el token sobreviva a un **clon** (lo que deja el undo nativo, y sin eso un
+chip clonado devolvía su etiqueta); el dictado escribiendo en un campo con chips sin perder
+ninguno; el ✨ canonizando y lo canonizado entrando como chip; y que tecleando los chips **no**
+se redibujen (por identidad del nodo: si se recreó, se perdió el undo).
+
+Del **doble clic**: que abra un `<input>` de verdad con el número adentro y seleccionado; que
+su Enter no llegue al campo (que es lo que dejaría un salto de línea); que lo que no es un
+dígito se filtre y tres sea el tope; que el chip en edición no se lo lleve la limpieza del
+campo (tiene un input adentro, así que su texto está vacío y parece un chip roto); que el
+Backspace del input no se lleve el chip de al lado; que un número inválido **quede escrito en
+rojo** con el número que se escribió y no se deshaga; que el estado sobreviva a recargar el
+campo porque está en el texto; que el renglón diga cuántas hay y **no** lo confunda con una
+referencia borrada; que se arregle con el mismo gesto; que Escape y Enter terminen en cosas
+distintas; y que un archivo llamado `Imagen_7.png` **no** se confunda con un número suelto.
+
+Y del **menú del `@`**, otras dos familias. Lo que se decide sin DOM: que se abra al principio
+del campo y después de un espacio y **no** pegado a una palabra (un mail, un handle) ni adentro
+de una mención ya escrita; que el filtro no distinga mayúsculas **ni acentos**; que la lista
+salga en el orden del pedido, con la etiqueta que va a decir el chip, con los rótulos de ámbito
+que ya usa la tira (se corren los dos archivos juntos) y con las que el disco no tiene
+incluidas y marcadas. Y lo que necesita el campo montado: que las flechas muevan y den la
+vuelta, que el `keyup` de la flecha no devuelva la selección al principio, que Enter y Tab
+elijan **sin dejar un salto de línea**, que Esc cierre sin tocar el texto, que el `@` con lo
+tecleado desaparezca, que el mouse mueva la misma marca que el teclado, que sin referencias no
+haya un menú vacío sino la línea que dice cómo se consiguen, y que el menú y la edición del
+número de un chip no puedan estar abiertos a la vez.
+
+Lo que sólo pasa en un navegador se mide con `medir-chips.js` y no se puede fijar acá: que
+Chromium se lleve el chip entero, que el borrado **se deshaga**, que el preview caiga arriba,
+que el menú no quede cortado en ningún ancho y que su Enter no meta un salto.
+
+Y de **canonizar al refinar**: que "imagen 2" pase a ser la mención de la que de verdad es la
+2 contando solo las imágenes que viajan; que un "imagen 9" que no apunta a nada no se
+convierta en nada; que una enumeración no se toque; que no se reescriba por dentro una mención
+que ya está, ni con un archivo llamado "imagen 2.png"; que el **↩** devuelva lo que el editor
+había escrito, sin canonizar; que sin el gancho —la caja de feedback de la Cola y las filas de
+Corrections, que cuelgan el micrófono sin pasar por la ficha— refinar haga exactamente lo que
+hacía; y que una canonización que revienta no se lleve puesto un refinado ya pagado.
+
+Y el **interior de la ficha**, por estructura y no por medición (el DOM de mentira no tiene
+motor de layout): que las referencias vayan arriba del campo; que los tres lugares donde se le
+pide algo al modelo usen el **mismo** cuerpo y que los dos de estilo no tengan pie de
+acciones; que la zona de arrastre no vuelva; que el techo de 108 px con scroll no vuelva; que
+la tira vacía no ocupe nada; que el renglón de estado de la tira viva **afuera** de la tira
+—si no, un error de captura quedaría invisible justo cuando aparece, con el marcador todavía
+sin imágenes—; que lo destructivo quede en la punta opuesta a *Generar* y que **pregunte**
+antes de tirar el trabajo hecho; que el transcript que llega después entre adentro de
+*Avanzado*; y que sin dictado la barra de controles **se arme igual** —si no, en Windows la
+ficha se quedaría sin capturar del programa y sin adjuntar, que no tienen nada que ver con el
+micrófono—.
+
+Del **encabezado**: que el nombre y los tiempos vayan a la izquierda y el tramo, el estimado
+y el estado a la derecha; que el grupo de la derecha envuelva **entero** y no de a una pieza;
+que el nombre ceda ancho hasta 80 px y ahí recorte; que el desglose de los dos datos arranque
+escondido y aparezca a partir de 640 px (es lo que hace que la fila plegada siga midiendo 32.8
+px); y que el estimado se pida con la ficha **plegada**, porque ahí es donde ahora se muestra.
+
+Los **iconos** aparte: que todos estén dibujados en la misma caja, que ninguno lleve color
+propio (heredan el del texto, que es lo que un emoji no puede), que un concepto no comparta
+dibujo con otro, y que las **cuatro** formas de rehacer —aplicar el ajuste, desde cero,
+reintentar, reactivar— sean cuatro dibujos distintos. Y que no queden glifos tipeados donde
+hay un control: la lista incluye ahora los de la Cola y los de Corrections.
+
+Y **las tres pestañas como una sola lista**, que es lo que la v1.6.0 cerró: que las tres
+dibujen la misma tarjeta, el mismo encabezado y la misma separación; que la guarda izquierda
+la pinten **solo** las cinco clases de estado (si otra regla la toca, la barra vuelve a
+querer decir dos cosas); que la tarjeta abierta se marque con el recuadro y no con la
+guarda; que el estado tenga **palabra** además de color, que las ocho situaciones tengan
+ocho palabras distintas y cinco colores, y que las escriba un solo lugar para las dos
+pestañas que muestran el mismo trabajo; que un trabajo terminado **sin colocar** no se pinte
+de «todo bien»; que el título de la Cola vuelva a ser el nombre y nada más; que la columna
+del chevron se reserve **también** en las filas que no se abren (o el nombre de ésas
+arrancaría 13 px a la izquierda y la columna dejaría de estar alineada); que el mensaje de
+un trabajo se lea con la fila **plegada**; que un mensaje que no dice más que la pastilla no
+se dibuje; que las cuatro fichas monten el cuerpo compartido **una sola vez cada una**; que
+el inventario de referencias lo contesta un solo lugar para las tres; que los cinco campos de
+prompt se dibujen con los mismos valores —y que ninguna fila de lista le ponga tamaño a su
+campo por la etiqueta, que es lo que le ganaba por especificidad y, cuando había espejo,
+desalineaba el resaltado—; y que Corrections abra de a una.
 
 ## Diagnóstico
 

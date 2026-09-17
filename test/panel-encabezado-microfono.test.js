@@ -392,7 +392,7 @@ function armar(opts) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'mic-select.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'mic-select.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   const M = ctx.HPMicSelect;

@@ -187,6 +187,12 @@ async function main() {
   agregar('course', 'tipografias.md', md('Títulos: Söhne 72/80. Cuerpo: Inter 32/44.'), false);
   agregar('sequence', 'referencia-blanco-y-negro.jpg', PNG_1PX, false);
   agregar('sequence', 'captura-programa-00-03-41.png', PNG_1PX, false);
+  // Dos documentos que se llaman IGUAL, uno del curso y otro de la clase. Es el
+  // caso que el editor señaló —«cada nombre debe ser único para que no se dañe la
+  // claridad de los prompts»—: los dos llegaban al modelo como «notas.md», o sea
+  // dos encabezados idénticos y una mención que podía ser cualquiera de los dos.
+  agregar('course', 'notas.md', md('Notas del CURSO: el logo nunca sobre fondo claro.'), false);
+  agregar('sequence', 'notas.md', md('Notas de ESTA CLASE: el ejemplo va en blanco y negro.'), false);
 
   const rutas = engine.loadReferences({ projectPath: proyecto, sequenceName: SEQ }).paths;
 

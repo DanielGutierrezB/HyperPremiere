@@ -57,10 +57,19 @@
    * normal desde que una fila de Corrections guarda contra la secuencia de
    * ORIGEN del recurso, que puede no estar abierta— la entrada terminaba
    * diciendo `loaded: true` y `sequenceText: ""` sin haber tocado el disco. La
-   * cola le creía (ensureGeneralPrompt saltea la lectura cuando `loaded`) y la
-   * generación siguiente de esa clase salía sin su prompt de secuencia. Con
-   * `scope: "sequence"` era peor: salía sin el del curso, que es textualmente el
-   * bug que la 1.5.0 vino a matar.
+   * cola le creía y la generación siguiente de esa clase salía sin su prompt de
+   * secuencia. Con `scope: "sequence"` era peor: salía sin el del curso, que es
+   * textualmente el bug que la 1.5.0 vino a matar.
+   *
+   * Desde que la cola relee por cada job (`ensureGeneralPrompt`, que no mira la
+   * caché) la GENERACIÓN ya no se lleva puesta una entrada fabricada. Los que
+   * siguen creyéndole son los lectores sincrónicos, que son los que no pueden
+   * esperar: el payload que arma la tarjeta (`buildMarkerPayload` en main.js), el
+   * estimado de tokens de la Cola (`ensureGeneralPromptCached`, que saltea la
+   * lectura cuando el contexto dice estar leído) y las palabras del panel
+   * (`describe`). Vale tenerlo presente al medir esto: un test que solo mire el
+   * prompt que recibió el modelo no ve la fabricación, porque la relectura la
+   * tapa.
    *
    * Partidas, eso no se puede escribir: guardar el del curso no toca `seqCache`,
    * así que `loaded` compone en false, la cola lee el disco y el nivel de la

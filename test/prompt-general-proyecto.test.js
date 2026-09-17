@@ -424,7 +424,7 @@ function montarPanel(opts) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js']) {
+  for (const f of ['util.js', 'iconos.js', 'store.js', 'general-prompt.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   return { ctx: ctx, disco: disco, espia: espia };
@@ -881,7 +881,7 @@ function montarCola(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
+  for (const f of ['util.js', 'iconos.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   return {
@@ -995,14 +995,45 @@ test('guardar el del curso desde una fila NO le borra el prompt a la clase de or
 test('guardar el de la clase desde una fila NO le borra el del curso', async function () {
   // La otra punta, y la peor: dejaba la generación SIN el prompt del curso, que
   // es textualmente el bug que la 1.5.0 vino a matar.
+  //
+  // Ojo con lo que mide cada assert, porque acá había un agujero. Mirar SOLO lo
+  // que recibió el modelo no alcanza: la cola relee los dos niveles del disco
+  // por cada job (ensureGeneralPrompt, sin mirar la caché), así que la
+  // fabricación queda tapada por esa relectura y el prompt sale bien igual. Este
+  // test pasaba con la fabricación puesta. Lo que la caché fabricada rompe son
+  // los caminos que SÍ le creen, y son los que se miden abajo: el estado que la
+  // tarjeta lee sin poder esperar, el estimado de tokens de la Cola —que saltea
+  // la lectura cuando el contexto dice estar leído— y las palabras del panel.
   const prproj = proyectoNuevo();
   engine.saveGeneralPrompt({ projectPath: prproj, text: 'azul de marca', scope: 'project' });
 
   const c = montarCola();
+  // La abierta es el corte nuevo; la de origen, "Clase 14", no se leyó nunca. Y
+  // NO se hidrata ninguna de las dos a propósito: la caché del curso es por
+  // PROYECTO, así que un `load` de cualquier hermana la sembraría y la
+  // fabricación no se dispararía (el agujero por el que esto se escapaba).
   c.ctx.HPStore.setContext(prproj, 'Clase 14_02');
 
   await c.ctx.HPGeneral.save(prproj, 'Clase 14', 'esta va en sepia', 'sequence');
 
+  ok(!c.ctx.HPGeneral.state(prproj, 'Clase 14').loaded,
+    'guardar el de la clase no puede hacer que el curso diga estar leído: nadie leyó su archivo');
+  eq(c.ctx.HPGeneral.state(prproj, 'Clase 14').projectText, '',
+    'y sigue sin texto del curso, que es la verdad: no se leyó');
+  has(c.ctx.HPGeneral.describe(prproj, 'Clase 14').courseBadge, 'leyendo el proyecto',
+    'el panel dice que todavía no sabe, no que el proyecto no lleva estilo del curso');
+
+  // El estimado de la Cola es el lector que le cree a la caché: saltea la
+  // lectura cuando el contexto dice estar leído. Con la entrada fabricada
+  // estimaría un pedido sin el prompt del curso y el semáforo quedaría corto
+  // contra lo que de verdad viaja, que es el defecto que ya pagamos una vez.
+  c.ctx.HPQueue.addStaged(jobDe(prproj));
+  const cuerpo = await c.ctx.HPQueue.payloadForEstimate(c.ctx.HPQueue.jobs()[0]);
+  eq(cuerpo.generalInstruction, 'azul de marca',
+    'el estimado cuenta el prompt del curso: fue a buscarlo en vez de creerle a una entrada fabricada');
+  eq(cuerpo.sequenceInstruction, 'esta va en sepia');
+
+  c.ctx.HPQueue.remove(c.ctx.HPQueue.jobs()[0].id);
   c.ctx.HPQueue.add(jobDe(prproj));
   await dejarCorrer();
 
@@ -1521,15 +1552,25 @@ test('el panel tiene un campo por nivel, cada uno con su rótulo', function () {
 // sola. Por eso los tests de acá abajo no miran solo dónde quedó cada caja:
 // miran que ninguna de las dos quede muda sobre la otra.
 
-test('el prompt del curso NO vive adentro del área de marcadores', function () {
+test('el rótulo "Marcadores" separa lo del curso de lo de esta clase', function () {
+  // Lo que este test fijaba —que el prompt del CURSO no viviera adentro del área de
+  // los marcadores de una clase— sigue valiendo y es lo importante: es de todas las
+  // clases, así que adentro del área de los de ésta no es de nadie.
+  //
+  // Lo que NO vale, y era mío: haber movido también el de la SECUENCIA arriba del
+  // rótulo, presentándolo como el mismo bug corregido. No lo era. El editor lo había
+  // puesto abajo a propósito y su argumento es mejor que el de la simetría: lo que
+  // está debajo del separador es de la SECUENCIA en la que estás y cambia al cambiar
+  // de clase, y el estilo del curso se mantiene. O sea que el separador no separa
+  // "los bloques" de "la lista": separa lo del curso de lo de esta clase.
   const html = HTML();
   const marcadores = donde(html, '<div class="section-label">Marcadores</div>');
   ok(donde(html, 'id="general-section"') < marcadores,
     'el del curso es de TODAS las clases: adentro del área de los marcadores de ésta no es de nadie');
-  ok(donde(html, 'id="general-sequence-section"') > marcadores,
-    'y el de la clase sí va adentro, que es a lo que aplica');
+  ok(marcadores < donde(html, 'id="general-sequence-section"'),
+    'y el de la clase va abajo, del lado de lo que cambia al cambiar de secuencia');
   ok(donde(html, 'id="general-sequence-section"') < donde(html, 'class="markers-scroll"'),
-    'arriba de las tarjetas: es el encabezado de lo que hay abajo');
+    'arriba de las tarjetas: es el encabezado de esa lista, no una de ellas');
 });
 
 test('el del curso queda pegado al Contexto de la clase, arriba', function () {
@@ -1555,8 +1596,25 @@ test('cada bloque tiene su campo, y cada campo su barra de dictado', function ()
   const vista = fs.readFileSync(path.join(CEP, 'general-view.js'), 'utf8');
   has(vista, 'mic: "prompt-general"');
   has(vista, 'mic: "prompt-secuencia"', 'dos dictados con id propio, uno por campo');
-  has(vista, 'n.input.parentNode.insertBefore(mic, n.input.nextSibling)',
-    'y cada barra se cuelga del campo que dicta, no de un contenedor compartido');
+  // Desde la 1.6.0 la barra no se cuelga a mano al lado del campo: los dos bloques
+  // usan el MISMO cuerpo de ficha que la tarjeta de un marcador (HPPromptCard), y
+  // es él el que arma la tira de referencias adelante y la barra de controles
+  // atrás. Lo que hay que fijar sigue siendo lo mismo —que cada campo tenga SU
+  // barra y no una compartida— y ahora se lee en que cada nivel monta su propia
+  // ficha, con su propio `micId`, alrededor de su propio campo.
+  // La ficha sale de `montar` y de nada más: se fija la ASIGNACIÓN completa y no
+  // sólo que la llamada exista en el archivo, porque un bloque que se armara su
+  // propio cuerpo y dejara la llamada al lado —o detrás de un `||`— seguiría
+  // teniendo `HPPromptCard.montar(` escrito una vez. Y lo que se pierde en ese caso
+  // no falla: el bloque se dibuja, se escribe y se guarda, pero sin tira de
+  // referencias, sin barra de controles y sin chips de mención.
+  has(vista, 'n.ficha = HPPromptCard.montar({',
+    'los dos bloques usan el cuerpo de ficha compartido, y su ficha ES la que devuelve');
+  has(vista, 'campo: declarado', 'y cada ficha se arma alrededor del campo de SU nivel');
+  has(vista, 'n.input = n.ficha.campo',
+    'y el campo que queda en pantalla es el que devuelve la ficha: desde la 1.6.x el ' +
+    'textarea de index.html es la declaración y el campo con chips lo reemplaza');
+  has(vista, 'micId: n.mic', 'con el id de dictado de ese campo, no uno compartido');
 });
 
 test('cada bloque tiene su propio renglón y su propio badge', function () {
@@ -1638,16 +1696,32 @@ test('el CSS sabe esconder el bloque de la clase entero, no solo su campo', func
     'y la vista lo esconde por el bloque, no solo por el campo');
 });
 
-test('las referencias generales quedan del lado de la secuencia, que es su alcance', function () {
-  // No se parten en dos: son una sola bolsa y se guardan por secuencia y en esta
-  // máquina. Van abajo porque ése es el alcance del bloque de abajo; arriba, en
-  // la caja que promete "viaja con el .prproj", harían la promesa falsa que costó
-  // el bug del prompt general.
+test('las referencias de cada nivel se dibujan ARRIBA del campo de ese nivel', function () {
+  // Lo que este test fijaba —que las referencias vivieran en el bloque de SU
+  // alcance y no en el otro— sigue valiendo y ahora es más fuerte: no están en un
+  // `<div>` con id que el HTML pone abajo del campo, están en la TIRA que
+  // HPPromptCard arma arriba del campo de ese nivel. Un mount con id en el HTML
+  // podía quedar en el bloque equivocado sin que nada fallara; una tira que se
+  // arma alrededor del campo, no.
+  //
+  // Y arriba y no abajo por lo que pidió el editor: "las imágenes de referencia
+  // deberían verse encima de la parte de entrada de texto, para que se entienda
+  // que van con el prompt".
   const html = HTML();
-  ok(donde(html, 'id="general-stills-mount"') > donde(html, 'id="general-sequence-section"'),
-    'en el bloque de la clase');
-  has(html, 'Referencias de esta secuencia',
-    'y el rótulo dice el alcance: "generales" a secas hacía pensar que eran del curso');
+  ok(html.indexOf('id="general-stills-mount"') === -1 && html.indexOf('id="general-course-refs"') === -1,
+    'los dos mounts sueltos ya no existen: la tira la monta la ficha, alrededor del campo');
+  const vista = fs.readFileSync(path.join(CEP, 'general-view.js'), 'utf8');
+  has(vista, 'HPRefsView.createControl(n.refScope)',
+    'cada nivel dibuja SU inventario, con su propio alcance');
+  has(vista, 'refScope: "course"');
+  has(vista, 'refScope: "sequence"', 'y los dos alcances están declarados, uno por nivel');
+  // La tira se dibuja antes del campo: es el `tira` de HPPromptCard, que va
+  // primero en el cuerpo (ver cep/js/prompt-card.js).
+  const card = fs.readFileSync(path.join(CEP, 'prompt-card.js'), 'utf8');
+  // El campo va adentro de su envoltorio (el que lleva el espejo de resaltado
+  // detrás), y ese envoltorio va después de la tira.
+  ok(card.indexOf('caja.appendChild(tira)') < card.indexOf('caja.appendChild(envoltorio)'),
+    'la tira de referencias va ARRIBA del campo');
 });
 
 test('el cartel de conflicto vive en el bloque que SIEMPRE se dibuja', function () {

@@ -27,6 +27,10 @@ function elemento(tag) {
     tagName: tag, children: [], listeners: {}, style: {},
     className: '', textContent: '', value: '', title: '',
     appendChild: function (hijo) { this.children.push(hijo); return hijo; },
+    // `childNodes` es la MISMA lista que `children`, y acá alcanza: en el DOM de
+    // verdad la diferencia es que `childNodes` también trae los nodos de texto, y
+    // eso es lo que el campo de prompt recorre desde que pinta las menciones como
+    // chips (ver cep/js/campo.js).
     setAttribute: function (k, v) { this[k] = v; },
     addEventListener: function (ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
     /** Dispara un evento como si el editor hubiera hecho clic. */
@@ -36,7 +40,7 @@ function elemento(tag) {
     /** Busca en profundidad por clase, para encontrar controles sin ids. */
     buscar: function (clase) {
       for (const h of this.children) {
-        if (h.className === clase) return h;
+        if (String(h.className || "").split(" ").indexOf(clase) !== -1) return h;
         const hit = h.buscar && h.buscar(clase);
         if (hit) return hit;
       }
@@ -59,7 +63,26 @@ function elemento(tag) {
       }
       return out;
     },
+    /** El texto de este nodo y de todo lo que cuelga: lo que el editor lee. */
+    texto: function () {
+      let t = String(this.textContent || '');
+      for (const h of this.children) if (h.texto) t += ' ' + h.texto();
+      return t;
+    },
+    querySelectorAll: function () { return []; },
   };
+  // El cuerpo de ficha compartido le agrega una clase al campo que le pasan
+  // (`hp-campo-input`), así que este doble necesita `classList` como los de las
+  // otras vistas.
+  el.classList = {
+    add: function (c) {
+      if (String(el.className || '').split(' ').indexOf(c) === -1) {
+        el.className = (el.className ? el.className + ' ' : '') + c;
+      }
+    },
+    remove: function () {},
+  };
+  el.childNodes = el.children;
   Object.defineProperty(el, 'innerHTML', {
     get: function () { return ''; },
     set: function () { el.children.length = 0; },
@@ -157,12 +180,19 @@ function montarPestana(opts) {
       fbInit: function (id) { espia.fbAbiertos.push(id); },
       fbClear: function (id) { espia.fbCerrados.push(id); },
       fbCollect: function () { return opts.reenviar || []; },
-      createControl: function (markerKey, o) {
+      // Desde la 1.6.x la fila dibuja la TIRA de referencias del marcador —la
+      // misma que una ficha— y no la caja completa con su zona de arrastre, que
+      // ya no existe en ninguna de las tres pestañas.
+      crearTira: function (markerKey, o) {
         espia.controles.push({ markerKey: markerKey, opts: o });
         const el = elemento('div');
-        el.className = 'marker-stills';
-        return el;
+        el.className = 'hp-tira-propia';
+        return { el: el, estado: elemento('div'), refrescar: function () {}, cuantasImagenes: function () { return 0; } };
       },
+      // El inventario que mira el resaltado de menciones del campo. Vacío: tiene
+      // sus propios tests y acá se fija el cableado de la fila.
+      inventario: function () { return []; },
+      capturar: function () {}, ingerir: function () {},
     },
     HPQueue: {
       add: function (job) { espia.encolados.push(job); espia.modos.push('arranca'); },
@@ -226,6 +256,9 @@ function montarPestana(opts) {
     },
     document: {
       createElement: elemento,
+      // El campo de prompt arma nodos de TEXTO: desde la 1.6.x es un
+      // `contenteditable` que pinta las menciones como chips, no un `<textarea>`.
+      createTextNode: function (t) { const n = elemento('#text'); n.textContent = t; return n; },
       getElementById: function (id) { return nodos[id] || null; },
     },
   };
@@ -233,7 +266,7 @@ function montarPestana(opts) {
   vm.createContext(ctx);
   // `general-prompt.js` va de verdad: guardar para todo el curso desde una fila
   // pasa por ahí, y con un doble no se probaría el camino que el editor aprieta.
-  for (const f of ['util.js', 'general-prompt.js', 'corrections-contexto.js', 'corrections.js']) {
+  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'general-prompt.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
 
@@ -285,18 +318,34 @@ async function cargarFila(m, opts) {
  * el test falle si deja de serlo.
  */
 function regenerar(fila) {
-  const b = fila.buscar('qbtn qbtn-react');
+  const b = fila.buscar('qbtn-react');
   if (!b) throw new Error('la fila no tiene el botón grande de regenerar');
-  eq(b.textContent, '↻ Regenerar', 'y dice lo mismo que en la Cola');
+  // El ↻ se fue: era el mismo glifo que "Reintentar" y que "Reactivar", que son
+  // otras dos cosas. Ahora lleva el dibujo de "aplicar el ajuste", que es lo que
+  // hace (ver cep/js/iconos.js). El `textContent` de un botón sigue siendo su
+  // etiqueta y nada más: un `<svg>` no aporta texto.
+  eq(b.textContent, 'Regenerar', 'y dice lo mismo que en la Cola');
   b.click();
   return b;
 }
 
+/**
+ * La línea de estado de la fila, que desde la 1.6.x vive en el PIE del cuerpo
+ * compartido, y de paso que esté en el color que le toca: las dos cosas juntas
+ * porque un error pintado de verde es justo el bug que esto atrapa.
+ */
+function lineaDeEstado(fila, clase) {
+  const el = fila.buscar('corr-state');
+  ok(el, 'la fila tiene su línea de estado');
+  if (clase) has(el.className, clase, 'y está en ' + clase);
+  return el;
+}
+
 /** El otro botón de la fila: manda lo mismo, pero sin arrancar la cola. */
 function enviarACola(fila) {
-  const b = fila.buscar('qbtn qbtn-stage');
+  const b = fila.buscar('qbtn-stage');
   if (!b) throw new Error('la fila no ofrece enviar a la cola');
-  eq(b.textContent, '＋ Enviar a la cola', 'con el mismo nombre que en Marcadores');
+  eq(b.textContent, 'Enviar a la cola', 'con el mismo nombre que en Marcadores');
   b.click();
   return b;
 }
@@ -422,7 +471,7 @@ test('enviar a la cola deja la corrección en espera, sin arrancar', async funct
 
   eq(p.espia.encolados.length, 1, 'la corrección está en la cola');
   eq(p.espia.modos[0], 'espera', 'pero la cola no arranca sola');
-  has(fila.buscar('corr-state is-ok').textContent, 'Iniciar cola',
+  has(lineaDeEstado(fila, 'is-ok').textContent, 'Iniciar cola',
     'y la fila dice cómo se larga');
 });
 
@@ -448,7 +497,7 @@ test('sin instrucción tampoco se encola en espera', async function () {
   enviarACola(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados.length, 0);
-  has(fila.buscar('corr-state is-error').textContent, 'Escribí qué hay que corregir');
+  has(lineaDeEstado(fila, 'is-error').textContent, 'Escribí qué hay que corregir');
 });
 
 test('varias filas se pueden dejar juntas antes de largar la cola', async function () {
@@ -783,7 +832,7 @@ test('aceptar sí escribe el archivo del curso, con su alcance', async function 
   eq(p.espia.promptsEscritos.length, 1);
   eq(p.espia.promptsEscritos[0].scope, 'project', 'en el archivo del curso');
   eq(p.espia.promptsEscritos[0].text, 'todo en Inter, y NADA de degradés');
-  has(fila.buscar('corr-state is-ok').textContent, 'le llega a todas las clases');
+  has(lineaDeEstado(fila, 'is-ok').textContent, 'le llega a todas las clases');
   eq(p.espia.encabezadoRefrescado, 1, 'y el encabezado deja de mostrar el viejo');
 });
 
@@ -937,7 +986,7 @@ test('si el proyecto no se puede escribir, se dice y no se hace pasar por guarda
   await new Promise(function (r) { setTimeout(r, 0); });
   await new Promise(function (r) { setTimeout(r, 0); });
 
-  has(fila.buscar('corr-state is-error').textContent, 'No pude guardarlo en el proyecto');
+  has(lineaDeEstado(fila, 'is-error').textContent, 'No pude guardarlo en el proyecto');
 });
 
 test('la fila muestra qué se le había pedido a ese recurso', async function () {
@@ -1005,7 +1054,7 @@ test('el HTML previo viaja explícito, de la versión que se eligió', async fun
   // corrige la versión que el editor elija, así que si no se manda a mano, una
   // corrección sobre la v3 saldría rediseñando la v3... contra la v3.
   const { p, fila } = await cargarFila(recurso());
-  const picker = fila.children.find(function (c) { return c.className === 'corr-actions'; }).children[0].select;
+  const picker = fila.buscar('corr-pick-version').select;
   ok(picker, 'con dos versiones, la fila deja elegir cuál corregir');
   picker.value = '3';
 
@@ -1040,7 +1089,7 @@ test('sin instrucción no se gasta una llamada', async function () {
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados.length, 0, 'no encoló nada');
-  has(fila.buscar('corr-state is-error').textContent, 'Escribí qué hay que corregir');
+  has(lineaDeEstado(fila, 'is-error').textContent, 'Escribí qué hay que corregir');
 });
 
 test('si el HTML de esa versión no se puede leer, se dice y no se encola', async function () {
@@ -1049,7 +1098,7 @@ test('si el HTML de esa versión no se puede leer, se dice y no se encola', asyn
   regenerar(fila);
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.encolados.length, 0, 'mejor no encolar que encolar sin referencia');
-  has(fila.buscar('corr-state is-error').textContent, 'No pude encolarla');
+  has(lineaDeEstado(fila, 'is-error').textContent, 'No pude encolarla');
 });
 
 // ── El HTML que la pestaña ya encontró ───────────────────────────────
@@ -1059,7 +1108,9 @@ test('si el HTML de esa versión no se puede leer, se dice y no se encola', asyn
 
 /** Abre el bloque del HTML de una fila, como haría el clic en el resumen. */
 async function abrirHtml(fila) {
-  const caja = fila.children.filter(function (c) { return c.className === 'corr-html'; })[0];
+  // Vive adentro del desplegable "Avanzado" de la ficha, igual que el editor de
+  // HTML de una ficha de marcador: se busca en profundidad.
+  const caja = fila.buscar('corr-html');
   caja.open = true;
   (caja.listeners.toggle || []).forEach(function (f) { f(); });
   await new Promise(function (r) { setTimeout(r, 0); });
@@ -1078,7 +1129,7 @@ test('cambiar de versión con el HTML abierto trae ESA versión', async function
   // Si no, se renderizaría el HTML de una versión con el número de otra.
   const { p, fila } = await cargarFila(recurso());
   await abrirHtml(fila);
-  const picker = fila.buscar('corr-actions').children[0].select;
+  const picker = fila.buscar('corr-pick-version').select;
   picker.elegir('3');
   await new Promise(function (r) { setTimeout(r, 0); });
   eq(p.espia.leidos[1].version, 3);
@@ -1117,7 +1168,7 @@ test('el HTML editado a mano respeta si el recurso llevaba fondo', async functio
 test('si el HTML de esa versión no se puede leer, se dice al abrirlo', async function () {
   const { p, fila } = await cargarFila(recurso(), { htmlFalla: true });
   await abrirHtml(fila);
-  has(fila.buscar('corr-state is-error').textContent, 'No pude leer el HTML');
+  has(lineaDeEstado(fila, 'is-error').textContent, 'No pude leer el HTML');
   eq(p.espia.encolados.length, 0);
 });
 
@@ -1125,7 +1176,7 @@ test('si el HTML de esa versión no se puede leer, se dice al abrirlo', async fu
 
 test('el nombre del marcador lleva el cursor de Premiere a ese punto', async function () {
   const { p, fila } = await cargarFila(recurso());
-  const nombre = fila.buscar('corr-name is-link');
+  const nombre = fila.buscar('is-link');
   ok(nombre, 'el nombre es clickeable');
   nombre.click();
   eq(p.espia.saltos.length, 1);
@@ -1136,14 +1187,14 @@ test('el nombre del marcador lleva el cursor de Premiere a ese punto', async fun
 test('leyendo de otro corte, el nombre lleva a la secuencia ABIERTA', async function () {
   // Es donde va a caer el clip; el corte viejo puede ni estar abierto.
   const { p, fila } = await cargarCruzada();
-  fila.buscar('corr-name is-link').click();
+  fila.buscar('is-link').click();
   eq(p.espia.saltos[0].seq, 'Clase 14', 'la abierta, no la de origen');
   eq(p.espia.saltos[0].segundos, 128.5);
 });
 
 test('sin el tramo, el nombre no es un enlace a ninguna parte', async function () {
   const { p, fila } = await cargarFila(recurso({ start: null, duration: null, timeSource: '' }));
-  eq(fila.buscar('corr-name is-link'), null);
+  eq(fila.buscar('is-link'), null);
   eq(p.espia.saltos.length, 0);
 });
 
@@ -1151,7 +1202,11 @@ test('sin el tramo, el nombre no es un enlace a ninguna parte', async function (
 
 test('sin el tramo no se ofrece corregir: primero se pregunta dónde iba', async function () {
   const { fila } = await cargarFila(recurso({ start: null, duration: null, timeSource: '' }));
-  eq(fila.className, 'corr-row is-unknown');
+  // `is-unknown` es el estado crudo de la fila y `es-atencion` la guarda ámbar
+  // que comparte con las otras dos pestañas (ver la sección 9 del CSS).
+  has(fila.className, 'corr-row');
+  has(fila.className, 'is-unknown');
+  has(fila.className, 'es-atencion', 'y la guarda en ámbar: hay algo que atender acá');
   has(fila.buscar('corr-warn').textContent, 'No encontré dónde iba');
   eq(fila.porTag('textarea').length, 0, 'ni caja de instrucción: colocar a ciegas es peor que no colocar');
 });
@@ -1302,7 +1357,7 @@ test('estando en su propia secuencia no se avisa nada', async function () {
 
 test('la fila monta el control de imágenes del marcador', async function () {
   const { p, fila } = await cargarFila(recurso());
-  ok(fila.buscar('marker-stills'), 'las imágenes están en la fila, no en otra pestaña');
+  ok(fila.buscar('hp-tira-propia'), 'las imágenes están en la fila, no en otra pestaña');
   const c = p.espia.controles[0];
   eq(c.markerKey, 'Marcador 3');
   eq(c.opts.sequenceName, 'Clase 14', 'la secuencia del recurso');
@@ -1400,6 +1455,11 @@ function montarCola(opts) {
       setTranscriptOffset: function (n) { espacio(seqActual).offset = n; },
       getMarkerData: function () { return { stills: [], resources: [] }; },
       getMarkerAssets: function () { return []; },
+      // Los dos que describen QUIÉN es cada adjunto (de qué nivel salió y cómo se
+      // llama): es con lo que una mención escrita en la instrucción se traduce al
+      // número que le toca en este pedido. Ver bridge/prompt/menciones.js.
+      getMarkerStillRefs: function () { return []; },
+      getMarkerDocs: function () { return []; },
       getTranscriptOffset: function () { return 0; },
       getObjective: function () { return 'objetivo'; },
       // El prompt general ya no se lee de acá: lo resuelve HPGeneral contra el
@@ -1449,7 +1509,7 @@ function montarCola(opts) {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
+  for (const f of ['util.js', 'iconos.js', 'general-prompt.js', 'refs.js', 'queue.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   return { ctx: ctx, espia: espia, porSecuencia: porSecuencia };

@@ -1,0 +1,1117 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   HyperPremiere — tema «Premiere» (PROPUESTA para mirar, no el panel real)
+
+   Se carga DESPUÉS de cep/css/style.css y solo pisa lo que redefine: el panel
+   publicado no se toca. Sin ?tema= en la maqueta, esto no existe.
+
+   De dónde salen los valores. Todo lo que hay acá se midió en la Premiere que
+   está instalada en esta máquina, no se inventó "al estilo Adobe":
+
+   · /Applications/Adobe Premiere Pro 2026/…/Contents/UXP/plugins/
+     com.adobe.dva.text/static/js/main.js — el panel de Texto (UXP, de Adobe)
+     se inyecta su propio CSS para calzar con el chrome del host, y ahí están
+     los cuatro grises de las cuatro luminosidades de la app:
+         --host-background-color-darkest: #323232;   ← el default
+         --host-background-color-dark:    #535353;
+         --host-background-color-light:   #B8B8B8;
+         --host-background-color-lightest:#F0F0F0;
+     del mismo archivo salen el fondo de menú (rgb(50,50,50) = #323232), el
+     hover de menú (rgb(62,62,62) = #3E3E3E) con su texto rgb(205,205,205), y
+     la tipografía de UI: `Lucida Grande, Tahoma, sans-serif`.
+
+   · …/UXP/plugins/com.adobe.unifiedpanel/css/vendors.19427b2b.css — el panel
+     unificado de Premiere trae la rampa Spectrum completa. `.spectrum--dark`:
+         gray-50  #252525   gray-100 #323232   gray-200 #3e3e3e
+         gray-75  #2f2f2f   gray-300 #4a4a4a   gray-400 #5a5a5a
+         gray-500 #6e6e6e   gray-600 #909090   gray-700 #b9b9b9
+         gray-800 #e3e3e3   gray-900 #ffffff
+         blue-400 #2680eb · blue-500 #378ef0 · blue-600 #1473e6
+         celery-400 #44b556 · red-400 #e34850 · orange-400 #e68619
+         yellow-400 #dfbf00
+     Toda la escala de grises de este tema son ESOS once valores y nada más.
+
+   · …/Contents/Resources/css/spectrum_dark.css — los colores con los que la
+     app pinta sus íconos de estado en el tema oscuro: blue #2D8CEB, green
+     #149B14, red #F53C3C, yellow #F4C500. Sirvieron de contraste: son para
+     rellenar SVG, más saturados de lo que aguanta un texto de 11 px sobre
+     gris, así que los estados de acá usan la rampa del panel (celery/red/
+     orange/yellow -400), que es la que Adobe usa para UI.
+
+   · ~/Documents/Adobe/Premiere Pro/26.0/Profile-danielgutierrez/
+     Adobe Premiere Pro Prefs — `fe.color.brightnesscc8.1` está en 0, o sea la
+     luminosidad por defecto, que es la que mapea al #323232 de arriba. (Y
+     `fe.appearance.usereducedcontrast` en true: de ahí que el tema no busque
+     contrastes fuertes entre cajas vecinas.)
+
+   · Medidas: Spectrum escala «medium» (la de escritorio), del mismo
+     vendors.css: size-50 4px · size-100 8px · size-300 24px · size-400 32px.
+     De ahí el ritmo de 4 px, los controles de 22-24 px de alto y el radio de
+     2 px. El panel de Texto pone su UI en 10 px (12-13 en CJK); acá el cuerpo
+     va en 11 px, que es lo que rinde el mismo tamaño aparente en mac.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* La rampa, tal cual .spectrum--dark. Los nombres son los del panel. */
+  --bg-base: #323232;          /* gray-100: el gris del panel. EL gris. */
+  --bg-panel: #2f2f2f;         /* gray-75: las franjas de chrome (encabezado,
+                                  acciones, sesión) — un paso más abajo, como
+                                  la barra de herramientas de un panel. */
+  --bg-surface: #3e3e3e;       /* gray-200: lo que se levanta (fila abierta) */
+  --bg-surface-hover: #4a4a4a; /* gray-300: el hover de eso */
+  --bg-inset: #252525;         /* gray-50: los pozos (campos, listas, salida) */
+  --text-primary: #e3e3e3;     /* gray-800 */
+  --text-secondary: #b9b9b9;   /* gray-700 */
+  --text-muted: #909090;       /* gray-600 — legible, no decorativo */
+  --text-off: #6e6e6e;         /* gray-500: deshabilitado (ver más abajo) */
+  --hairline: #3e3e3e;         /* separador dentro del panel */
+  --hairline-strong: #4a4a4a;  /* borde de control */
+  --groove: #262626;           /* la línea entre franjas: más oscura, como el
+                                  filo entre dos paneles acoplados. Es el
+                                  gray-75 de la rampa NUEVA (la que trae el
+                                  panel de Texto), no un gris a ojo. */
+  --edge: #1d1d1d;             /* el filo más oscuro: borde de diálogo, canal
+                                  de una barra de progreso, texto sobre un
+                                  relleno de color. gray-50 de esa misma rampa
+                                  nueva (#1d1d1d). */
+  --accent: #2680eb;           /* blue-400: selección y acción de Adobe */
+  --accent-hi: #378ef0;        /* blue-500: hover */
+  --accent-lo: #1473e6;        /* blue-600: pressed */
+  --accent-dim: rgba(38, 128, 235, 0.18);
+  --accent-glow: rgba(38, 128, 235, 0.55);
+  --ok: #44b556;               /* celery-400: listo / colocado */
+  --error: #e34850;            /* red-400: falló */
+  --warn: #e68619;             /* orange-400: atención / sin cupo / sin colocar */
+  --fix: #dfbf00;              /* yellow-400: la familia "rehacer" (refinar,
+                                  regenerar, ajuste de una corrección). Hoy
+                                  comparte el ámbar con "atención"; acá se
+                                  separan, que es lo que pide poder distinguir
+                                  "te falta algo" de "esto se vuelve a hacer". */
+  --radius: 2px;               /* Premiere no redondea: 2 px es el mínimo de
+                                  Spectrum y ya se lee como "borde vivo". */
+  --radius-sm: 2px;
+  --ease: 80ms linear;         /* la UI de Premiere no hace fades largos */
+  --shadow-card: none;         /* las cajas no flotan: se separan con 1 px */
+  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.55); /* los menús sí */
+}
+
+/* ── Tipografía y base ──────────────────────────────────────────────── */
+
+/* La pila de UI que declara el panel de Texto de Premiere, con la familia que
+   la app trae en Resources/AdobeCleanUX/ adelante por si está instalada. DM
+   Sans (la que carga el index.html) queda afuera a propósito: es la costura
+   más visible entre el panel y la app. */
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: "Adobe Clean UX", "Adobe Clean", "Lucida Grande", Tahoma,
+    -apple-system, "Segoe UI", sans-serif;
+  font-weight: 400;            /* 300 a 11 px sobre gris se lava */
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* ── Encabezado ─────────────────────────────────────────────────────── */
+
+.panel-header {
+  padding: 3px 6px;
+  gap: 6px;
+  row-gap: 3px;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--groove);
+}
+/* La marca deja de ser lo más brillante del panel: es un rótulo, no un estado. */
+.brand-mark { width: 13px; height: 13px; color: var(--text-muted); }
+.brand-name {
+  font-size: 11px; font-weight: 700; letter-spacing: 0;
+  color: var(--text-secondary);
+}
+
+/* La insignia de secuencia: rectangular, con el color solo en el borde y el
+   texto (los rellenos de color a esta escala tapan las letras). */
+.hdr-chip {
+  padding: 1px 5px; border-radius: var(--radius-sm);
+  font-size: 10px; line-height: 16px; letter-spacing: 0;
+  border-color: var(--hairline-strong); color: var(--text-secondary);
+  background: var(--bg-inset);
+}
+.hdr-chip.is-idle { color: var(--text-off); background: transparent; }
+.hdr-chip.is-ok { color: var(--ok); border-color: rgba(68, 181, 86, 0.5); background: rgba(68, 181, 86, 0.10); }
+.hdr-chip.is-warn { color: var(--warn); border-color: rgba(230, 134, 25, 0.5); background: rgba(230, 134, 25, 0.10); }
+.hdr-chip.is-error { color: var(--error); border-color: rgba(227, 72, 80, 0.5); background: rgba(227, 72, 80, 0.10); }
+
+.header-tools { gap: 3px; row-gap: 3px; }
+
+/* Los cuatro controles del encabezado miden 20 px de alto, dicho a propósito:
+   el mínimo de 22 de `button` es para los botones del cuerpo, y acá la franja
+   es lo primero que hay que achicar. Los cuatro lo dicen explícito para que
+   queden alineados entre sí y con el desplegable del micrófono. */
+.icon-btn {
+  width: 22px; height: 20px; min-height: 20px; font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent; border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+.icon-btn:hover {
+  color: var(--text-primary); background: var(--bg-surface);
+  border-color: var(--hairline-strong);
+}
+
+.btn-log {
+  height: 20px; min-height: 20px; padding: 0 6px; font-size: 10px; gap: 3px;
+  color: var(--text-secondary);
+  background: transparent; border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+.btn-log:hover { color: var(--text-primary); background: var(--bg-surface); border-color: var(--hairline-strong); }
+/* El ⬇ como glifo de una sola tinta, dibujado desde CSS: es el único emoji del
+   encabezado que vive en un <span> propio, así que se puede reemplazar sin
+   tocar el HTML. Los que están sueltos en el texto de un botón (✨ 📸 📌 🧹)
+   no: eso queda anotado en el reporte. */
+.btn-log .dl-ico { font-size: 0; display: inline-flex; }
+.btn-log .dl-ico::before {
+  content: ""; display: block; width: 10px; height: 10px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M6 1v7M3 6l3 3 3-3M2 11h8' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+}
+
+.btn-update {
+  height: 20px; min-height: 20px; padding: 0 6px; font-size: 10px;
+  color: var(--text-secondary);
+  background: transparent; border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+.btn-update:hover { color: var(--text-primary); background: var(--bg-surface); border-color: var(--hairline-strong); }
+.update-icon { font-size: 12px; font-weight: 400; margin-right: 0; }
+/* Hay actualización: el aviso se queda, sin pulso. En un panel acoplado dentro
+   de Premiere una caja que late es lo único que se mueve en toda la pantalla. */
+.btn-update.has-update {
+  color: var(--warn); border-color: rgba(230, 134, 25, 0.6);
+  background: rgba(230, 134, 25, 0.12); animation: none;
+}
+.btn-update.has-update:hover { background: rgba(230, 134, 25, 0.22); color: var(--warn); }
+.btn-update.check-failed { color: var(--text-off); border-color: var(--hairline-strong); border-style: dashed; }
+.btn-update.check-failed:hover { color: var(--text-primary); border-color: var(--hairline-strong); }
+
+/* ── Botones ────────────────────────────────────────────────────────── */
+
+/* El botón de Premiere es una pastilla gris RELLENA, no un contorno: sobre
+   #323232 un contorno de 1 px no se lee como apretable. gray-200 de fondo,
+   gray-300 de borde, hover a gray-300/400 (los mismos pasos que usa el hover
+   de menú del panel de Texto: rgb(62,62,62)).
+   Acá no hay nada de `flex` ni de `min-width`: el ancho de cada botón lo sigue
+   decidiendo el CSS del panel, igual que antes. */
+button {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 11px; font-weight: 400; letter-spacing: 0;
+  padding: 2px 8px;
+  min-height: 22px;
+  gap: 5px;
+  transition: background-color var(--ease), border-color var(--ease), color var(--ease);
+}
+button:hover {
+  background-color: var(--bg-surface-hover);
+  border-color: var(--text-off);
+  color: #fff;
+}
+button:active { background-color: var(--bg-panel); }
+button:focus-visible {
+  outline: none; border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Deshabilitado. Hoy es `opacity: .45` sobre un botón que ya era un contorno
+   de 1 px: se desvanece el BORDE junto con la etiqueta y queda un fantasma del
+   que no se sabe si es un botón apagado o un texto cualquiera.
+   Acá el botón conserva su silueta —se hunde a gray-75 con borde gray-200,
+   o sea sigue habiendo un botón ahí— y lo que cambia es la etiqueta.
+   Medido sobre su propio fondo: hoy la etiqueta al 45% da 3.71:1 y acá
+   4.2:1 (gray-600), contra 10:1 de un botón habilitado. Es una desviación
+   consciente de Spectrum, que para deshabilitado usa gray-500 (2.6:1): ahí el
+   texto se lee peor que hoy, y la observación registrada es justamente que
+   esto se lee poco. Se queda el gris más claro y la diferencia la carga el
+   relleno, que es la parte que hoy no existe. */
+button:disabled {
+  opacity: 1;
+  background-color: var(--bg-panel);
+  border-color: var(--hairline);
+  color: var(--text-muted);
+}
+
+/* El alto mínimo de 22 px de arriba es el de una fila de control de Premiere y
+   vale para los botones de verdad, no para los que son un rótulo encima de una
+   miniatura o un link de texto: a ésos hay que devolverles el alto de su
+   contenido, o el «✓ usar» de una imagen crece hasta 22 px y le tapa media
+   miniatura. (Y sí, `min-height` le gana a `height`, así que hace falta
+   decirlo.) */
+.still-remove,
+.still-tag,
+.still-send,
+.still-num,
+.su-reset,
+.btn-add-still-file { min-height: 0; }
+
+/* La acción primaria es la de Adobe: relleno blue-400, texto blanco. Es la
+   única cosa saturada de todo el panel, y por eso se ve. */
+.btn-primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover {
+  background-color: var(--accent-hi); border-color: var(--accent-hi);
+  color: #fff; box-shadow: none;
+}
+.btn-primary:active { background-color: var(--accent-lo); }
+.btn-primary:disabled { background-color: var(--bg-panel); border-color: var(--hairline); color: var(--text-muted); }
+
+.btn-secondary {
+  font-size: 11px; font-weight: 400; padding: 2px 8px;
+  background: var(--bg-surface); border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+}
+.btn-secondary:hover { background: var(--bg-surface-hover); border-color: var(--text-off); }
+.btn-secondary:disabled { opacity: 1; background: var(--bg-panel); border-color: var(--hairline); color: var(--text-muted); }
+
+.btn-ico { width: 12px; height: 12px; stroke-width: 1.6; opacity: 1; }
+
+/* La barra de acciones: franja de chrome, botones de 24 px (Spectrum size-300)
+   y 4 px de aire. El reparto en tercios sigue siendo el del panel. */
+.actions {
+  padding: 4px 6px; gap: 4px;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--groove);
+}
+.actions button { min-height: 24px; }
+
+/* ── Cuerpo y salida ────────────────────────────────────────────────── */
+
+.panel-body { padding: 6px 8px; gap: 5px; }
+
+/* La salida deja de ser monoespaciada: es una línea de estado, no código, y en
+   mono ocupa un 15% más de ancho para decir lo mismo. */
+.output {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-inset);
+  padding: 4px 6px; min-height: 22px;
+  font-family: inherit; font-size: 11px; line-height: 1.4;
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+.output .placeholder { color: var(--text-off); }
+.output.is-error { color: var(--error); border-color: rgba(227, 72, 80, 0.55); background: rgba(227, 72, 80, 0.08); }
+
+/* ── Rótulos ────────────────────────────────────────────────────────── */
+
+/* Las MAYÚSCULAS con 0.1em de tracking a 10 px eran lo más difícil de leer del
+   panel y lo que más ancho gastaba. El texto del HTML ya viene en capital
+   normal ("Estilo del curso", "Objetivo de la clase"): sacando el
+   text-transform vuelve solo, se lee, y "Estilo de esta secuencia" pasa de dos
+   renglones a uno. */
+.field-label {
+  font-size: 10px; font-weight: 400; letter-spacing: 0;
+  text-transform: none; color: var(--text-muted);
+}
+
+.muted {
+  font-size: 10px; font-weight: 400; letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.section-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0;
+  text-transform: none; color: var(--text-muted);
+  padding-bottom: 3px; gap: 5px;
+  border-bottom: 1px solid var(--hairline);
+}
+.section-label::before {
+  width: 2px; height: 9px; border-radius: 0;
+  background: var(--text-off); opacity: 1;
+}
+
+/* ── Campos ─────────────────────────────────────────────────────────── */
+
+/* Pozo oscuro + borde de control: es el campo de texto de los paneles de
+   Premiere (el Export, el de propiedades). El foco lo marca el borde azul,
+   sin halo: los halos son de la web. */
+textarea,
+.config-body input,
+.config-body select,
+.offset-input,
+.qj-fb-input,
+.corr-level-input {
+  background-color: var(--bg-inset);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit; font-weight: 400; font-size: 11px; line-height: 1.4;
+  padding: 3px 5px;
+}
+textarea { min-height: 38px; }
+.context-body textarea { min-height: 36px; height: 36px; }
+textarea::placeholder { color: var(--text-off); }
+textarea:hover { border-color: var(--text-off); }
+textarea:focus,
+.config-body input:focus,
+.config-body select:focus,
+.offset-input:focus,
+.qj-fb-input:focus {
+  outline: none; border-color: var(--accent); box-shadow: none;
+}
+.offset-input { width: 62px; padding: 2px 5px; }
+
+/* ── Secciones plegables (los tres alcances) ────────────────────────── */
+
+/* Encabezado de sección al alto de una fila de Premiere (22 px), con el título
+   legible y el estado a la derecha. El estado dejó de ser lo más fuerte de la
+   fila: antes el verde gritaba más que el nombre de la sección. */
+.help-section,
+.context-section {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-panel);
+  padding: 0;
+  box-shadow: none;
+}
+.help-section > summary,
+.context-section > summary {
+  padding: 0 6px; min-height: 22px; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0;
+  text-transform: none; color: var(--text-secondary);
+  border-radius: 0;
+}
+.help-section > summary:hover,
+.context-section > summary:hover { color: var(--text-primary); background-color: var(--bg-surface); }
+/* El triangulito se va a la IZQUIERDA del rótulo, que es donde lo pone
+   Premiere en todos sus grupos plegables (y donde lo espera la mano). Se hace
+   con `order` sobre el pseudo-elemento del panel: no hace falta tocar el HTML,
+   porque el `<summary>` ya es flex y el estado ya se empuja con margin-left
+   auto. Queda [▸][Estilo del curso ······ ✓ del curso · 4 adj.]. */
+.help-section > summary::after,
+.context-section > summary::after {
+  order: -1; margin-right: 1px;
+  color: var(--text-off); font-size: 9px;
+}
+.context-section[open] > summary { border-bottom: 1px solid var(--hairline); }
+.context-body { margin-top: 0; padding: 6px; gap: 5px; background-color: var(--bg-base); }
+.help-body { margin-top: 0; padding: 8px; gap: 7px; }
+
+.section-state { font-size: 10px; color: var(--text-muted); }
+.section-state.is-ok { color: var(--ok); }
+.section-state.is-warn { color: var(--warn); }
+.section-state.is-hint { color: var(--accent); opacity: 1; }
+
+/* ── La escalera de alcances ────────────────────────────────────────────
+   Los tres niveles de prompt tienen que leerse del más ancho al más angosto, y
+   hoy las tres cajas son idénticas. Acá el alcance se dice con una guarda a la
+   izquierda que se angosta y se apaga en cada paso, más la sangría:
+
+     Estilo del curso         3 px gray-700 (#b9b9b9), al ras del panel
+     Estilo de esta clase     2 px gray-600 (#909090), 6 px adentro
+     Instrucción del marcador 1 px gray-500 (#6e6e6e), dentro de la tarjeta
+
+   En gris y no en color a propósito: en Premiere el color significa estado, y
+   un alcance no es un estado. ─────────────────────────────────────────── */
+#general-section { border-left: 3px solid var(--text-secondary); }
+#general-sequence-section {
+  border-left: 2px solid var(--text-muted);
+  margin-left: 6px; margin-bottom: 3px;
+}
+.general-level.is-sequence { padding-left: 0; border-left: 0; }
+.general-level { gap: 3px; }
+.general-source { font-size: 10px; line-height: 1.35; color: var(--text-muted); }
+.general-source.is-override { color: var(--accent); }
+.general-source.is-warn { color: var(--warn); }
+
+.marker-instruction {
+  margin-top: 0; padding-top: 0; padding-left: 6px;
+  border-top: 0; border-left: 1px solid var(--text-off);
+}
+
+/* El cartel de conflicto de los prompts/referencias: ámbar de atención. */
+.general-conflict {
+  padding: 6px; border-radius: var(--radius-sm); gap: 5px;
+  border: 1px solid rgba(230, 134, 25, 0.45);
+  background: rgba(230, 134, 25, 0.10);
+}
+.general-conflict-title { font-size: 11px; line-height: 1.35; color: var(--warn); }
+.general-conflict-text {
+  font-size: 10px; line-height: 1.4; max-height: 96px;
+  background-color: var(--bg-inset); border-color: var(--hairline-strong);
+  border-radius: var(--radius-sm); padding: 4px 6px;
+}
+.general-conflict-actions { gap: 4px; }
+.general-conflict-actions button { font-size: 11px; padding: 2px 8px; }
+
+/* ── Avisos ─────────────────────────────────────────────────────────── */
+
+.seq-notice {
+  border: 1px solid rgba(230, 134, 25, 0.5); border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: rgba(230, 134, 25, 0.10);
+  padding: 5px 7px; font-size: 11px; line-height: 1.4; color: var(--warn);
+}
+.seq-notice-go {
+  margin-top: 5px; padding: 2px 8px; min-height: 20px;
+  border: 1px solid rgba(230, 134, 25, 0.6); border-radius: var(--radius-sm);
+  background: rgba(230, 134, 25, 0.12);
+  font-size: 11px; font-weight: 400; color: var(--warn);
+}
+.seq-notice-go:hover { background: rgba(230, 134, 25, 0.22); color: var(--warn); }
+
+.provider-note {
+  font-size: 10px; line-height: 1.4; color: var(--warn);
+  background: rgba(230, 134, 25, 0.10);
+  border: 1px solid rgba(230, 134, 25, 0.3);
+  border-radius: var(--radius-sm); padding: 4px 6px;
+}
+
+/* El cartel de preparar el motor / instalar Whisper. Es la primera cosa que ve
+   una instalación nueva, así que se queda ámbar, pero con el filo de Premiere
+   y sin redondeo de tarjeta. */
+.engine-prep {
+  margin: 5px 0; padding: 6px 7px; border-radius: var(--radius-sm);
+  background: rgba(230, 134, 25, 0.10);
+  border: 1px solid rgba(230, 134, 25, 0.4);
+  border-left-width: 3px;
+}
+.engine-prep .ep-row { gap: 6px; }
+.engine-prep .ep-text { font-size: 11px; line-height: 1.4; color: var(--text-primary); }
+.engine-prep .ep-msg { margin-top: 4px; font-size: 10px; }
+.engine-prep .hp-bar { margin-top: 5px; }
+.engine-prep .ep-manual { font-size: 10px; line-height: 1.4; }
+#ep-row-deps[data-hidden="false"] ~ #ep-row-whisper {
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(230, 134, 25, 0.3);
+}
+
+/* ── Transcript ─────────────────────────────────────────────────────── */
+
+.transcript-row { gap: 4px; }
+.transcript-row .transcript-ok { color: var(--ok); }
+#transcript-status.is-error {
+  color: var(--error); font-size: 10px; line-height: 1.4;
+  background: rgba(227, 72, 80, 0.08);
+  border: 1px solid rgba(227, 72, 80, 0.35);
+  border-radius: var(--radius-sm); padding: 4px 6px;
+}
+.whisper-badge {
+  font-size: 10px; font-weight: 400; letter-spacing: 0;
+  padding: 1px 5px; min-height: 20px; border-radius: var(--radius-sm);
+  border-color: rgba(68, 181, 86, 0.5); color: var(--ok);
+  background: rgba(68, 181, 86, 0.10);
+}
+.whisper-badge:hover { background: rgba(68, 181, 86, 0.10); border-color: rgba(68, 181, 86, 0.5); color: var(--ok); }
+.whisper-badge.is-missing,
+.whisper-badge.is-slow {
+  border-color: rgba(230, 134, 25, 0.5); color: var(--warn);
+  background: rgba(230, 134, 25, 0.10);
+}
+.whisper-badge.is-slow:hover { border-color: rgba(230, 134, 25, 0.5); color: var(--warn); }
+.whisper-badge.is-missing:hover { background: rgba(230, 134, 25, 0.22); border-color: var(--warn); color: var(--warn); }
+
+.transcript-slice {
+  margin-top: 6px; padding: 5px 7px;
+  border: 1px solid var(--hairline); border-left: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-inset);
+  font-size: 10px; font-weight: 400; line-height: 1.5; color: var(--text-secondary);
+}
+.transcript-details > summary { font-size: 10px; color: var(--text-muted); }
+.transcript-details > summary::before { color: var(--text-off); }
+
+/* ── Sesión (contador de tokens) ────────────────────────────────────── */
+
+.session-usage {
+  padding: 2px 8px; gap: 6px; font-size: 10px; line-height: 1.3;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--groove);
+}
+.session-usage .su-label { font-size: 9px; letter-spacing: 0.04em; color: var(--text-off); }
+.session-usage .su-value { color: var(--text-muted); }
+.session-usage .su-reset { font-size: 10px; color: var(--text-off); text-decoration: none; border-bottom: 1px solid var(--text-off); border-radius: 0; }
+.session-usage .su-reset:hover { color: var(--text-primary); background: transparent; border-bottom: 1px solid var(--text-primary); }
+
+/* ── Pestañas ───────────────────────────────────────────────────────── */
+
+/* La firma más reconocible de un panel de Premiere: la lengüeta activa se
+   rellena con el gris del panel y lleva el subrayado azul; las otras viven en
+   la franja oscura de atrás. */
+.tabs {
+  padding: 0 4px; gap: 1px;
+  background: var(--groove);
+  border-bottom: 1px solid var(--edge);
+}
+.tab {
+  min-height: 22px; padding: 0 9px; gap: 5px;
+  font-size: 11px; color: var(--text-muted);
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.tab:hover { color: var(--text-secondary); background: var(--bg-panel); border-color: transparent; }
+.tab.is-active {
+  color: var(--text-primary); background: var(--bg-base);
+  border-bottom-color: var(--accent);
+}
+.tab-badge {
+  min-width: 15px; padding: 0 4px; border-radius: var(--radius-sm);
+  font-size: 9px; line-height: 14px;
+  background: var(--hairline-strong); color: var(--text-primary);
+}
+.tab-badge.is-waiting { background: var(--warn); color: var(--edge); }
+
+/* ── Lista de marcadores ────────────────────────────────────────────── */
+
+/* Dejan de ser tarjetas separadas y pasan a ser una LISTA, como el panel de
+   Proyecto: filas de 24 px pegadas, separadas por una línea de 1 px. Eso es
+   casi todo el espacio que se recupera en la pestaña de Marcadores: seis
+   marcadores cerrados pasan de 6×46 px a 6×25 px. */
+.markers { gap: 0; }
+.markers-scroll { margin: 0 -8px; padding: 0 8px 4px; }
+
+.marker-card {
+  background-color: transparent;
+  border: 0; border-bottom: 1px solid var(--hairline);
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  margin-bottom: 0; padding: 0;
+  box-shadow: none;
+}
+.marker-card:hover { background-color: var(--bg-panel); border-color: var(--hairline); border-left-color: transparent; }
+.marker-card[open] {
+  background-color: var(--bg-panel);
+  border-left-color: var(--accent);   /* la fila seleccionada de Premiere */
+  border-bottom-color: var(--hairline-strong);
+  box-shadow: none;
+}
+.marker-card.is-focused { box-shadow: inset 0 0 0 1px var(--accent); border-radius: 0; }
+
+.marker-summary { min-height: 24px; padding: 0 6px; gap: 6px; }
+.marker-summary .marker-name {
+  font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--text-primary);
+}
+.marker-card[open] .marker-summary { background-color: var(--bg-surface); }
+.marker-card[open] .marker-summary .marker-name { font-weight: 700; }
+.marker-summary .marker-meta {
+  font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.marker-summary .marker-badge { color: var(--ok); font-size: 11px; }
+.marker-body { padding: 5px 6px 7px; gap: 5px; }
+.marker-body .marker-instruction { min-height: 44px; }
+.marker-card.is-selected .marker-name { color: var(--text-primary); }
+
+/* Generar es la acción primaria de la tarjeta: mismo relleno azul que la
+   primaria del panel, para que "la que hace la cosa" se vea igual en todas
+   las pestañas. */
+.marker-actions { margin-top: 6px; gap: 5px; }
+.btn-generate {
+  font-size: 11px; font-weight: 400; letter-spacing: 0;
+  color: #fff; background: var(--accent);
+  border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  padding: 2px 12px; min-height: 24px; box-shadow: none;
+}
+.btn-generate:hover { background: var(--accent-hi); border-color: var(--accent-hi); box-shadow: none; }
+.btn-generate:disabled { opacity: 1; background: var(--bg-panel); border-color: var(--hairline); color: var(--text-muted); }
+
+.marker-status { margin-top: 5px; font-size: 10px; line-height: 1.35; color: var(--text-muted); min-height: 12px; }
+.marker-status.is-busy { color: var(--accent); }
+.marker-status.is-ok { color: var(--ok); }
+.marker-status.is-error { color: var(--error); }
+.marker-status.is-warn { color: var(--warn); }
+.marker-estimate,
+.marker-times { font-size: 10px; color: var(--text-off); }
+
+/* ── Imágenes y recursos ────────────────────────────────────────────── */
+
+.marker-stills,
+.still-thumbs { gap: 4px; margin-top: 5px; }
+/* Las miniaturas se quedan del tamaño que tienen. Acá se probó bajarlas de
+   72×40 a 64×36 y la medición lo agarró: el «📤 reenviar» de la caja de
+   feedback pide 60 px y a 64 de miniatura le quedan 58, o sea etiqueta pintada
+   afuera de la caja en los cuatro anchos. Densificar ahí ganaba 8 px de una
+   fila de miniaturas y costaba un botón roto: no vale. */
+.still-thumb { border-color: var(--hairline-strong); background-color: var(--bg-inset); border-radius: var(--radius-sm); }
+.still-thumb:hover { border-color: var(--accent); }
+.still-remove { border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.7); }
+.still-remove:hover { background: var(--error); }
+.still-num { border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.72); font-weight: 700; }
+.still-tag { border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.7); letter-spacing: 0; }
+.still-tag.is-use { background: var(--ok); color: var(--edge); font-weight: 700; }
+.still-send { border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.7); letter-spacing: 0; }
+.still-send.is-on { background: var(--accent); color: #fff; font-weight: 700; }
+.still-status { font-size: 10px; color: var(--text-muted); }
+.still-status.is-error { color: var(--error); }
+.still-thumb.is-missing { border-color: var(--warn); }
+.still-missing { color: var(--warn); font-size: 13px; }
+
+/* Arrastrar acá: en Premiere el destino de un drop se marca con un borde azul,
+   no con un rectángulo punteado de 12 px de alto. */
+.dropzone {
+  margin-top: 5px; padding: 6px;
+  border: 1px dashed var(--hairline-strong); border-radius: var(--radius-sm);
+  background-color: var(--bg-inset);
+}
+.dropzone:hover { border-color: var(--text-off); }
+.dropzone.is-over { border-color: var(--accent); border-style: solid; background-color: var(--accent-dim); }
+.dropzone .dz-text { font-size: 10px; color: var(--text-off); }
+.dropzone .dz-text u { color: var(--text-muted); }
+
+.resource-list { gap: 4px; margin-top: 5px; }
+.resource-chip {
+  font-size: 10px; gap: 4px; padding: 1px 5px;
+  color: var(--text-secondary);
+  background: var(--bg-surface); border-color: var(--hairline-strong);
+  border-radius: var(--radius-sm);
+}
+.resource-remove { color: var(--text-muted); }
+.resource-remove:hover { color: var(--error); background: transparent; }
+.resource-chip.is-missing { border-color: var(--warn); color: var(--warn); }
+
+.bg-toggle { font-size: 10px; color: var(--text-secondary); gap: 5px; }
+.bg-toggle input { accent-color: var(--accent); }
+.btn-add-still-file { font-size: 10px; color: var(--text-muted); min-height: 0; background: transparent; border: 0; }
+.btn-add-still-file:hover { color: var(--accent); background: transparent; }
+
+/* ── Barra de progreso ──────────────────────────────────────────────── */
+
+/* Plana, de 4 px, sin brillo que corra. El shimmer era lo único animado del
+   panel y se llevaba la atención estando el render parado o andando. */
+.hp-bar {
+  height: 4px; border-radius: 0; margin-top: 4px;
+  background: var(--bg-inset);
+  border: 1px solid var(--edge);
+}
+.hp-bar-fill {
+  background: var(--accent); border-radius: 0;
+  background-image: none; animation: none;
+  transition: width 200ms linear;
+}
+.hp-bar-msg { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+.hp-bar-clock { color: var(--text-secondary); }
+
+/* ── La cola ────────────────────────────────────────────────────────── */
+
+.queue-panel {
+  margin: 0 8px 6px; padding: 6px 7px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--bg-panel); box-shadow: none;
+}
+.queue-view .queue-panel { padding: 6px 8px; }
+.queue-head {
+  font-size: 9px; letter-spacing: 0.04em; gap: 4px;
+  color: var(--text-off);
+  padding-bottom: 5px; margin-bottom: 4px; border-bottom: 1px solid var(--hairline);
+}
+.queue-clear {
+  font-size: 10px; min-height: 20px; padding: 2px 7px;
+  color: var(--text-secondary); background: var(--bg-surface);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+}
+.queue-clear:hover { color: #fff; background: var(--bg-surface-hover); border-color: var(--text-off); }
+.queue-clear.is-danger { color: var(--error); background: rgba(227, 72, 80, 0.10); border-color: rgba(227, 72, 80, 0.45); }
+.queue-clear.is-danger:hover { color: var(--error); background: rgba(227, 72, 80, 0.22); border-color: var(--error); }
+.queue-start {
+  font-size: 10px; min-height: 20px; padding: 2px 7px; border-radius: var(--radius-sm);
+  color: var(--ok); background: rgba(68, 181, 86, 0.12); border: 1px solid rgba(68, 181, 86, 0.5);
+}
+.queue-start:hover { color: var(--ok); background: rgba(68, 181, 86, 0.24); border-color: var(--ok); }
+.queue-filter {
+  font-size: 10px; padding: 2px 6px; gap: 4px; min-height: 20px;
+  color: var(--text-muted); border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+}
+.queue-filter:hover { color: var(--text-primary); border-color: var(--text-off); }
+.queue-filter input { accent-color: var(--accent); }
+.queue-filter-note { font-size: 9px; color: var(--text-off); font-style: normal; }
+
+/* El encabezado de cada secuencia dentro de la cola: una barra de grupo, como
+   los separadores del panel de Proyecto. */
+.queue-seq {
+  font-size: 10px; letter-spacing: 0; text-transform: none;
+  color: var(--text-secondary); background: var(--bg-inset);
+  margin-top: 5px; padding: 2px 5px;
+  border-bottom: 1px solid var(--hairline); border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.qs-ctx {
+  margin-left: 6px; padding: 0 5px; border-radius: var(--radius-sm);
+  font-size: 9px; font-weight: 400; letter-spacing: 0;
+}
+.qs-ctx.is-ready { color: var(--ok); background: rgba(68, 181, 86, 0.14); }
+.qs-ctx.is-working { color: var(--accent); background: var(--accent-dim); }
+.qs-ctx.is-missing { color: var(--warn); background: rgba(230, 134, 25, 0.16); }
+
+/* Cada job: una fila con una guarda de color a la izquierda. La guarda es lo
+   que hace que la cola se lea de un vistazo — son SIETE estados y hasta ahora
+   dos de ellos (`modeling` y `ready`) no tenían ninguna marca propia. El color
+   va también en el título, como hasta ahora. */
+.queue-job {
+  padding: 3px 5px 3px 6px;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--hairline);
+}
+.queue-job.is-queued { border-left-color: var(--text-off); }
+.queue-job.is-modeling,
+.queue-job.is-running { border-left-color: var(--accent); }
+.queue-job.is-ready { border-left-color: var(--accent-lo); }
+.queue-job.is-done { border-left-color: var(--ok); }
+.queue-job.is-error { border-left-color: var(--error); }
+.queue-job.is-waiting { border-left-color: var(--warn); padding-left: 6px; }
+
+.qj-line { gap: 5px; }
+.qj-title { font-size: 11px; color: var(--text-primary); }
+.queue-job.is-done .qj-title { color: var(--ok); }
+.queue-job.is-error .qj-title { color: var(--error); }
+.queue-job.is-running .qj-title,
+.queue-job.is-modeling .qj-title { color: var(--accent); }
+.queue-job.is-queued .qj-title { color: var(--text-muted); }
+.queue-job.is-waiting .qj-title { color: var(--warn); }
+.qj-title-link:hover { color: var(--accent-hi); }
+.qj-msg { font-size: 10px; color: var(--text-muted); }
+.qj-msg-waiting { color: var(--warn); }
+.qj-clock { font-size: 10px; color: var(--text-secondary); }
+.qj-act { font-size: 9px; color: var(--text-off); font-style: normal; }
+
+/* Los botones de cada fila, "quiet": sin contorno hasta que se los pasa por
+   encima. Con tres pastillas dibujadas por job, la lista competía consigo
+   misma y el estado quedaba enterrado entre bordes. */
+.qbtn {
+  font-size: 10px; min-height: 20px; padding: 1px 6px;
+  color: var(--text-secondary); background: transparent;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+}
+.qbtn:hover { color: var(--text-primary); background: var(--bg-surface); border-color: var(--hairline-strong); }
+.qs-ctrls, .qj-ctrls { gap: 1px; }
+
+/* La familia "rehacer" en amarillo (yellow-400), separada del ámbar de
+   atención: refinar en la cola, regenerar en Corrections, el ajuste guardado.
+   Un `.qbtn-react` suelto (el "↻ Reactivar" de un job sin cupo) se queda
+   ámbar, porque eso es atención y no una corrección. */
+.qbtn-react {
+  font-size: 10px; min-height: 20px; padding: 1px 6px; letter-spacing: 0;
+  color: var(--warn); background: rgba(230, 134, 25, 0.12);
+  border-color: rgba(230, 134, 25, 0.5);
+}
+.qbtn-react:hover { color: var(--warn); background: rgba(230, 134, 25, 0.24); border-color: var(--warn); }
+.queue-react {
+  font-size: 10px; min-height: 20px; padding: 1px 8px; border-radius: var(--radius-sm);
+  color: var(--warn); background: rgba(230, 134, 25, 0.12); border: 1px solid rgba(230, 134, 25, 0.5);
+}
+.queue-react:hover { background: rgba(230, 134, 25, 0.24); border-color: var(--warn); }
+
+.queue-empty,
+.corr-empty { font-size: 11px; color: var(--text-off); padding: 22px 12px; }
+.queue-estimate {
+  margin-top: 6px; padding: 5px 7px; border-radius: var(--radius-sm);
+  background: var(--bg-inset); border: 1px solid var(--hairline);
+  font-size: 10px; color: var(--text-muted);
+}
+.queue-estimate .qe-tok { color: var(--text-off); }
+
+.queue-prep {
+  border: 1px solid rgba(38, 128, 235, 0.5); border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm); background: rgba(38, 128, 235, 0.10);
+  padding: 5px 7px; margin-bottom: 6px;
+}
+.queue-prep .qp-head { margin-bottom: 2px; gap: 6px; }
+.queue-prep .qp-seq { font-size: 11px; letter-spacing: 0; color: var(--text-primary); }
+.queue-prep .qp-msg { font-size: 10px; line-height: 1.4; color: var(--text-secondary); margin-bottom: 4px; }
+
+/* La caja de feedback de un job terminado. */
+.qj-feedback-wrap { margin-top: 4px; }
+.qj-fb-input { min-height: 30px; font-size: 11px; padding: 3px 5px; border-radius: var(--radius-sm); }
+.qj-fb-actions { gap: 4px; margin-top: 5px; }
+/* Refinar en amarillo pero SIN relleno: en Premiere el único botón lleno es el
+   azul de la acción principal, y dos rellenos saturados en la misma caja se
+   pelean por ser el primario. El amarillo dice de qué familia es la acción; el
+   ancho completo (que ya pone el CSS del panel) dice que es LA de la caja. */
+.qj-fb-actions .qbtn-react {
+  font-size: 11px; font-weight: 700; padding: 3px 12px; min-height: 24px;
+  color: var(--fix); background: rgba(223, 191, 0, 0.14); border-color: rgba(223, 191, 0, 0.55);
+}
+.qj-fb-actions .qbtn-react:hover { color: var(--fix); background: rgba(223, 191, 0, 0.26); border-color: var(--fix); }
+.qj-fb-actions .qbtn-fresh {
+  font-size: 10px; padding: 2px 8px; min-height: 20px;
+  color: var(--text-muted); background: transparent; border-color: var(--hairline-strong);
+}
+.qj-fb-actions .qbtn-fresh:hover { color: var(--text-primary); background: var(--bg-surface); border-color: var(--text-off); }
+.qj-fb-hint { font-size: 9px; line-height: 1.35; color: var(--text-off); margin-top: 5px; }
+
+/* ── Correcciones ───────────────────────────────────────────────────── */
+
+.corrections-view { padding: 6px 8px; }
+.corr-head { gap: 5px; margin-bottom: 6px; }
+.corr-row {
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--bg-panel); padding: 6px 7px; margin-bottom: 5px;
+}
+.corr-line { gap: 6px; }
+.corr-name { font-size: 11px; font-weight: 700; color: var(--text-primary); }
+.corr-name.is-link:hover { color: var(--accent); }
+.corr-when { font-size: 10px; color: var(--text-secondary); }
+.corr-meta { font-size: 9px; color: var(--text-off); }
+.corr-brief { font-size: 10px; color: var(--text-muted); line-height: 1.35; margin-top: 3px; }
+.corr-row.is-unknown { border-left: 3px solid var(--warn); }
+.corr-warn { font-size: 10px; color: var(--warn); margin-top: 3px; }
+.corr-fix { gap: 4px; margin-top: 5px; }
+.corr-actions { gap: 4px; margin-top: 5px; }
+/* Regenerar es la acción de la fila: amarillo lleno, igual que Refinar en la
+   cola, porque es la misma acción en el otro lugar donde se da feedback. */
+.corr-actions .qbtn-react {
+  font-size: 11px; font-weight: 700; padding: 3px 14px; min-height: 24px;
+  color: var(--fix); background: rgba(223, 191, 0, 0.14); border-color: rgba(223, 191, 0, 0.55);
+}
+.corr-actions .qbtn-react:hover { color: var(--fix); background: rgba(223, 191, 0, 0.26); border-color: var(--fix); }
+.corr-actions .qbtn-stage { font-size: 11px; padding: 3px 10px; min-height: 24px; }
+.corr-actions .corr-state { font-size: 10px; color: var(--text-muted); }
+.corr-state.is-error { color: var(--error); }
+.corr-state.is-ok { color: var(--ok); }
+.corr-picker { gap: 6px; margin-bottom: 6px; }
+.corr-picker-label { font-size: 10px; color: var(--text-muted); }
+.corr-cross {
+  font-size: 10px; line-height: 1.4; color: var(--text-primary);
+  border: 1px solid rgba(230, 134, 25, 0.55); border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: rgba(230, 134, 25, 0.08); padding: 5px 7px; margin-bottom: 6px;
+}
+.corr-cross-title { color: var(--warn); margin-bottom: 3px; }
+.corr-cross-key { color: var(--text-muted); flex-basis: 56px; }
+.corr-cross-note { color: var(--text-muted); margin-top: 4px; }
+.corr-prompts { margin-top: 5px; }
+.corr-prompts summary { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
+.corr-prompts-title { color: var(--text-muted); }
+.corr-prompts-tag.is-saved { color: var(--ok); }
+.corr-prompts-tag.is-rebuilt { color: var(--warn); }
+.corr-prompts-tag.is-adjusted { color: var(--fix); font-weight: 700; }
+.corr-prompts-note { font-size: 9px; line-height: 1.4; color: var(--text-off); }
+.corr-prompts-note.is-rebuilt { color: var(--warn); border-left: 2px solid var(--warn); padding-left: 5px; }
+.corr-level { margin-top: 5px; }
+.corr-level-label { font-size: 10px; font-weight: 700; color: var(--text-muted); }
+.corr-level-input { font-size: 11px; line-height: 1.4; }
+.corr-level-hint { font-size: 9px; line-height: 1.35; color: var(--text-off); margin-top: 2px; }
+.corr-level-hint.is-adjusted { color: var(--fix); }
+.corr-level-save {
+  margin-top: 4px; font-size: 10px; min-height: 20px; padding: 1px 7px;
+  color: var(--fix); background: rgba(223, 191, 0, 0.12); border-color: rgba(223, 191, 0, 0.5);
+}
+.corr-level-save:hover { color: var(--fix); background: rgba(223, 191, 0, 0.24); border-color: var(--fix); }
+.corr-second { width: 66px; }
+.corr-html summary { font-size: 10px; color: var(--text-muted); }
+
+.cleanup-row { font-size: 11px; border-bottom-color: var(--hairline); }
+.cleanup-row .cl-del { color: var(--error); }
+.cleanup-row .cl-keep { color: var(--ok); opacity: 1; }
+
+/* ── Desplegables propios ───────────────────────────────────────────── */
+
+/* El combo de Premiere: pozo oscuro, borde de control, la flechita apagada. */
+.hps-trigger {
+  font-size: 11px; padding: 2px 6px; min-height: 22px; gap: 6px;
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+}
+.hps-trigger:hover { background: var(--bg-inset); border-color: var(--text-off); color: var(--text-primary); }
+.hp-select.is-open .hps-trigger { border-color: var(--accent); }
+.hps-arrow { color: var(--text-muted); font-size: 8px; }
+.hps-menu {
+  margin-top: 2px; padding: 2px; max-height: 220px;
+  background: var(--bg-base);           /* rgb(50,50,50): el fondo de menú de
+                                           los paneles nativos */
+  border: 1px solid var(--edge); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+.hps-option {
+  font-size: 11px; padding: 3px 6px; border-radius: 0;
+  color: var(--text-secondary);
+}
+.hps-option:hover { background: var(--bg-surface); color: #cdcdcd; } /* el hover
+   de menú del panel de Texto: bg rgb(62,62,62), texto rgb(205,205,205) */
+.hps-option.is-sel { color: #fff; background: var(--accent); }
+
+/* ── El micrófono del encabezado ────────────────────────────────────── */
+
+.hdr-mic .hps-trigger {
+  height: 20px; min-height: 20px; padding: 0 5px; gap: 4px;
+  font-size: 10px; color: var(--text-secondary);
+  background: transparent; border-color: transparent;
+}
+.hdr-mic .hps-trigger:hover { color: var(--text-primary); background: var(--bg-surface); border-color: var(--hairline-strong); }
+/* El 🎙 del encabezado, dibujado como glifo de una tinta. Es un
+   pseudo-elemento del CSS del panel, así que acá se puede cambiar sin tocar el
+   HTML: es la muestra de cómo se verían los otros íconos si se los envolviera
+   en un <span> (ver el reporte). */
+.hdr-mic .hps-trigger::before {
+  content: ""; width: 9px; height: 11px; flex: none;
+  background: currentColor; font-size: 0;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 14'><path d='M6 1.2a2 2 0 0 1 2 2v3.2a2 2 0 0 1-4 0V3.2a2 2 0 0 1 2-2zM2.6 6.2a3.4 3.4 0 0 0 6.8 0M6 9.8v2.6M4 12.6h4' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round'/></svg>") no-repeat center / contain;
+}
+.hdr-mic.is-warn .hps-trigger { color: var(--warn); border-color: rgba(230, 134, 25, 0.5); }
+
+/* ── La barra del micrófono bajo cada campo ─────────────────────────── */
+
+.mic-bar { gap: 4px; margin-top: 3px; }
+.mic-btn { min-width: 26px; padding: 1px 6px; font-size: 11px; min-height: 20px; line-height: 1.2; }
+.mic-btn:disabled { opacity: 1; background: var(--bg-panel); border-color: var(--hairline); color: var(--text-muted); }
+.mic-btn.is-off { opacity: 1; background: var(--bg-panel); border-color: var(--hairline); color: var(--text-muted); }
+.mic-btn.is-rec { color: var(--error); border-color: rgba(227, 72, 80, 0.6); background: rgba(227, 72, 80, 0.14); }
+.mic-btn.is-busy { opacity: 1; color: var(--text-muted); }
+.mic-state { font-size: 9px; line-height: 1.35; color: var(--text-muted); }
+.mic-state.is-ok { color: var(--ok); }
+.mic-state.is-warn { color: var(--warn); }
+.mic-state.is-error { color: var(--error); }
+.mic-undo { font-size: 9px; padding: 0 6px; min-height: 18px; color: var(--text-muted); border-color: var(--hairline-strong); }
+
+.mic-row { gap: 4px; }
+#mic-status.is-warn { color: var(--warn); }
+#mic-status.is-error { color: var(--error); }
+.mic-meter { gap: 3px; }
+.mic-meter-track { height: 8px; border-radius: 0; background: var(--bg-inset); border: 1px solid var(--edge); }
+.mic-meter-fill { background: var(--warn); }
+.mic-meter-fill.is-ok { background: var(--ok); }
+.mic-meter-gate { background: #fff; opacity: 0.8; }
+.mic-meter-peak { background: var(--text-primary); opacity: 0.7; }
+.mic-meter-text { font-size: 9px; color: var(--text-muted); }
+.mic-verdict { font-size: 10px; line-height: 1.35; color: var(--text-secondary); }
+.mic-verdict.is-ok { color: var(--ok); }
+.mic-verdict.is-warn { color: var(--warn); }
+.mic-verdict.is-error { color: var(--error); }
+
+/* ── Diálogos (⚙ y ayuda) ──────────────────────────────────────────── */
+
+/* El diálogo de Premiere: sin desenfoque de fondo, con barra de título propia
+   y el filo oscuro alrededor. */
+.help-overlay { padding: 8px; background: rgba(0, 0, 0, 0.55); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.help-card {
+  max-width: 520px; max-height: 88vh; padding: 0;
+  background: var(--bg-base);
+  border: 1px solid var(--edge); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+.help-head {
+  min-height: 24px; padding: 3px 5px 3px 8px; margin-bottom: 0;
+  font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: none;
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--groove);
+}
+.config-body { margin-top: 0; padding: 8px; gap: 5px; }
+.config-body .hp-select + .muted,
+#models-hint { margin-top: -1px; }
+.help-body p { font-size: 11px; font-weight: 400; line-height: 1.45; color: var(--text-secondary); }
+.help-body strong { color: var(--text-primary); font-weight: 700; }
+.help-body .help-diff { padding-top: 6px; border-top: 1px solid var(--hairline); }
+.cfg-row { gap: 4px; }
+.cfg-summary { font-size: 10px; letter-spacing: 0; margin-left: 5px; }
+.cfg-summary.is-ok { color: var(--ok); }
+.cfg-summary.is-warn { color: var(--error); }
+.cfg-summary.is-cupo { color: var(--warn); }
+.config-actions { gap: 6px; margin-top: 4px; }
+.login-manual > summary { font-size: 10px; }
+.login-manual > summary::before { color: var(--text-off); }
+.login-manual-how { font-size: 10px; line-height: 1.4; }
+.login-manual-how code { background: var(--bg-inset); border: 1px solid var(--hairline); padding: 0 3px; border-radius: 2px; }
+.login-code a { color: var(--accent); }
+.login-ok { color: var(--ok) !important; }
+.login-err { color: var(--error) !important; }
+.login-warn { color: var(--warn) !important; }
+
+/* ── Editor de HTML ─────────────────────────────────────────────────── */
+
+.html-editor { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--hairline); }
+.html-editor > summary { font-size: 10px; color: var(--text-muted); }
+.html-editor > summary::before { color: var(--text-off); }
+.html-editor-body { margin-top: 5px; gap: 5px; }
+.editor-row { gap: 5px; }
+.code-edit {
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
+  background: var(--bg-inset); box-shadow: none;
+}
+.code-edit .code-hl,
+.code-edit .code-input { padding: 6px 7px; font-size: 11px; line-height: 1.45; }
+.code-edit.focus-within, .code-edit:focus-within { border-color: var(--accent); }
+.code-edit .code-input::selection { background: rgba(38, 128, 235, 0.35); }
+/* Resaltado con la paleta de la app (los mismos azul/verde/rojo/amarillo del
+   spectrum_dark.css de Premiere), no con el arcoíris de un tema de editor. */
+.code-hl .token.comment { color: var(--text-off); }
+.code-hl .token.tag { color: #4b9cf5; }
+.code-hl .token.tag .punctuation { color: var(--text-muted); }
+.code-hl .token.attr-name { color: #51d267; }
+.code-hl .token.attr-value,
+.code-hl .token.string { color: #fad900; }
+.code-hl .token.punctuation { color: var(--text-muted); }
+.code-hl .token.property { color: #72b7f9; }
+.code-hl .token.selector { color: #51d267; }
+.code-hl .token.keyword { color: #f9a43f; }
+.code-hl .token.function { color: #4b9cf5; }
+.code-hl .token.number,
+.code-hl .token.boolean,
+.code-hl .token.constant { color: #f76d74; }
+.code-hl .token.operator { color: var(--text-secondary); background: transparent; }
+
+/* ── Tooltip propio ─────────────────────────────────────────────────── */
+
+.hp-tip {
+  max-width: 280px; padding: 4px 7px; border-radius: var(--radius-sm);
+  font-size: 10px; line-height: 1.35;
+  color: var(--text-primary); background: #1d1d1d;
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--shadow-pop);
+}
+
+/* ── Barras de scroll ───────────────────────────────────────────────── */
+
+/* Las de Premiere: pulgar gris redondeado sobre el canal del panel, sin flechas. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--hairline-strong);
+  border: 2px solid var(--bg-base);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--text-off); }
+.markers-scroll::-webkit-scrollbar { width: 10px; }
+.markers-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--hairline-strong);
+  border: 2px solid var(--bg-base); border-radius: 5px;
+}
+.markers-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--text-off); }
+.hps-menu::-webkit-scrollbar-thumb { background-color: var(--hairline-strong); border: 2px solid var(--bg-base); }
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+
+/* Los mismos cortes que el panel (380 / 640 / 900), con los números de este
+   tema: el margen negativo de la lista de marcadores tiene que seguir siendo
+   el opuesto del padding del cuerpo, o la lista se sale del panel. */
+@media (max-width: 380px) {
+  .panel-header { padding: 3px 5px; }
+  .actions { padding: 3px 5px; gap: 3px; }
+  .panel-body { padding: 5px 6px; gap: 4px; }
+  .markers-scroll { margin: 0 -6px; padding: 0 6px 6px; }
+  .session-usage { padding: 2px 6px; }
+  .tabs { padding: 0 3px; }
+  .queue-panel { margin: 0 6px 5px; }
+  .queue-view .queue-panel { padding: 5px 6px; }
+  .corrections-view { padding: 5px 6px; }
+  #general-sequence-section { margin-left: 4px; }
+}
+
+@media (min-width: 640px) {
+  .panel-header { padding: 4px 10px; }
+  .actions { padding: 5px 10px; }
+  .panel-body { padding: 8px 10px; gap: 6px; }
+  .markers-scroll { margin: 0 -10px; padding: 0 10px 8px; }
+  .session-usage { padding: 3px 10px; }
+  .tabs { padding: 0 6px; }
+  .marker-card { padding: 0; }
+  .queue-panel { margin: 0 10px 6px; }
+  .queue-view .queue-panel { padding: 8px 10px; }
+  .corrections-view { padding: 8px 10px; }
+}
+
+/* Muy ancho: las líneas de texto no se estiran hasta el infinito, pero el
+   panel tampoco se infla (compacto es la meta). */
+@media (min-width: 900px) {
+  .help-body p, .qj-msg, .marker-estimate { max-width: 720px; }
+  .context-body textarea { max-width: 760px; }
+}

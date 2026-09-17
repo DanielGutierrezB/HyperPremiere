@@ -18,7 +18,13 @@
 //   cada transcripción, el chau). Contar líneas de "arranque" ES el test.
 // FAKE_WHISPER_MODO:
 //   'ok'          (por defecto) transcribe: devuelve el largo del PCM en texto.
-//   'muere'       se cierra sin decir que está listo (Whisper que no carga).
+//   'muere'       se cierra sin decir que está listo, con un traceback por
+//                 stderr (el camino por el que el guión no alcanza a hablar).
+//   'muere-diciendo'  se cierra DICIENDO el motivo por stdout, que es lo que hace
+//                 el guión de verdad cuando no puede importar mlx_whisper. Pasó
+//                 en serio: una actualización de macOS dejó de aceptar el binario
+//                 de una versión vieja de `scipy`, el guión lo dijo con la ruta y
+//                 todo, y el panel mostraba «se cerró antes de estar listo».
 //   'falla-una'   la primera transcripción devuelve error, las demás andan.
 //   'alucina'     devuelve "¡Suscríbete!", que es lo que inventa en el silencio.
 
@@ -34,7 +40,14 @@ function anotar(linea) {
 anotar('arranque');
 
 if (modo === 'muere') {
-  process.stderr.write('no pude importar mlx_whisper\n');
+  process.stderr.write('Traceback (most recent call last):\n  File "x.py", line 5\nImportError: cannot load _spropack\n');
+  process.exit(1);
+}
+
+if (modo === 'muere-diciendo') {
+  process.stdout.write(JSON.stringify({
+    error: 'no pude importar mlx_whisper: dlopen(.../scipy/sparse/linalg/_propack/_spropack.cpython-313-darwin.so)'
+  }) + '\n');
   process.exit(1);
 }
 

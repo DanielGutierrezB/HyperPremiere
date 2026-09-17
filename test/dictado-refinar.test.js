@@ -511,6 +511,43 @@ test('guardar la config vuelve a preguntar: puede haber una API key nueva', asyn
   eq(sondeos, 2, 'sin esto, el editor pega la key y el dictado sigue crudo hasta que cierre Premiere');
 });
 
+// Y el test de arriba llama a `olvidarRefinador()` A MANO, con un comentario que
+// dice «es lo que hace saveConfig». O sea que prueba el olvido, no que guardar la
+// config lo dispare — y eso es justo lo que el editor hace: pega la key y aprieta
+// guardar. La mutación que saca esa línea de `engine.js` sobrevivía porque nadie
+// entraba por ahí.
+//
+// Acá se entra por el camino de verdad: `engine.setConfig`, que es lo que corre
+// cuando se aprieta guardar en ⚙.
+test('y el que dispara el olvido es guardar la config, no que alguien se acuerde', function () {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  // La config vive en ~/.hyperpremiere: el HOME va a un temporal para no tocar la
+  // del editor que esté corriendo esto.
+  const casa = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-home-cfg-'));
+  const prevHome = process.env.HOME;
+  const prevUser = process.env.USERPROFILE;
+  process.env.HOME = casa;
+  process.env.USERPROFILE = casa;
+  try {
+    const engine = require('../bridge/engine.js');
+    const refinar = require('../bridge/dictado-refinar.js');
+    let olvidos = 0;
+    const real = refinar.olvidarRefinador;
+    refinar.olvidarRefinador = function () { olvidos++; return real.apply(this, arguments); };
+    try {
+      engine.setConfig({ provider: 'claude-cli', model: 'falso', apiKey: 'sk-nueva' });
+      eq(olvidos, 1, 'guardar la config vuelve a elegir con qué se refina');
+    } finally {
+      refinar.olvidarRefinador = real;
+    }
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevUser === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevUser;
+  }
+});
+
 // --- 5 bis. El mismo camino, para lo que se escribió a mano -----------------
 //
 // El ✨ del panel no tiene una cadena propia: entra por acá con `origen:

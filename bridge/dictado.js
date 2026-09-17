@@ -306,6 +306,36 @@ function rearmarOcio() {
 }
 
 /**
+ * Por qué no arrancó, en algo que el editor pueda accionar.
+ *
+ * El orden es de más específico a más vago, porque lo específico es lo único que
+ * sirve: lo que el guión alcanzó a decir por stdout, después lo último de
+ * stderr (un traceback de Python), y sólo si no hay nada de eso el «se cerró
+ * antes de estar listo» pelado, que describe el síntoma y nada más.
+ *
+ * Y se nombra `mlx_whisper` cuando el motivo es que no se pudo importar, porque
+ * ahí el problema NO es de HyperPremiere: es el Python de la máquina, y saber
+ * eso es la diferencia entre reinstalar el panel —que no va a arreglar nada— y
+ * actualizar un paquete.
+ */
+function porQueNoArranco(m) {
+  const base = 'el proceso de Whisper se cerró antes de estar listo';
+  const dicho = String((m && m.errorArranque) || '').trim();
+  if (dicho) {
+    return /no pude importar mlx_whisper/i.test(dicho)
+      ? dicho + ' — es el Python de esta máquina, no el panel: revisá la instalación de mlx_whisper'
+      : dicho;
+  }
+  const err = String((m && m.ultimoStderr) || '').trim();
+  if (!err) return base;
+  // La última línea con contenido: en un traceback de Python es la que dice qué
+  // falló; las de arriba son el camino para llegar ahí.
+  const lineas = err.split('\n').map((s) => s.trim()).filter(Boolean);
+  const ultima = lineas[lineas.length - 1] || '';
+  return base + (ultima ? ': ' + ultima.slice(0, 300) : '');
+}
+
+/**
  * Levanta el proceso de Whisper si no está, y espera a que diga que está listo.
  * `onAviso` recibe lo que el proceso escribe a stderr (la descarga del modelo,
  * sobre todo), para que el panel pueda decir qué está pasando.
@@ -338,18 +368,39 @@ function arrancarMotor(maquina, onAviso) {
       let msg;
       try { msg = JSON.parse(linea); } catch (e) { continue; }
       if (msg.listo) { m.arranqueMs = msg.ms; if (m.avisarListo) m.avisarListo(); continue; }
+      // Un error SIN `id` es del arranque: el guión no llegó a poder atender
+      // ningún pedido y se está muriendo (no pudo importar mlx_whisper, no pudo
+      // bajar el modelo). Hay que guardarlo, porque si no lo único que queda es
+      // el «se cerró antes de estar listo» del `close`, que no dice nada de lo
+      // que hay que arreglar.
+      //
+      // Esto pasó de verdad: una actualización de macOS dejó de aceptar el
+      // binario compilado de una versión vieja de `scipy`, así que mlx_whisper
+      // no se podía importar. El guión lo dijo con todas las letras —la ruta del
+      // `.so` y el motivo de dyld— y el panel mostraba «el proceso de Whisper se
+      // cerró antes de estar listo», o sea el síntoma sin la causa. El editor no
+      // tenía con qué saber que lo que había que arreglar era un paquete de
+      // Python.
+      if (msg.error && msg.id == null) { m.errorArranque = String(msg.error); continue; }
       const f = pendientes.get(msg.id);
       if (!f) continue;
       pendientes.delete(msg.id);
       if (msg.error) f.rechazar(new Error(msg.error)); else f.resolver(msg);
     }
   });
-  proc.stderr.on('data', (c) => { if (onAviso) { try { onAviso(String(c)); } catch (e) {} } });
+  proc.stderr.on('data', (c) => {
+    // Las últimas líneas de stderr, para poder decir POR QUÉ si el proceso se
+    // muere sin haber dicho nada por stdout (un traceback de Python sale por
+    // acá). Se guardan las últimas y no todas: la descarga del modelo escribe
+    // una barra de progreso de miles de líneas.
+    m.ultimoStderr = (String(m.ultimoStderr || '') + String(c)).slice(-1200);
+    if (onAviso) { try { onAviso(String(c)); } catch (e) {} }
+  });
   proc.on('close', () => {
     if (vivos.motor === m) vivos.motor = null;
     pendientes.forEach((f) => f.rechazar(new Error('el proceso de Whisper se cerró solo')));
     pendientes.clear();
-    if (m.fallarArranque) m.fallarArranque(new Error('el proceso de Whisper se cerró antes de estar listo'));
+    if (m.fallarArranque) m.fallarArranque(new Error(porQueNoArranco(m)));
   });
   proc.on('error', (e) => {
     if (vivos.motor === m) vivos.motor = null;

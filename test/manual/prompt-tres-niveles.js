@@ -99,18 +99,34 @@ const OBJETIVO_AJUSTADO = 'Que el estudiante pueda NOMBRAR los tres componentes 
 // Es la única forma de que el ajuste salga del mismo lugar del que sale cuando lo
 // hace el editor: un textarea que se edita y un botón que se aprieta.
 
+/** ¿El elemento tiene TODAS las clases pedidas? (ver `buscar`). */
+function tieneClases(el, clases) {
+  const tiene = String((el && el.className) || '').split(' ').filter(Boolean);
+  return String(clases).split(' ').filter(Boolean).every(function (c) { return tiene.indexOf(c) !== -1; });
+}
+
 function elemento(tag) {
   const el = {
     tagName: tag, children: [], listeners: {}, style: {},
     className: '', textContent: '', value: '', title: '',
-    appendChild: function (h) { this.children.push(h); return h; },
+    // `childNodes` además de `children`: el cuerpo de ficha compartido pregunta
+    // por él para saber si una barra quedó vacía.
+    childNodes: [],
+    appendChild: function (h) { this.children.push(h); this.childNodes.push(h); return h; },
     setAttribute: function (k, v) { this[k] = v; },
+    getAttribute: function (k) { return this[k]; },
     addEventListener: function (ev, fn) { (this.listeners[ev] = this.listeners[ev] || []).push(fn); },
     emitir: function (ev) { (this.listeners[ev] || []).forEach(function (f) { f(); }); },
     click: function () { this.emitir('click'); },
+    // Buscar por TOKENS y no por la cadena entera: desde la 1.6.0 un mismo
+    // elemento lleva su clase propia más las de la gramática de tarjeta
+    // (`corr-input hp-campo-input`), así que comparar por igualdad dejó de
+    // encontrar lo que sí está. Se piden todos los tokens del argumento, que es
+    // lo que hace que sigan andando las búsquedas de dos clases a la vez
+    // (`qbtn qbtn-react`).
     buscar: function (clase) {
       for (const h of this.children) {
-        if (h.className === clase) return h;
+        if (tieneClases(h, clase)) return h;
         const hit = h.buscar && h.buscar(clase);
         if (hit) return hit;
       }
@@ -119,11 +135,23 @@ function elemento(tag) {
     buscarTodos: function (clase) {
       let out = [];
       for (const h of this.children) {
-        if (h.className === clase) out.push(h);
+        if (tieneClases(h, clase)) out.push(h);
         if (h.buscarTodos) out = out.concat(h.buscarTodos(clase));
       }
       return out;
     },
+  };
+  // `classList` de verdad, no un objeto vacío: desde la 1.6.0 la fila de
+  // Corrections monta el MISMO cuerpo de ficha que un marcador, y ese cuerpo
+  // marca clases (`hp-campo-input`, `is-over`, `hp-controles`). Sin esto el
+  // montaje explotaba con «Cannot read properties of undefined (reading 'add')»,
+  // el `catch` de la pestaña lo convertía en un cartel, y desde afuera parecía
+  // que no había recursos generados.
+  el.classList = {
+    add: function (c) { if (String(el.className).split(' ').indexOf(c) === -1) el.className = (el.className ? el.className + ' ' : '') + c; },
+    remove: function (c) { el.className = String(el.className).split(' ').filter(function (x) { return x && x !== c; }).join(' '); },
+    toggle: function (c, on) { if (on === undefined ? !el.classList.contains(c) : on) el.classList.add(c); else el.classList.remove(c); },
+    contains: function (c) { return String(el.className).split(' ').indexOf(c) !== -1; },
   };
   Object.defineProperty(el, 'innerHTML', { get: function () { return ''; }, set: function () { el.children.length = 0; } });
   return el;
@@ -193,6 +221,9 @@ function montarPanel(proyecto, notas) {
   };
   ctx.document = {
     createElement: elemento,
+    // El campo con chips arma su contenido con nodos de texto y elementos
+    // mezclados, así que el documento tiene que saber hacer los dos.
+    createTextNode: function (t) { const n = elemento('#text'); n.textContent = String(t == null ? '' : t); return n; },
     getElementById: function (id) { return ctx.__nodos[id] || null; },
   };
   ctx.__nodos = {
@@ -202,7 +233,14 @@ function montarPanel(proyecto, notas) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'store.js', 'general-prompt.js', 'refs.js', 'queue.js', 'corrections-contexto.js', 'corrections.js']) {
+  // `iconos.js`, `menciones.js`, `campo.js` y `prompt-card.js` se sumaron cuando
+  // el campo dejó de ser un `<textarea>`: la fila de Corrections monta su cuerpo
+  // con `HPPromptCard`, que necesita a los cuatro. Sin ellos la fila no se dibuja
+  // y este arnés corta con «la pestaña de correcciones no dibujó la fila», que
+  // suena a un problema de Corrections y es una dependencia que falta.
+  for (const f of ['util.js', 'iconos.js', 'store.js', 'general-prompt.js', 'refs.js',
+    'menciones.js', 'campo.js', 'stills.js', 'prompt-card.js', 'queue.js',
+    'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPStore.setContext(proyecto, 'Clase 12 · Fotografía');

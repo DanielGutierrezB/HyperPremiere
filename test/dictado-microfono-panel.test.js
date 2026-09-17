@@ -140,8 +140,8 @@ function armar(opts) {
   // control está también en el encabezado): config-ui.js monta esa vista y se
   // queda con lo que es solo de ⚙, la prueba con medidor.
   const archivos = opts.sinMedidor
-    ? ['util.js', 'mic-select.js', 'config-ui.js']
-    : ['util.js', 'mic-medidor.js', 'mic-select.js', 'config-ui.js'];
+    ? ['util.js', 'iconos.js', 'mic-select.js', 'config-ui.js']
+    : ['util.js', 'iconos.js', 'mic-medidor.js', 'mic-select.js', 'config-ui.js'];
   archivos.forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });

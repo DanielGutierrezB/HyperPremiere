@@ -334,6 +334,30 @@ test('si Whisper no carga, se dice y no se cuelga esperando', async function () 
     try { await dictado._arrancarMotor(maquina); } catch (e) { error = (e && e.message) || String(e); }
   });
   has(error, 'Whisper', 'el motivo tiene que llegar al panel: es lo que se muestra en el botón');
+  // Y con la CAUSA, no sólo el síntoma: lo último del traceback, que es la línea
+  // que dice qué falló.
+  has(error, 'ImportError', 'la última línea del traceback viaja con el error');
+});
+
+// El caso que se comió un rato real de diagnóstico: el guión SÍ dice por qué no
+// pudo arrancar —lo escribe por stdout como cualquier otra respuesta—, pero como
+// ese mensaje no lleva `id`, el lector lo descartaba junto con las respuestas
+// huérfanas y lo único que quedaba era el «se cerró antes de estar listo» del
+// cierre. O sea: el panel tenía la causa en la mano y mostraba el síntoma.
+//
+// Pasó con una actualización de macOS que dejó de aceptar el binario compilado
+// de una versión vieja de `scipy`. Lo que hay que arreglar es un paquete de
+// Python, y con el mensaje viejo no había forma de saberlo: parecía el panel.
+test('lo que el guión dice al morir es lo que se muestra, no el síntoma', async function () {
+  if (saltarEnWindows) return;
+  let error = '';
+  await conWorker('muere-diciendo', async function (maquina) {
+    try { await dictado._arrancarMotor(maquina); } catch (e) { error = (e && e.message) || String(e); }
+  });
+  has(error, 'no pude importar mlx_whisper', 'el motivo que dio el guión');
+  has(error, '_spropack', 'con el detalle que deja buscarlo');
+  // Y que quede claro de quién es el problema: reinstalar el panel no lo arregla.
+  has(error, 'esta máquina', 'dice que es la instalación de la máquina y no el panel');
 });
 
 test('una pasada que falla no se lleva puesto el dictado', async function () {

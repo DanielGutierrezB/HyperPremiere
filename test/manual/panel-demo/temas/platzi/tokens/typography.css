@@ -1,0 +1,29 @@
+/* Platzi Sinapsis — type scale. Source: design-tokens/inputs/sinapsis/typography.json (20 tokens).
+   Bricolage Grotesque = display/headline/title · Plus Jakarta Sans = body/label · IBM Plex Mono = mono.
+   In-code these are SCSS mixins (sin-*); here each ships as a utility class + family vars.
+   Pick by family + weight + role, not px size. Labels are for controls; title/display are a display face. */
+:root{--sin-font-display:"Bricolage Grotesque",system-ui,sans-serif;--sin-font-body:"Plus Jakarta Sans",system-ui,sans-serif;--sin-font-mono:"IBM Plex Mono",ui-monospace,monospace}
+.sin-display-2xl{font-family:var(--sin-font-display);font-size:96px;line-height:112px;letter-spacing:-2px;font-weight:800}
+.sin-display-xl{font-family:var(--sin-font-display);font-size:80px;line-height:96px;letter-spacing:-1.5px;font-weight:800}
+.sin-display-lg{font-family:var(--sin-font-display);font-size:64px;line-height:76px;letter-spacing:-1px;font-weight:700}
+.sin-display-md{font-family:var(--sin-font-display);font-size:48px;line-height:56px;letter-spacing:-0.5px;font-weight:700}
+.sin-display-sm{font-family:var(--sin-font-display);font-size:40px;line-height:48px;letter-spacing:-0.25px;font-weight:700}
+.sin-headline-lg{font-family:var(--sin-font-display);font-size:32px;line-height:40px;letter-spacing:-0.4px;font-weight:700}
+.sin-headline-md{font-family:var(--sin-font-display);font-size:28px;line-height:36px;letter-spacing:-0.3px;font-weight:700}
+.sin-headline-sm{font-family:var(--sin-font-display);font-size:24px;line-height:32px;letter-spacing:-0.2px;font-weight:700}
+.sin-title-lg{font-family:var(--sin-font-display);font-size:20px;line-height:28px;letter-spacing:0;font-weight:600}
+.sin-title-md{font-family:var(--sin-font-display);font-size:16px;line-height:24px;letter-spacing:0.1px;font-weight:600}
+.sin-title-sm{font-family:var(--sin-font-display);font-size:14px;line-height:20px;letter-spacing:0.1px;font-weight:600}
+.sin-body-lg{font-family:var(--sin-font-body);font-size:20px;line-height:28px;letter-spacing:-0.1px;font-weight:400}
+.sin-body-md{font-family:var(--sin-font-body);font-size:16px;line-height:24px;letter-spacing:0.1px;font-weight:400}
+.sin-body-sm{font-family:var(--sin-font-body);font-size:14px;line-height:24px;letter-spacing:0.15px;font-weight:400}
+.sin-label-xl{font-family:var(--sin-font-body);font-size:16px;line-height:24px;letter-spacing:0.1px;font-weight:600}
+.sin-label-lg{font-family:var(--sin-font-body);font-size:14px;line-height:20px;letter-spacing:0.1px;font-weight:600}
+.sin-label-md{font-family:var(--sin-font-body);font-size:12px;line-height:16px;letter-spacing:0.3px;font-weight:600}
+.sin-label-sm{font-family:var(--sin-font-body);font-size:12px;line-height:16px;letter-spacing:0.4px;font-weight:400}
+.sin-label-xs{font-family:var(--sin-font-body);font-size:11px;line-height:16px;letter-spacing:0.08px;font-weight:500}
+.sin-mono-md{font-family:var(--sin-font-mono);font-size:14px;line-height:20px;letter-spacing:0.1px;font-weight:400}
+/* Material Symbols Rounded icon base — ligature name goes as text content: <span class="sin-icon">home</span>.
+   Never below 20px. wght should match adjacent text weight; 'FILL' 1 for the filled style. */
+.sin-icon{font-family:"Material Symbols Rounded";font-weight:400;font-style:normal;font-size:24px;line-height:1;display:inline-block;letter-spacing:normal;text-transform:none;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-smoothing:antialiased;font-variation-settings:'FILL' 0,'wght' 400;user-select:none}
+.sin-icon--fill{font-variation-settings:'FILL' 1,'wght' 400}

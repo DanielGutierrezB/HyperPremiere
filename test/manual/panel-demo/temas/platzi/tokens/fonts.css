@@ -1,0 +1,9 @@
+/* Platzi Sinapsis — @font-face. Source: radiance-web/design-system/styles/src/generic/_sinapsis-font-face.scss */
+@font-face{font-family:"Bricolage Grotesque";src:url("../assets/fonts/BricolageGrotesque-Variable.woff2") format("woff2");font-weight:200 800;font-style:normal;font-display:swap}
+@font-face{font-family:"Plus Jakarta Sans";src:url("../assets/fonts/PlusJakartaSans-Variable.woff2") format("woff2");font-weight:200 800;font-style:normal;font-display:swap}
+@font-face{font-family:"Plus Jakarta Sans";src:url("../assets/fonts/PlusJakartaSans-VariableItalic.woff2") format("woff2");font-weight:200 800;font-style:italic;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("../assets/fonts/IBMPlexMono-Regular.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"IBM Plex Mono";src:url("../assets/fonts/IBMPlexMono-Medium.woff2") format("woff2");font-weight:500;font-style:normal;font-display:swap}
+/* Material Symbols Rounded — SUBSETTED (~293 icons; GRAD/opsz instanced away, wght+FILL live).
+   font-display:block on purpose: ligature-keyed icon font — a fallback paint would flash raw ligature text. */
+@font-face{font-family:"Material Symbols Rounded";src:url("../assets/fonts/material-symbols-rounded-subset.woff2") format("woff2");font-weight:100 700;font-style:normal;font-display:block}
