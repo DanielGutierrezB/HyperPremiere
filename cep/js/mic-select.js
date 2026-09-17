@@ -285,8 +285,27 @@
    * hay"—, y ahí manda si se pudo listar o no.
    */
   function montarEncabezado(root, opts) {
-    var vista = montar(root, Object.assign({ compacto: true }, opts || {}));
+    // El ↻ del encabezado lo arma ESTE módulo y no el HTML, al revés del de ⚙.
+    // No es capricho: el de ⚙ vive en una fila de ajustes que existe siempre, y
+    // éste tiene que aparecer y desaparecer junto con el desplegable —en una
+    // máquina sin dictado no hay nada que refrescar—, así que su dueño es quien
+    // decide si el desplegable se muestra.
+    //
+    // Por qué hace falta acá además de en ⚙: enchufar un micrófono y querer
+    // verlo es lo que pasa MIENTRAS trabajás, y el desplegable del encabezado es
+    // el que tenés a mano. Lo pidió el editor así: "por si conecto un nuevo
+    // micrófono pueda verlo".
+    var boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "hdr-mic-refresh";
+    boton.title = "Vuelve a preguntar qué micrófonos hay. Enchufaste algo y querés verlo sin cerrar el panel.";
+    if (global.HPIconos && HPIconos.el) boton.appendChild(HPIconos.el("reintentar"));
+    else boton.textContent = "\u21bb";
+
+    var vista = montar(root, Object.assign({ compacto: true, refresh: boton }, opts || {}));
     if (!vista) return null;
+    // Después de `montar`, que es el que crea el desplegable adentro de `root`.
+    root.appendChild(boton);
     root.setAttribute("data-hidden", "true");
     HPEngine.call("dictadoEstado").then(function (st) {
       vista.dictadoDisponible = (st && st.disponible === false) ? false : true;

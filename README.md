@@ -2533,17 +2533,23 @@ Continuidad, el `[1]` la webcam, tres son dispositivos virtuales de Steam y Zoom
 es el de la MacBook. Por eso el desplegable de micrófono está **en el encabezado del panel**,
 al lado del ⬇ Log: cambiar de micrófono es algo que pasa entre marcador y marcador —te
 sacás los auriculares, enchufás la interfaz— y hacerlo abriendo la configuración era
-esconderlo detrás de dos clics. En ⚙ sigue estando la fila **Micrófono** completa, que es
-donde se diagnostica: el mismo desplegable con el nombre entero, un ↻ para volver a
-preguntar cuando enchufás algo sin cerrar el panel, la línea que dice cuál se está usando y
-por qué, y **Probar micrófono** con su medidor. Es **un solo control con dos vistas**, no dos
+esconderlo detrás de dos clics. Desde la 1.6.1 **el ↻ está arriba también**, y por el mismo
+motivo: enchufar un micrófono pasa mientras trabajás, así que volver a buscarlo tiene que
+estar donde ya está tu mano. El de arriba y el de ⚙ hacen lo mismo —una sola consulta a
+ffmpeg, compartida— y el listado nuevo aparece en las dos vistas. En ⚙ sigue estando la fila
+**Micrófono** completa, que es donde se diagnostica: el mismo desplegable con el nombre
+entero, su ↻, la línea que dice cuál se está usando y por qué, y **Probar micrófono** con su
+medidor (nivel en vivo, pico sostenido, dónde está la compuerta del dictado y si la pasás). Es **un solo control con dos vistas**, no dos
 desplegables: elegís arriba y ⚙ ya muestra el nuevo sin recargar nada, y abrir el panel corre
 ffmpeg una vez y no una por vista. Y el botón 🎙 de cada campo dice en su tooltip cuál va a
 abrir; mientras dicta, la línea de estado también lo nombra.
 
-**Arriba hay 34 px, así que arriba se dice distinto.** En un panel angosto el desplegable
-queda en el ícono 🎙 solo y el nombre del dispositivo se lee en el tooltip: media palabra
-—"MacBoo…"— no es información. Con algo más de ancho aparece el nombre sin el "Microphone"
+**Arriba hay 64 px, así que arriba se dice distinto.** En un panel angosto el desplegable
+queda en el ícono 🎙 solo —con su ↻ al lado, que no cede: un icono de 18 px no se acierta— y
+el nombre del dispositivo se lee en el tooltip: media palabra —"MacBoo…"— no es información.
+Los 64 px son los 38 que mide el desplegable plegado más los 24 del botón más el aire, y el
+38 lo dijo `medir-botones` y no una cuenta de cabeza: con el piso de 34 que había antes de
+sumar el ↻, al desplegable le quedaban 14 px, o sea presente y sin servir. Con algo más de ancho aparece el nombre sin el "Microphone"
 que repiten los seis dispositivos de esta máquina ("MacBook Pro", "OBSBOT Meet 2"), y si es
 larguísimo —los virtuales de Steam lo son— se acorta por el medio, que conserva el sufijo que
 diferencia uno del otro. El **menú desplegado no se cuelga del botón sino del encabezado**:

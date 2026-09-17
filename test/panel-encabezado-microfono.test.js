@@ -206,9 +206,17 @@ test('la insignia de estado es la que cede, y recorta al ceder', function () {
 test('el micrófono es el único del grupo con permiso para ceder, y tiene piso', function () {
   const d = declaraciones('.hdr-mic');
   eq(flexShrink(d), 1, 'es el que absorbe la falta de ancho del grupo');
-  eq(flexBasis(d), '34px', 'la base es el ícono solo: así el largo del nombre del dispositivo ' +
-    'NO decide a qué ancho envuelve el encabezado (con base auto, enchufar algo de nombre largo lo movía)');
-  eq(d['min-width'], '34px', 'y no puede quedar más chico que su ícono');
+  // El piso pasó de 34 a 64 px cuando el bloque dejó de ser sólo el desplegable:
+  // desde la 1.6.x lleva además su ↻ para volver a buscar micrófonos. 64 = los 38
+  // que mide el desplegable plegado (lo dijo `medir-botones`, no una cuenta de
+  // cabeza) + los 24 del botón + el aire. Con los 34 de antes el botón se comía
+  // casi todo y el desplegable quedaba en 14 px: presente y sin servir.
+  //
+  // Lo que NO cambió es la invariante que este test cuida: la base es un número y
+  // no `auto`, así que el largo del nombre del dispositivo sigue sin decidir a qué
+  // ancho envuelve el encabezado.
+  eq(flexBasis(d), '64px', 'la base es un número fijo: el nombre del dispositivo no mueve el encabezado');
+  eq(d['min-width'], '64px', 'y no puede quedar más chico que el desplegable más su ↻');
   ok(/^\d+px$/.test(d['max-width']), 'con techo, para no dejar una caja vacía enorme en un panel ancho: ' + d['max-width']);
   const label = declaraciones('.hdr-mic .hps-label');
   eq(label['min-width'], '0', 'el nombre cede antes que la caja');

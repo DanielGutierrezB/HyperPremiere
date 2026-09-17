@@ -226,6 +226,36 @@ test('el ↻ vuelve a preguntar por los micrófonos', async function () {
   eq(p.llamadas.filter((l) => l === 'microfonoListar').length, antes + 1);
 });
 
+// El ↻ del ENCABEZADO, que es otro botón y otro dueño: el de ⚙ está en el HTML y
+// éste lo arma `montarEncabezado`, porque tiene que aparecer y desaparecer junto
+// con el desplegable (en una máquina sin dictado no hay nada que refrescar).
+//
+// Lo pidió el editor así: "agreguemos un botón en la selección de micrófonos para
+// poder actualizar la lista, por si conecto un nuevo micrófono pueda verlo". El de
+// ⚙ ya existía; el del encabezado es el que está a mano mientras trabajás, que es
+// cuando enchufás algo.
+test('el encabezado tiene su propio ↻, y también vuelve a preguntar', async function () {
+  const p = armar();
+  await asentar();
+
+  const raiz = p.ctx.document.createElement('div');
+  const vista = p.ctx.HPMicSelect.montarEncabezado(raiz);
+  ok(vista, 'el encabezado se monta');
+  await asentar();
+
+  const boton = raiz.children.filter(function (c) {
+    return String(c.className || '').indexOf('hdr-mic-refresh') !== -1;
+  })[0];
+  ok(boton, 'con su ↻ adentro');
+  ok(String(boton.title || '').length > 20, 'y con un tooltip que dice para qué es');
+
+  const antes = p.llamadas.filter((l) => l === 'microfonoListar').length;
+  boton.click();
+  await asentar();
+  eq(p.llamadas.filter((l) => l === 'microfonoListar').length, antes + 1,
+    'el ↻ del encabezado también le pregunta a ffmpeg de nuevo');
+});
+
 test('si el motor no puede listar, la fila lo dice y la salida cruda va al log', async function () {
   const p = armar({
     lista: function () { return { ok: false, error: 'No pude correr ffmpeg para listar los micrófonos.', crudo: 'spawn ffmpeg ENOENT' }; },

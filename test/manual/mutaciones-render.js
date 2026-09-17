@@ -1646,8 +1646,11 @@ const MUTACIONES = [
   {
     nombre: 'encabezado: el menú del micrófono se ancla al botón de 34 px',
     archivo: 'cep/css/style.css',
-    de: 'max-width: 176px; margin-right: auto; position: static; }',
-    a:  'max-width: 176px; margin-right: auto; position: relative; }',
+    // REAPUNTADA: la fila creció al sumarle el ↻, así que el `max-width` pasó de
+    // 176 a 200 px y el bloque es un flex. Lo que la mutación mide no cambió: que
+    // el menú se ancle al PANEL y no al botón.
+    de: 'max-width: 200px; margin-right: auto; position: static;',
+    a:  'max-width: 200px; margin-right: auto; position: relative;',
   },
   {
     nombre: 'micrófono: el pico sostenido del medidor sigue al nivel de ahora',
@@ -3155,6 +3158,16 @@ const MUTACIONES = [
     archivo: 'cep/js/refs-view.js',
     de: '    if (global.HPPromptCard && HPPromptCard.repintarTodas) HPPromptCard.repintarTodas();',
     a:  '    void 0;',
+  },
+
+  {
+    // El ↻ del encabezado: enchufar un micrófono y poder verlo sin abrir ⚙. Sin
+    // el botón el desplegable queda con la lista del arranque hasta reiniciar el
+    // panel, y el editor no tiene forma de saber que hay que reiniciar.
+    nombre: 'el encabezado se queda sin ↻ y la lista de micrófonos no se puede refrescar',
+    archivo: 'cep/js/mic-select.js',
+    de: '    var vista = montar(root, Object.assign({ compacto: true, refresh: boton }, opts || {}));',
+    a:  '    var vista = montar(root, Object.assign({ compacto: true }, opts || {}));',
   },
 
 ];

@@ -3453,8 +3453,29 @@ input:hover,
    nombre largo movía el punto de quiebre del encabezado).
    El `margin-right: auto` lo agrupa con la insignia: el micrófono es un ajuste,
    como ella, y los botones de al lado son acciones. */
-.hdr-mic { flex: 1 1 34px; min-width: 34px; max-width: 176px; margin-right: auto; position: static; }
+/* El desplegable y su ↻, uno al lado del otro. El `max-width` crece 24 px
+   —lo que mide el botón— para que el nombre del micrófono siga teniendo el mismo
+   lugar que tenía y el botón no se lo coma. */
+/* El mínimo son 64 px y no 34: es lo que piden el desplegable plegado (38, que
+   es lo que mide su 🎙 con el chevrón —lo dijo `medir-botones`, no yo—) más el ↻
+   (24) más el aire. Con los 34 de antes el botón se comía casi todo y el
+   desplegable quedaba en 14 px: presente y sin servir, que es peor que no estar.
+   Con 60 entraba pero le chorreaba el contenido por 4 px. Medido a 320, que es
+   el ancho donde el encabezado aprieta. */
+.hdr-mic { flex: 1 1 64px; min-width: 64px; max-width: 200px; margin-right: auto; position: static; display: flex; align-items: center; gap: 2px; }
 .hdr-mic[data-hidden="true"] { display: none; }
+/* El ↻ NO se encoge: es un blanco de clic, y un icono de 18 px no se acierta.
+   El desplegable de al lado sí cede, que es el que tiene texto para recortar. */
+.hdr-mic .hps-trigger { min-width: 0; flex: 1 1 auto; }
+.hdr-mic-refresh {
+  flex: 0 0 auto;
+  width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-secondary);
+  background: transparent; border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+}
+.hdr-mic-refresh:hover { color: var(--text-primary); background: var(--layer-hover); }
+.hdr-mic-refresh svg { width: 13px; height: 13px; }
 .hdr-mic .hps-trigger {
   min-height: 26px; height: 26px; padding: 0 7px; gap: 5px;
   justify-content: flex-start;
