@@ -48,8 +48,9 @@
 // carga, y dos tandas separadas medirían eso además del prompt.
 //
 // Y hay una tercera variante, `ciego`, que es el control negativo: se le saca
-// al prompt TODO el contrato (system.md entero y la sección de build-context) y
-// se pide lo mismo. Sirve para saber si la medición mide algo. Si `ciego`
+// al prompt TODO el contrato (el system prompt entero y la sección de
+// build-context) y se pide lo mismo. Sirve para saber si la medición mide algo.
+// Si `ciego`
 // también diera 100%, un 100% en las otras dos no probaría nada: querría decir
 // que el puntaje se cumple solo y que la instrumentación está rota.
 //
@@ -64,8 +65,10 @@ const { contractReminder } = require('../../bridge/providers');
 const { inspectComposition } = require('../../bridge/composition');
 const { buildUserPrompt } = require('../../bridge/prompt/build-context');
 
-const SYSTEM = fs.readFileSync(
-  path.join(__dirname, '..', '..', 'bridge', 'prompt', 'system.md'), 'utf8');
+// La medición es de HyperFrames: era el único motor cuando se hizo, y el
+// puntaje cuenta cosas de SU contrato (que el `#stage` esté, que la timeline
+// quede registrada). Correrla con Remotion mediría otra cosa.
+const SYSTEM = require('../../bridge/render').motor('hyperframes').systemPrompt();
 
 const DURACION = 8.5;
 const MARKER_SLUG = 'marcador-12';
@@ -368,7 +371,7 @@ async function main() {
     ' = ' + opts.n * variantes.length + ' llamadas al modelo');
   console.log('  paralelo:  ' + opts.paralelo);
   console.log('  prompt:    ' + opts.pedido.length + ' caracteres de pedido + ' +
-    SYSTEM.length + ' de system.md' +
+    SYSTEM.length + ' de system prompt' +
     (htmlPrevio ? '  (incluye continuidad: ' + htmlPrevio.length + ' caracteres)' : ''));
   console.log('  contrato de build-context: a ' + COSTO.contratoADelFinal +
     ' caracteres del final del pedido');

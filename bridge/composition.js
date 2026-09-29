@@ -21,7 +21,7 @@
 
 'use strict';
 
-// Valores del esqueleto obligatorio (ver bridge/prompt/system.md, "PLANTILLA
+// Valores del esqueleto obligatorio (ver bridge/prompt/system-hyperframes.md, "PLANTILLA
 // OBLIGATORIA"). Todo el pipeline es 1080p30.
 const SKELETON = {
   'data-start': '0',
@@ -47,13 +47,24 @@ const PROBLEM = {
 };
 
 /**
- * Auditoría del propio modelo (ver system.md, "PLAN → CÓDIGO → AUDITORÍA"): si
- * declaró una falla concreta de diseño, devuelve qué falló para pedir UNA
- * corrección dirigida. null = auditoría OK o ausente.
+ * Auditoría del propio modelo (ver prompt/system-comun.md, "PLAN → CÓDIGO →
+ * AUDITORÍA"): si declaró una falla concreta de diseño, devuelve qué falló para
+ * pedir UNA corrección dirigida. null = auditoría OK o ausente.
+ *
+ * Acepta las DOS sintaxis de comentario porque el protocolo es del criterio de
+ * diseño, no del lenguaje: una composición de HyperFrames lo cierra con un
+ * comentario HTML y una de Remotion con un comentario de bloque de JavaScript.
+ * Leer una sola de las dos dejaría a un motor entero sin la corrección dirigida
+ * —y sin nada que avise, porque una auditoría que no se lee se parece mucho a
+ * una auditoría que salió bien—.
  */
-function auditFailure(html) {
-  const m = String(html || '').match(/<!--\s*AUDIT:\s*FALLA:?\s*([\s\S]*?)-->/i);
-  return m ? m[1].trim().slice(0, 400) : null;
+function auditFailure(code) {
+  const txt = String(code || '');
+  const html = txt.match(/<!--\s*AUDIT:\s*FALLA:?\s*([\s\S]*?)-->/i);
+  if (html) return html[1].trim().slice(0, 400);
+  const bloque = txt.match(/\/\*\s*AUDIT:\s*FALLA:?\s*([\s\S]*?)\*\//i);
+  if (bloque) return bloque[1].trim().slice(0, 400);
+  return null;
 }
 
 /**

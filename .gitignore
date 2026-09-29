@@ -11,6 +11,15 @@ node_modules
 dist/
 *.zxp
 
+# El Chrome que baja Remotion. NO tendría que aparecer acá: la instalación vive
+# en ~/.hyperpremiere/remotion y la descarga corre con el cwd puesto ahí (ver
+# «El bug de Node 26» en el README). Pero `ensureBrowser()` decide el destino
+# subiendo desde el directorio de trabajo del proceso que la llama, así que un
+# script corrido a mano desde la raíz del repo deja 175 MB acá adentro — pasó la
+# primera vez que se probó. Esta línea es la red: son 175 MB que cada editor
+# pagaría en cada actualización empaquetada.
+.remotion/
+
 # Las capturas de pantalla de la maqueta: se regeneran con
 # `test/manual/panel-demo/capturar-*.js` cuando se las necesita para mirar un
 # cambio, y pesan megas. No van al repo por una razón concreta y no por prolijidad:

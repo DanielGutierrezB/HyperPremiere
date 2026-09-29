@@ -3417,8 +3417,14 @@ input:hover,
    La barra va de −60 dBFS a 0: la marca vertical es la compuerta del dictado
    (−34) y el tic fino, el pico sostenido. Se colorea por lo que importa —¿pasa
    la compuerta o no?— y no por bonito. */
-.mic-row { display: flex; align-items: center; gap: var(--sp-2); }
-.mic-row .hp-select { flex: 1 1 auto; min-width: 0; }
+/* El selector de motor y su botón de instalar, con la misma geometría que la
+   fila del micrófono: desplegable que se estira, acciones a la derecha. */
+.mic-row, .engine-row { display: flex; align-items: center; gap: var(--sp-2); }
+.mic-row .hp-select, .engine-row .hp-select { flex: 1 1 auto; min-width: 0; }
+.engine-row button[data-hidden="true"] { display: none; }
+#engine-status { white-space: normal; line-height: 1.4; }
+#engine-status.is-warn { color: var(--warn); }
+#engine-status.is-error { color: var(--error); }
 #mic-status { white-space: normal; line-height: 1.4; }
 #mic-status.is-warn { color: var(--warn); }
 #mic-status.is-error { color: var(--error); }

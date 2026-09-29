@@ -1885,12 +1885,21 @@
     }
     card._updateEstimate = updateEstimate;
 
-    // ── Editor de HTML manual (elegir versión → Abrir → editar → Render) ──
+    // ── Editor de código (elegir versión → Abrir → editar → Render) ──
+    //
+    // Dice "código" y no "HTML" porque depende del motor con el que se generó la
+    // versión que se abra: HyperFrames es un HTML con GSAP y Remotion un
+    // componente de React. El motor viaja con el código (ver readMarkerHtml) y
+    // decide tres cosas: con qué gramática colorea Prism, cómo se nombra en los
+    // mensajes, y con qué se valida y renderiza al guardar.
     var editor = document.createElement("details");
     editor.className = "html-editor";
     var eSum = document.createElement("summary");
-    eSum.textContent = "Editar HTML manualmente";
+    eSum.textContent = "Editar código manualmente";
     editor.appendChild(eSum);
+    // El motor de la versión ABIERTA. Arranca vacío: mientras no se abrió nada,
+    // el panel no tiene por qué suponer cuál es.
+    var motorAbierto = "";
 
     var eBody = document.createElement("div");
     eBody.className = "html-editor-body";
@@ -1902,9 +1911,31 @@
     openBtn.type = "button";
     openBtn.className = "btn-secondary";
     openBtn.textContent = "Abrir";
-    openBtn.title = "Carga el HTML de la versión elegida en el editor para retocarlo a mano";
+    openBtn.title = "Carga el código de la versión elegida en el editor para retocarlo a mano";
     verRow.appendChild(verMount);
     verRow.appendChild(openBtn);
+
+    // ── Vista previa: mirar la animación sin renderizarla ────────────
+    //
+    // Abre la composición en una ventana que la REPRODUCE, con timeline: se
+    // scrubea, se pone en loop, se marca un tramo. Hasta acá la única forma de
+    // ver una animación era renderizarla, ocho segundos por mirada.
+    //
+    // Manda lo que hay EN EL EDITOR cuando hay algo, y no la versión guardada:
+    // así editar y mirar es un ciclo —se toca el código, se aprieta esto, y la
+    // ventana que ya está abierta cambia— sin guardar una versión por mirada.
+    //
+    // No todos los motores pueden (HyperFrames necesita su timeline pausada para
+    // que el capturador la posicione), y cuando no se puede, el motor lo dice
+    // con el motivo. El botón se ofrece igual: esconderlo dejaría al editor sin
+    // manera de descubrir que esto existe, y el motivo se lee una vez.
+    var prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "btn-secondary";
+    prevBtn.textContent = "Vista previa";
+    prevBtn.title = "Abre la animación en una ventana que la reproduce, sin renderizar. " +
+      "Si hay algo en el editor, muestra ESO; si no, la versión elegida.";
+    verRow.appendChild(prevBtn);
 
     var codeEd = HPWidgets.makeCodeEditor();
 
@@ -1912,7 +1943,7 @@
     renderBtn.type = "button";
     renderBtn.className = "btn-generate";
     renderBtn.textContent = "Guardar y renderizar (nueva versión)";
-    renderBtn.title = "Renderiza el HTML editado como una versión nueva [manual], sin gastar IA, y la coloca en el timeline";
+    renderBtn.title = "Renderiza el código editado como una versión nueva [manual], sin gastar IA, y la coloca en el timeline";
 
     var eStatus = document.createElement("div");
     eStatus.className = "marker-status";
@@ -1947,20 +1978,79 @@
       hpCall("readMarkerHtml", {
         projectPath: currentProjectPath, sequenceName: currentSequenceName, markerSlug: markerKey, version: v
       }).then(function (r) {
-        if (r && r.ok) { codeEd.setValue(r.html); eStatus.textContent = "v" + v + " cargada — editá y dale Render."; }
+        if (r && r.ok) {
+          // El lenguaje ANTES del texto: si se pinta con la gramática anterior
+          // y se corrige después, el editor ve un parpadeo de colores que no son.
+          motorAbierto = r.engine || "";
+          codeEd.setLenguaje(r.lenguaje);
+          codeEd.setValue(r.html);
+          eStatus.textContent = "v" + v + " cargada — editá y dale Render.";
+        }
         else { eStatus.className = "marker-status is-error"; eStatus.textContent = "No se pudo abrir: " + ((r && r.error) || ""); }
       }).catch(function (e) { eStatus.className = "marker-status is-error"; eStatus.textContent = "Error: " + ((e && e.message) || ""); });
     });
 
+    prevBtn.addEventListener("click", function () {
+      var v = parseInt(verSel.value, 10);
+      var enElEditor = codeEd.getValue().trim();
+      if (!v && !enElEditor) {
+        eStatus.className = "marker-status is-error";
+        eStatus.textContent = "Generá una versión primero, o pegá código en el editor.";
+        return;
+      }
+      prevBtn.disabled = true;
+      eStatus.className = "marker-status";
+      eStatus.textContent = "Armando la vista previa…";
+      hpCall("previewComposition", {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName,
+        markerSlug: markerKey, version: v || 0,
+        // Lo que hay en el editor gana sobre el disco: es lo que el editor está
+        // mirando y lo que quiere ver moverse.
+        code: enElEditor,
+        // El motor solo hace falta cuando no hay versión en disco de la que
+        // leerlo (código recién pegado).
+        engine: motorAbierto,
+        marker: { name: marker.name || markerKey, duration: marker.duration },
+        // Con fondo se ve opaco y sin fondo con el damero de transparencia, tal
+        // como saldría el render: mirar un clip con alfa sobre negro esconde
+        // justo los problemas de contraste que el alfa vuelve a traer.
+        background: !!bgCheck.checked
+      }).then(function (r) {
+        prevBtn.disabled = false;
+        if (!r || !r.ok) {
+          // El motivo lo escribe el motor y se muestra COMPLETO: cuando dice que
+          // no puede, explica por qué, y eso es lo único que evita que parezca
+          // que algo está roto.
+          eStatus.className = "marker-status is-error";
+          eStatus.textContent = (r && r.error) || "no se pudo armar la vista previa";
+          hpLog("Vista previa: " + ((r && r.error) || "sin motivo"), "WARN");
+          return;
+        }
+        HPUtil.abrirEnNavegador(r.url);
+        eStatus.textContent = r.arrancado
+          ? "Vista previa abierta en el navegador."
+          : "Vista previa actualizada — mirá la ventana que ya tenías abierta.";
+        hpLog("Vista previa de " + r.etiqueta + " en " + r.url +
+          (r.arrancado ? " (recién levantada)" : " (la que ya estaba)"));
+      }).catch(function (e) {
+        prevBtn.disabled = false;
+        eStatus.className = "marker-status is-error";
+        eStatus.textContent = "Error: " + ((e && e.message) || "");
+      });
+    });
+
     renderBtn.addEventListener("click", function () {
       var html = codeEd.getValue().trim();
-      if (!html) { eStatus.className = "marker-status is-error"; eStatus.textContent = "El HTML está vacío."; return; }
+      if (!html) { eStatus.className = "marker-status is-error"; eStatus.textContent = "El editor está vacío."; return; }
       HPQueue.add({
         kind: "renderManualHtml",
         payload: {
           projectPath: currentProjectPath, sequenceName: currentSequenceName,
           marker: { name: marker.name || markerKey, start: marker.start, end: marker.start + marker.duration, duration: marker.duration },
-          markerSlug: markerKey, html: html
+          // El motor de la versión que se abrió, no el de ⚙: guardar a mano es
+          // seguir tocando ESA versión, y lo que hay en el editor está escrito
+          // en su lenguaje.
+          markerSlug: markerKey, html: html, engine: motorAbierto
         },
         seqName: currentSequenceName, projectPath: currentProjectPath, markerKey: markerKey,
         label: markerKey + " (edición manual)", markerStart: marker.start, markerDuration: marker.duration
@@ -2459,6 +2549,16 @@
     checkWhisperStatus();
   }
 
+  // Al cerrar o recargar el panel, apagar la vista previa. Es best-effort a
+  // propósito y no la única defensa: `beforeunload` corre en el ⟳ pero Premiere
+  // puede cerrarse de golpe, así que del otro lado hay dos redes más —el motor
+  // adopta la sesión anterior al recargarse (ver bridge/vivos.js) y hay un
+  // watchdog de inactividad—. Sin ninguna de las tres, cerrar Premiere dejaría
+  // un webpack en watch comiendo memoria hasta que alguien lo note.
+  window.addEventListener("beforeunload", function () {
+    try { hpCall("closePreview"); } catch (e) { /* el panel ya se está yendo */ }
+  });
+
   // ── Indicador de Whisper local (junto al botón de transcribir) ─────
   // Tres estados: instalado y rápido (verde), instalado pero lento (ámbar), o
   // ausente. Cuando falta, el badge NO es un cartel muerto: lleva al botón que
@@ -2562,6 +2662,10 @@
   // "Preparar motor" y configurar los carriles de render de la cola.
   function applyEngineStatus(st) {
     if (!st) return;
+    // Los motores de animación, lo primero: este chequeo corre al abrir el
+    // panel, antes de que nadie toque ⚙, y es lo que deja que una fila de
+    // Corrections dibujada en el primer segundo ya sepa nombrar su motor.
+    if (st.motores) HPMotores.set(st.motores);
     depsMissing = !!(st.ok && st.depsReady === false);
     if (depsMissing) {
       hpLog("Motor SIN dependencias (instalación limpia) — mostrando 'Preparar motor'.", "WARN");

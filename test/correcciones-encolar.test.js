@@ -266,7 +266,7 @@ function montarPestana(opts) {
   vm.createContext(ctx);
   // `general-prompt.js` va de verdad: guardar para todo el curso desde una fila
   // pasa por ahí, y con un doble no se probaría el camino que el editor aprieta.
-  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'general-prompt.js', 'corrections-contexto.js', 'corrections.js']) {
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'general-prompt.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
 

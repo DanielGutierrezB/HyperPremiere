@@ -23,6 +23,7 @@ const vm = require('vm');
 const { test, ok, eq, has } = require('./harness');
 const { makeUsage } = require('../bridge/providers');
 const { composeAnimation } = require('../bridge/compose');
+const { motor } = require('../bridge/render');
 const claude = require('../bridge/providers/claude-cli');
 const cursor = require('../bridge/providers/cursor-cli');
 
@@ -123,6 +124,7 @@ test('las llamadas de un mismo recurso suman su entrada completa', async functio
   const r = await composeAnimation({
     userPrompt: 'x', systemPrompt: 's', images: [], durationSec: 5, markerSlug: 'm1',
     config: { model: 'modelo-de-prueba', provider: 'falso' },
+    motor: motor('hyperframes'),
     provider: {
       generate: async function () {
         const u = usos[i++];
@@ -143,6 +145,7 @@ test('si un proveedor no manda el total, se recompone de sus partes', async func
   const r = await composeAnimation({
     userPrompt: 'x', systemPrompt: 's', images: [], durationSec: 5, markerSlug: 'm1',
     config: { model: 'modelo-de-prueba', provider: 'falso' },
+    motor: motor('hyperframes'),
     provider: {
       generate: async function () {
         return {

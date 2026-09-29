@@ -104,6 +104,9 @@
       msg: j.msg, kind: j.kind, seqName: j.seqName, projectPath: j.projectPath,
       markerKey: j.markerKey, label: j.label, markerStart: j.markerStart,
       markerDuration: j.markerDuration, version: j.version, usage: j.usage,
+      // Con qué motor se compuso: el detalle del trabajo terminado lo muestra, y
+      // un panel reiniciado tiene que seguir diciéndolo.
+      engine: j.engine,
       // Si el panel se reinicia a mitad, la corrección tiene que seguir
       // colocándose en amarillo y con su material: sin esto volvería a entrar
       // sin etiqueta y sin las imágenes de la secuencia donde nació el recurso.
@@ -763,6 +766,10 @@
       if (job._cancelled) { hpLog("Job CANCELADO [" + job.label + "] tras modelo — descartado."); emit(); pump(); return; }
       if (!prep || !prep.ok) throw new Error(prep && prep.error ? prep.error : "error preparando");
       job.prepared = prep;
+      // Con qué motor se compuso. Lo decidió el bridge y no ⚙ —un refinamiento
+      // usa el motor de la versión previa, no el elegido ahora—, así que el
+      // panel lo aprende de la respuesta en vez de suponerlo.
+      job.engine = prep.engine || "";
       countUsage(job, prep.usage);
       job._modelMs = Date.now() - (job._modelStart || Date.now());
       job.status = "ready"; job.msg = "En espera de render… · IA " + fmtDuration(job._modelMs / 1000);

@@ -32,7 +32,8 @@ const path = require('path');
 const { test, ok, eq, has } = require('./harness');
 const { inspectComposition, PROBLEM } = require('../bridge/composition');
 const { composeAnimation } = require('../bridge/compose');
-const { lastCompositionHtml } = require('../bridge/store/project-fs');
+const { motor } = require('../bridge/render');
+const { lastComposition } = require('../bridge/store/project-fs');
 const cursor = require('../bridge/providers/cursor-cli');
 const engine = require('../bridge/engine');
 
@@ -133,6 +134,7 @@ function correr(provider) {
   return composeAnimation({
     provider: provider,
     config: { model: 'modelo-de-prueba', provider: 'cursor-cli' },
+    motor: motor('hyperframes'),
     systemPrompt: 'sistema', userPrompt: 'usuario', images: [],
     durationSec: 3, markerSlug: 'marcador-1',
     report: function () {},
@@ -214,30 +216,44 @@ function carpetaCon(versiones) {
   return dir;
 }
 
+/** El código de la versión previa, o '' si no hay ninguna aprovechable. */
+function previaDe(dir, version) {
+  const previa = lastComposition(dir, 'marcador-1', version);
+  return previa ? previa.code : '';
+}
+
 test('la referencia para corregir saltea las versiones que son prosa', function () {
   // El caso del editor: v3 fue el último diseño real y v4, v5 y v6 quedaron
   // guardadas como negativas. Corregir sobre v6 es pedirle al modelo que mejore
   // un texto de disculpa.
   const dir = carpetaCon([htmlBueno('v1'), htmlBueno('v2'), htmlBueno('v3'), NEGATIVA, NEGATIVA, NEGATIVA]);
-  const html = lastCompositionHtml(dir, 'marcador-1', 7);
-  has(html, 'data-composition-id="v3"', 'vuelve el último diseño de verdad');
+  has(previaDe(dir, 7), 'data-composition-id="v3"', 'vuelve el último diseño de verdad');
 });
 
 test('sin prosa de por medio, es simplemente la versión anterior', function () {
   const dir = carpetaCon([htmlBueno('v1'), htmlBueno('v2')]);
-  has(lastCompositionHtml(dir, 'marcador-1', 3), 'data-composition-id="v2"');
+  has(previaDe(dir, 3), 'data-composition-id="v2"');
 });
 
 test('si TODAS las previas son prosa, se corrige sin referencia', function () {
   const dir = carpetaCon([NEGATIVA, NEGATIVA]);
-  eq(lastCompositionHtml(dir, 'marcador-1', 3), '',
+  eq(lastComposition(dir, 'marcador-1', 3), null,
     'mejor sin referencia que con una falsa: el prompt dice "(no disponible)"');
 });
 
 test('no se mira hacia adelante: la referencia es una versión ANTERIOR', function () {
   const dir = carpetaCon([htmlBueno('v1'), htmlBueno('v2'), htmlBueno('v3')]);
-  has(lastCompositionHtml(dir, 'marcador-1', 3), 'data-composition-id="v2"',
+  has(previaDe(dir, 3), 'data-composition-id="v2"',
     'para la v3 la referencia es la v2, no la v3 misma');
+});
+
+test('una versión sin ficha se lee con el motor de siempre', function () {
+  // Las versiones de antes de la 1.7.0 no tienen `engine` en su ficha, y las de
+  // este test no tienen ficha ninguna. Las dos son HyperFrames: si la ausencia
+  // se leyera como "no sé", el panel se quedaría sin poder refinar nada de lo
+  // que ya está en los discos de los editores.
+  const dir = carpetaCon([htmlBueno('v1')]);
+  eq(lastComposition(dir, 'marcador-1', 2).engine, 'hyperframes');
 });
 
 test('renderizar a mano un texto pegado no arranca un render que saldría en negro', async function () {
@@ -249,7 +265,7 @@ test('renderizar a mano un texto pegado no arranca un render que saldría en neg
     });
   } catch (e) { error = e; }
   ok(error, 'corta antes de renderizar');
-  has(error.message, 'no es una composición HTML');
+  has(error.message, 'no es una composición de HyperFrames');
   has(error.message, 'Pegá el HTML completo', 'y dice qué se esperaba');
 });
 

@@ -36,6 +36,10 @@ process.env.HOME = CASA;
 process.env.USERPROFILE = CASA;
 
 const engine = require('../../bridge/engine.js');
+// Con qué motor se arma el pedido (`--motor remotion`). El contexto no cambia
+// —el objetivo, el transcript y la instrucción son los mismos— pero el contrato
+// y el system prompt que lo envuelven los escribe el motor.
+const MOTOR_ELEGIDO = require('./motor-elegido').motorElegido();
 
 const RAIZ = path.join(__dirname, '..', '..');
 const CEP = path.join(RAIZ, 'cep', 'js');
@@ -199,14 +203,14 @@ async function main() {
   // 2. Primera corrida: un proveedor que NO abre archivos.
   const vistoOllama = {};
   proveedorEspia('ollama', function (arg) { if (!vistoOllama.arg) vistoOllama.arg = arg; });
-  engine.setConfig({ provider: 'ollama', model: 'falso' });
+  engine.setConfig({ provider: 'ollama', model: 'falso', renderEngine: MOTOR_ELEGIDO.id });
   const ctxA = montarPanel(proyecto);
   const conOllama = await pedir(ctxA, proyecto, vistoOllama);
 
   // 3. Segunda corrida: uno que SÍ los abre. Mismo proyecto, mismas referencias.
   const vistoClaude = {};
   proveedorEspia('claude-cli', function (arg) { if (!vistoClaude.arg) vistoClaude.arg = arg; });
-  engine.setConfig({ provider: 'claude-cli', model: 'falso' });
+  engine.setConfig({ provider: 'claude-cli', model: 'falso', renderEngine: MOTOR_ELEGIDO.id });
   const ctxB = montarPanel(proyecto);
   const conClaude = await pedir(ctxB, proyecto, vistoClaude);
 

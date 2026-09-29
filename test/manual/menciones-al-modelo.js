@@ -40,6 +40,10 @@ process.env.HOME = CASA;
 process.env.USERPROFILE = CASA;
 
 const engine = require('../../bridge/engine.js');
+// Con qué motor se arma el pedido (`--motor remotion`). El contexto no cambia
+// —el objetivo, el transcript y la instrucción son los mismos— pero el contrato
+// y el system prompt que lo envuelven los escribe el motor.
+const MOTOR_ELEGIDO = require('./motor-elegido').motorElegido();
 
 const RAIZ = path.join(__dirname, '..', '..');
 const CEP = path.join(RAIZ, 'cep', 'js');
@@ -219,7 +223,7 @@ async function main() {
   const notas = [];
   const visto = {};
   proveedorEspia('ollama', function (arg) { if (!visto.arg) visto.arg = arg; });
-  engine.setConfig({ provider: 'ollama', model: 'falso' });
+  engine.setConfig({ provider: 'ollama', model: 'falso', renderEngine: MOTOR_ELEGIDO.id });
   const ctx = montarPanel(proyecto, notas);
 
   // Las imágenes del marcador, guardadas como las guarda el panel: con su NOMBRE,

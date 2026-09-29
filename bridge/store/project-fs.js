@@ -10,12 +10,13 @@ const os = require('os');
 const path = require('path');
 
 // Contrato de nombres versionados ("<slug> vN [modelo].ext"): vive en versions.js.
-const { formatBase, listVersions } = require('./versions');
+const { formatBase, listVersions, metaName } = require('./versions');
 // Las referencias de los dos niveles generales (capturas, logos, PDFs) como
 // archivos al lado del .prproj: su I/O y su manifiesto viven en references.js.
 const referencias = require('./references');
-// Qué es una composición y qué no: el contrato vive en composition.js.
-const { inspectComposition, PROBLEM } = require('../composition');
+// Qué extensión tiene una composición y qué distingue código de prosa: lo
+// contesta el motor con el que se escribió, no este módulo.
+const motores = require('../render');
 
 /**
  * Convierte un nombre arbitrario en un slug seguro para el filesystem.
@@ -64,14 +65,18 @@ function ensureOutputDir(projectPath, sequenceName) {
 /**
  * Rutas de los artefactos de una render. `model` es opcional; si se pasa, queda
  * al final del nombre para saber con qué modelo se generó el recurso.
+ *
+ * `codeExt` es la extensión del archivo de composición y la decide el MOTOR:
+ * '.html' en HyperFrames, '.tsx' en Remotion. Omitirla da '.html', que es lo
+ * que corresponde a todo lo que se escribió cuando había un solo motor.
  */
-function paths(baseDir, markerSlug, version, model, ext) {
+function paths(baseDir, markerSlug, version, model, ext, codeExt) {
   const base = formatBase(markerSlug, version || 1, model);
   const videoExt = (ext === 'mp4') ? 'mp4' : 'mov';
   return {
     // `mov` = ruta del video de salida (mov con alpha, o mp4 opaco si ext='mp4').
     mov: path.join(baseDir, `${base}.${videoExt}`),
-    html: path.join(baseDir, `${base}.html`),
+    code: path.join(baseDir, `${base}${codeExt || '.html'}`),
     meta: path.join(baseDir, `${base}.meta.json`),
     stillsDir: path.join(baseDir, `${base}-stills`),
     resourcesDir: path.join(baseDir, `${base}-resources`),
@@ -168,6 +173,13 @@ function versionMetaRecord(campos) {
     model: c.model,
     provider: c.provider,
     mode: c.mode,
+    // Con qué MOTOR de animación se escribió. Las fichas nuevas lo dicen
+    // siempre; que FALTE quiere decir "escrita antes de que hubiera dos
+    // motores", o sea HyperFrames. Que la ausencia signifique eso —y no "no
+    // sé"— es lo que deja que todo lo ya generado se siga refinando y
+    // re-renderizando sin migrar un solo archivo (ver motorDeFicha en
+    // render/motores.js).
+    engine: c.engine,
     // Qué se le pidió: el encargo del recurso, la corrección de esta ronda si la
     // hubo, y los tres niveles del contexto que viajaron al modelo.
     instruction: c.instruction,
@@ -370,30 +382,43 @@ const removeReference = referencias.makeRemove(referencesDirPath);
 const setReferenceUse = referencias.makeSetUse(referencesDirPath);
 
 /**
- * El HTML de la última versión de `markerSlug` anterior a `version` que sea UNA
- * COMPOSICIÓN DE VERDAD. '' si no hay ninguna.
+ * La última versión de `markerSlug` anterior a `version` que sea UNA
+ * COMPOSICIÓN DE VERDAD, con el motor que la escribió.
+ *
+ * Devuelve `{ code, engine, name, version }`, o null si no hay ninguna.
  *
  * Camina para atrás en vez de leer version-1 y confiar. Hace falta porque en el
- * disco puede haber quedado un .html que no es una composición: hubo un día en
- * que el modelo contestó EN PROSA tres rondas seguidas y esa prosa se guardó
+ * disco puede haber quedado un archivo que no es una composición: hubo un día
+ * en que el modelo contestó EN PROSA tres rondas seguidas y esa prosa se guardó
  * como la versión nueva (la historia entera está en compose.js). Leer eso como
  * "la versión previa" es peor que no tener referencia — al modelo se le termina
  * pidiendo mejorar un texto de disculpa, y contesta algo sin que nada falle.
  * Salteándolas, la corrección vuelve sobre el último diseño real.
+ *
+ * El `engine` sale de la ficha y NO de la extensión del archivo, aunque hoy las
+ * dos digan lo mismo. La ficha es donde ese dato está declarado; deducirlo del
+ * nombre convierte a la tabla de extensiones en un segundo registro de motores
+ * que nadie mantiene, y deja de funcionar el día que dos motores compartan
+ * lenguaje.
  */
-function lastCompositionHtml(baseDir, markerSlug, version) {
-  const previas = listVersions(baseDir, markerSlug, '.html')
+function lastComposition(baseDir, markerSlug, version) {
+  const previas = listVersions(baseDir, markerSlug, motores.extensiones())
     .filter((v) => v.version < Number(version))
     .reverse();
   for (const v of previas) {
+    let code;
     try {
-      const html = fs.readFileSync(path.join(baseDir, v.name), 'utf8');
-      if (inspectComposition(html, {}).problem !== PROBLEM.NOT_HTML) return html;
+      code = fs.readFileSync(path.join(baseDir, v.name), 'utf8');
     } catch {
-      // Archivo ilegible: seguimos con la versión anterior.
+      continue; // Archivo ilegible: seguimos con la versión anterior.
     }
+    const motor = motores.motorDeFicha(readMeta(path.join(baseDir, metaName(v.name))));
+    // "No es una composición" lo contesta el motor que la escribió: es el único
+    // que sabe distinguir su propio código de una respuesta en prosa.
+    if (motor.revisar(code, {}).problema === motores.PROBLEMA.NO_ES_CODIGO) continue;
+    return { code, engine: motor.id, name: v.name, version: v.version };
   }
-  return '';
+  return null;
 }
 
 /**
@@ -498,7 +523,7 @@ module.exports = {
   addReference,
   removeReference,
   setReferenceUse,
-  lastCompositionHtml,
+  lastComposition,
   saveStills,
   saveResources,
   resourceFileName,

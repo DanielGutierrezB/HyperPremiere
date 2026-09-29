@@ -16,7 +16,7 @@
 // carpetas `_referencias`, el PANEL de verdad montado como lo carga el navegador
 // (HPStore + HPGeneral + HPRefs + HPMenciones + HPPromptCard + HPQueue +
 // HPQueueView + HPCorrections), la cola releyendo el disco al momento de generar,
-// y el MOTOR de verdad armando el pedido con su system.md y su build-context. Lo
+// y el MOTOR de verdad armando el pedido con su system prompt y su build-context. Lo
 // único falso es el proveedor, que anota lo que le habrían mandado en vez de
 // llamar al modelo.
 //
@@ -63,6 +63,10 @@ process.env.HOME = CASA;
 process.env.USERPROFILE = CASA;
 
 const engine = require('../../bridge/engine.js');
+// Con qué motor se arma el pedido (`--motor remotion`). El contexto no cambia
+// —el objetivo, el transcript y la instrucción son los mismos— pero el contrato
+// y el system prompt que lo envuelven los escribe el motor.
+const MOTOR_ELEGIDO = require('./motor-elegido').motorElegido();
 
 const RAIZ = path.join(__dirname, '..', '..');
 const CEP = path.join(RAIZ, 'cep', 'js');
@@ -363,7 +367,7 @@ function montarPanel(proyecto, notas) {
   // campo con chips. Se sumó cuando el campo dejó de ser un `<textarea>`: sin él,
   // `HPPromptCard.montar` corta con `HPCampo is not defined` y este arnés no
   // llega a medir los tres caminos que escriben en un campo (3, 4 y 5).
-  for (const f of ['util.js', 'iconos.js', 'store.js', 'general-prompt.js', 'refs.js',
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'store.js', 'general-prompt.js', 'refs.js',
     'menciones.js', 'campo.js', 'prompt-card.js', 'queue.js', 'queue-view.js',
     'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
@@ -477,7 +481,7 @@ async function main() {
   const rutasRefs = engine.loadReferences({ projectPath: proyecto, sequenceName: SEQ }).paths;
 
   proveedorEspia();
-  engine.setConfig({ provider: 'ollama', model: 'falso' });
+  engine.setConfig({ provider: 'ollama', model: 'falso', renderEngine: MOTOR_ELEGIDO.id });
 
   const notas = [];
   const ctx = montarPanel(proyecto, notas);

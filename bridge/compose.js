@@ -17,25 +17,8 @@
 'use strict';
 
 const { stripHtmlFence } = require('./providers');
-const { inspectComposition, auditFailure, PROBLEM } = require('./composition');
-
-// Qué decirle al modelo (y al editor) por cada cosa que no se pudo completar en
-// código. El módulo del contrato devuelve códigos justamente para que la
-// redacción viva acá, donde se arma el prompt.
-const PROBLEM_TEXT = {
-  // Neutral a propósito: lo lee tanto la generación como el render de un HTML
-  // editado a mano, y ahí no hay ningún modelo a quien atribuirle nada.
-  [PROBLEM.NOT_HTML]: 'esto no es una composición HTML',
-  [PROBLEM.NO_STAGE]: 'no encuentro el contenedor `<div id="stage">`',
-  [PROBLEM.MANY_STAGES]: 'hay más de un elemento con `id="stage"` y no sé cuál es la composición',
-  [PROBLEM.NO_REGISTRATION]: 'la timeline no queda registrada en `window.__timelines`, así que el motor no la encuentra',
-  [PROBLEM.MANY_REGISTRATIONS]: 'hay varios registros en `window.__timelines` y no sé cuál corresponde a esta composición',
-  [PROBLEM.NO_DURATION]: 'falta la duración (`data-duration`) en el `#stage`',
-};
-
-function problemText(problem) {
-  return PROBLEM_TEXT[problem] || 'el andamiaje de la composición está incompleto';
-}
+const { auditFailure } = require('./composition');
+const { PROBLEMA } = require('./render/motores');
 
 // Lo que dijo el modelo, en una línea y corto, para que quepa en el log del
 // panel. Va entre comillas en el mensaje de error: es su explicación, no la
@@ -45,43 +28,46 @@ function quoteReply(text) {
   return una.length > 240 ? una.slice(0, 240) + '…' : (una || '(nada)');
 }
 
-function structureFixPrompt(userPrompt, html, problem, durationSec) {
-  return userPrompt +
-    '\n\n## Arreglo de estructura (NO rediseñes)\n' +
-    'Generaste la composición de abajo, pero ' + problemText(problem) + '.\n' +
-    'Devolvé EL MISMO HTML —mismo diseño, mismo CSS, mismos tweens y tiempos— con SOLO el andamiaje corregido:\n' +
-    '- El `<div id="stage">` con data-composition-id, data-start="0", data-width="1920", data-height="1080", ' +
-    'data-duration="' + durationSec.toFixed(2) + '" y data-fps="30".\n' +
-    '- UN solo `<div id="stage">` y UNA sola timeline, cerrando con `window.__timelines[COMP_ID] = tl;` ' +
-    '(COMP_ID igual a data-composition-id).\n' +
-    'No cambies nada más: sin esto el render falla, pero el diseño ya está aprobado.\n' +
-    '\n### Tu versión a corregir\n```html\n' + html + '\n```';
-}
-
-function auditFixPrompt(userPrompt, html, falla) {
+/**
+ * El pedido de corrección de una falla que el MODELO declaró en su auditoría.
+ *
+ * A diferencia del arreglo de estructura —que es del contrato de cada motor y
+ * lo redacta el motor—, esto es de DISEÑO: elementos que se pisan, texto fuera
+ * de la zona segura. Vale igual se escriba HTML o React, así que vive acá; lo
+ * único que le pide al motor es cómo nombrarlo y con qué marcar el bloque.
+ */
+function auditFixPrompt(motor, userPrompt, code, falla) {
   return userPrompt +
     '\n\n## Corrección dirigida (tu PROPIA auditoría encontró esta falla)\n' +
     'Generaste la composición de abajo y tu auditoría declaró: "' + falla + '".\n' +
     'Corregí EXACTAMENTE esa falla conservando todo lo que está bien (idea, estilo, timing). ' +
     'Aplicá el protocolo de layout (regiones que no se pisan, zona segura de 80px, presupuesto de texto). ' +
-    'Devolvé SOLO el HTML completo corregido, con su auditoría final en <!-- AUDIT: ... -->.\n' +
-    '\n### Tu versión con la falla\n```html\n' + html + '\n```';
+    'Devolvé SOLO ' + motor.comoSeLlama + ' completo corregido, con su auditoría final en un comentario `AUDIT: …`.\n' +
+    '\n### Tu versión con la falla\n```' + motor.fence + '\n' + code + '\n```';
 }
 
 /**
  * Consigue una composición renderizable. Devuelve `{ html, usage }`.
  *
+ * Sigue diciendo `html` en la salida, y no es descuido: ese nombre viaja por
+ * `prepareGeneration` hacia la cola, el panel y la ficha de cada versión.
+ * Renombrarlo a `code` habría sido tocar seis lugares para no cambiar nada de
+ * lo que pasa — el string es el código de la composición, se llame como se
+ * llame. Adentro de esta función sí se dice `code`, que es lo que es.
+ *
  * @param {object} a
  * @param {object} a.provider    Proveedor ya resuelto (ver providers/).
- * @param {object} a.config      Config del motor (modelo, credenciales, effort…).
+ * @param {object} a.config      Config del modelo (modelo, credenciales, effort…).
+ * @param {object} a.motor       El motor de animación (ver render/motores.js).
  * @param {string} a.systemPrompt
  * @param {string} a.userPrompt
  * @param {string[]} a.images    Stills para visión.
- * @param {number} a.durationSec Duración del marcador (la verdad para data-duration).
+ * @param {number} a.durationSec Duración del marcador.
  * @param {string} a.markerSlug  Respaldo para el id de la composición.
  * @param {function} [a.report]  onProgress({ pct, msg, note, level, act }).
  */
 async function composeAnimation(a) {
+  const motor = a.motor;
   const report = typeof a.report === 'function' ? a.report : function () {};
   // Estado en vivo de lo que el modelo está haciendo AHORA. Va en su propio
   // campo del sobre (`act`) y no en `msg`: el mensaje dice en qué etapa de la
@@ -130,13 +116,19 @@ async function composeAnimation(a) {
     // recurso o el conteo de tokens sale distinto, esta línea lo explica.
     if (gen.warning) report({ note: gen.warning, level: 'WARN' });
     addUsage(gen.usage);
-    const seen = inspectComposition(stripHtmlFence(gen.text), {
+    const seen = motor.revisar(stripHtmlFence(gen.text), {
       durationSec: a.durationSec, markerSlug: a.markerSlug,
     });
     if (seen.fixes.length) {
       report({ note: 'Andamiaje completado en código (sin gastar otra llamada): ' + seen.fixes.join(' · ') });
     }
     return seen;
+  }
+
+  /** Qué está mal, con el detalle del motor cuando lo trae (ej. qué import sobra). */
+  function porQue(seen) {
+    const base = motor.textoDeProblema(seen.problema);
+    return seen.detalle ? base + ' (' + seen.detalle + ')' : base;
   }
 
   let best = await ask(a.userPrompt);
@@ -159,36 +151,36 @@ async function composeAnimation(a) {
   //     "the 'versión previa' block does not actually contain the prior HTML
   //     (it contains an earlier refusal message instead)". Una negativa no
   //     puede contaminar la cadena de versiones.
-  if (best.problem === PROBLEM.NOT_HTML) {
-    const vacia = !String(best.html || '').trim();
+  if (best.problema === PROBLEMA.NO_ES_CODIGO) {
+    const vacia = !String(best.code || '').trim();
     throw Object.assign(new Error(
       (vacia
         ? 'El proveedor "' + a.config.provider + '" devolvió una respuesta vacía: no hay composición.\n'
-        : 'El modelo no compuso nada: contestó en prosa en vez de devolver el HTML.\n' +
-          'Lo que dijo: «' + quoteReply(best.html) + '»\n') +
+        : 'El modelo no compuso nada: contestó en prosa en vez de devolver ' + motor.comoSeLlama + '.\n' +
+          'Lo que dijo: «' + quoteReply(best.code) + '»\n') +
       'No lo guardo como versión: si lo guardara, la próxima corrección tomaría ' +
       'este texto como "la versión previa".\n' +
       'Qué hacer: dale "Reintentar". Si se repite, probá con otro modelo o con otro proveedor.'
-    ), { problem: best.problem, usage: usage, sinComposicion: true });
+    ), { problem: best.problema, usage: usage, sinComposicion: true });
   }
 
   // Reintento por estructura. Llegar acá ya es raro: el reparador cubre el id, la
   // duración y el registro desalineado.
-  if (best.problem) {
+  if (best.problema) {
     report({ pct: 45, msg: 'Corrigiendo la estructura de la composición…' });
-    report({ note: 'LLAMADA EXTRA al modelo por estructura: ' + problemText(best.problem) + '.', level: 'WARN' });
-    const retry = await ask(structureFixPrompt(a.userPrompt, best.html, best.problem, a.durationSec));
-    if (!retry.problem) best = retry;
+    report({ note: 'LLAMADA EXTRA al modelo por estructura: ' + porQue(best) + '.', level: 'WARN' });
+    const retry = await ask(motor.promptDeArreglo(a.userPrompt, best.code, best.problema, a.durationSec));
+    if (!retry.problema) best = retry;
     else report({ note: 'El reintento de estructura TAMPOCO cumplió: sigo con la versión original.', level: 'WARN' });
   }
 
   // Corrección dirigida si el modelo ADMITIÓ una falla de diseño. Con AUDIT: OK no
   // cuesta nada.
-  const falla = auditFailure(best.html);
+  const falla = auditFailure(best.code);
   if (falla) {
     report({ pct: 48, msg: 'Tu auditoría detectó una falla de diseño — corrigiéndola…' });
-    const fixed = await ask(auditFixPrompt(a.userPrompt, best.html, falla));
-    if (!fixed.problem) best = fixed;
+    const fixed = await ask(auditFixPrompt(motor, a.userPrompt, best.code, falla));
+    if (!fixed.problema) best = fixed;
     else report({ note: 'La corrección de auditoría no cumplía el contrato: me quedo con la versión anterior.', level: 'WARN' });
   }
 
@@ -203,17 +195,17 @@ async function composeAnimation(a) {
   // nombraba la placa de video; o salía un .mov de la duración pedida con la
   // animación congelada, que es peor, porque eso no falla: se descubre mirando.
   //
-  // El HTML viaja en el error para que quien llame lo pueda guardar: se pagó, y
-  // con él se puede ver qué pasó o arreglarlo a mano.
-  if (best.problem) {
+  // El código viaja en el error para que quien llame lo pueda guardar: se pagó,
+  // y con él se puede ver qué pasó o arreglarlo a mano.
+  if (best.problema) {
     throw Object.assign(new Error(
-      'La composición no quedó renderizable: ' + problemText(best.problem) + '.\n' +
+      'La composición no quedó renderizable: ' + porQue(best) + '.\n' +
       'No la mando a renderizar porque no puede salir bien: daría un error de duración o un video congelado.\n' +
-      'Qué hacer: volvé a generar el marcador, o corregí el HTML a mano y usá "Renderizar HTML".'
-    ), { html: best.html, problem: best.problem, usage: usage, noRenderizable: true });
+      'Qué hacer: volvé a generar el marcador, o arreglalo a mano con "Editar código".'
+    ), { html: best.code, problem: best.problema, usage: usage, noRenderizable: true });
   }
 
-  return { html: best.html, usage: usage };
+  return { html: best.code, usage: usage };
 }
 
-module.exports = { composeAnimation, problemText };
+module.exports = { composeAnimation };

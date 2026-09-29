@@ -484,6 +484,139 @@ borrador y alta eran el mismo archivo), y a cambio metía dos calidades posibles
 etiquetas de color en el timeline para poder distinguirlas. Los clips que se hicieron en
 borrador **quedaron como están**, en café: si querés alguno en alta, regeneralo.
 
+## Dos motores de animación: HyperFrames y Remotion
+
+Desde la v1.7.0 el panel compone con **dos lenguajes distintos**, y se elige en ⚙ →
+**Motor de animación**:
+
+| | HyperFrames | Remotion |
+|---|---|---|
+| qué escribe el modelo | un HTML autocontenido con **GSAP** | un componente de **React** (`.tsx`) |
+| de dónde sale la duración | la **declara** el modelo en `data-duration` | la **lee** con `useVideoConfig()` |
+| quién lo captura | el CLI de `hyperframes` (Chromium) | `@remotion/renderer` (Chrome Headless Shell) |
+| viene con el panel | sí | no: ~400 MB, se instalan a pedido |
+
+**No es "otro renderizador"**: es otro contrato para el modelo, otra validación y otra
+extensión de archivo. Por eso el motor es una pieza del pipeline y no un `if` repartido
+(ver `bridge/render/motores.js`): el resto del panel le *pregunta* al motor su system
+prompt, su contrato, cómo se incrusta una imagen y cómo se renderiza.
+
+### El selector decide lo NUEVO, y nada más
+
+Cada versión generada **recuerda con qué motor nació** (en su `.meta.json`), así que
+**refinar, corregir, re-renderizar y editar a mano usan el motor de esa versión**, no el
+del selector. Eso es lo que deja probar Remotion en un marcador sin que las veinte
+animaciones aprobadas de la clase cambien de lenguaje por debajo — y es también por qué
+una clase puede tener la v1 y la v2 en HTML y la v3 en TSX: es **una sola cadena de
+versiones**, no dos.
+
+Una ficha **sin** el campo `engine` significa HyperFrames, no "no sé". De eso depende que
+todo lo generado hasta la v1.6.1 se siga abriendo, refinando y re-renderizando igual, sin
+migrar un solo archivo.
+
+### Qué gana y qué pierde cada uno
+
+Medido con `test/manual/motores-comparar.js`, que corre los **mismos marcadores** por los
+dos motores con el modelo y el render de verdad, alternándolos para que la hora y la carga
+del proveedor no se cuelen en el número:
+
+- **El render de Remotion es más rápido** (un marcador de 8,5 s: 8,4 s contra 16,7 s) y el
+  archivo pesa un poco menos (74,6 MB contra 84,4 MB). Los dos salen en **ProRes 4444 con
+  alpha** de verdad (`yuva444p12le`, verificado con `ffprobe`, no supuesto) y con los
+  cuadros exactos.
+- **El modelo tarda lo mismo** (~87 s en los dos) y en las corridas cumplió el contrato de
+  **una sola llamada** con los dos, así que la escalera de arreglos no se activó en
+  ninguno.
+- **Remotion elimina dos modos de falla por diseño**: como la duración la lee de
+  `useVideoConfig()` en vez de escribirla, el modelo **no puede** olvidarse el
+  `data-duration` ni poner un cero — que son dos de los seis problemas que el contrato de
+  HyperFrames tiene que perseguir, y los que producían el peor resultado posible (un clip
+  de la duración justa con la animación congelada: no falla, se descubre mirándolo).
+- **Remotion no repara nada en código.** HyperFrames completa el andamiaje que falta sin
+  gastar una llamada —son atributos de un contenedor, se pueden escribir sin tocar el
+  diseño—. Allá lo que falta es código de React: meterle un `export default` a un archivo
+  que no lo tiene es adivinar cuál de las funciones era el componente. Lo que sí hace es
+  **compilar el TSX en Node antes de renderizar**, así un error del compilador alimenta la
+  escalera de arreglos en vez de aparecer con Chrome ya levantado.
+- **Los imports son una lista cerrada** (`react`, `remotion`, `@remotion/transitions`,
+  `shapes`, `paths`, `noise`, `google-fonts/DMSans`). Uno de fuera se corta **antes** de
+  empaquetar, diciendo cuál sobra.
+- **Cuesta espacio y una instalación**: ~400 MB en `~/.hyperpremiere/remotion/` (React,
+  webpack y su propio Chrome). Fuera del panel a propósito: quien sigue en HyperFrames no
+  baja un byte, y la instalación sobrevive a actualizar el ZXP.
+
+### La licencia de Remotion
+
+**Gratis** para personas y empresas de **hasta 3 integrantes**, con uso comercial sin
+límite. De 4 en adelante, Remotion pide su licencia de empresa. La condición está escrita
+en ⚙, debajo del selector, porque es el único dato que hay que saber antes de elegirlo.
+
+### El editor de código
+
+**Editar código manualmente** abre la versión elegida en **su** lenguaje: resalta HTML o
+TSX según el motor con el que se generó, y al guardar la renderiza con ése. El buscador de
+la barra funciona igual en los dos.
+
+### Vista previa: mirar la animación sin renderizarla
+
+Al lado de **Abrir** hay un **Vista previa** que abre la composición en una ventana que la
+**reproduce**, con timeline: se scrubea, se pone en loop, se marca un tramo y se mira ese
+tramo cien veces. Hasta acá la única forma de ver una animación era renderizarla —ocho
+segundos por mirada, y otros ocho si el timing no cerraba—.
+
+Manda lo que hay **en el editor** cuando hay algo, y no la versión guardada. Eso es lo que
+convierte editar y mirar en un ciclo: se toca el código, se aprieta Vista previa, y **la
+ventana que ya está abierta cambia sola**. Está medido: Remotion Studio vigila el archivo
+por el que le pasamos la composición y recarga en caliente, así que hay **un solo proceso**
+por sesión del panel y cambiar de marcador es reescribir ese archivo. La sesión cuelga de
+`process` y no de una variable de módulo, por lo mismo que el micrófono del dictado (ver
+`bridge/vivos.js`): con el ⟳ del panel, "hay un solo Studio" tiene que valer por proceso.
+
+**Lo que la vista previa NO hace es renderizar ni colocar nada.** El botón que hace entrar
+un clip a la secuencia sigue siendo **Guardar y renderizar**, que es el único que sabe de
+qué marcador de qué secuencia se trata, en qué segundo va, qué número de versión le toca y
+qué escribir en su ficha.
+
+Esa división tiene un borde filoso que conviene conocer: **Studio trae su propio botón
+Render**, abajo a la derecha de su ventana, y no se puede sacar. Con los valores por defecto
+de Remotion ese clic daba lo peor posible —se midió abriendo el diálogo: **H.264** hacia
+`out/marcador.mp4`, o sea un clip pensado para overlay saliendo **opaco, con el alfa
+aplastado contra negro y sin ningún error**—. El proyecto huésped lleva un
+`remotion.config.ts` que arregla lo único que se puede arreglar de ese botón: ahora sale
+ProRes 4444 con alfa, igual que el render del panel. Lo que **sigue** sin hacer, y no hay
+config que lo arregle, es versionar el archivo, escribir su ficha, importarlo al proyecto y
+colocarlo en el marcador. Un archivo que aparece en `~/.hyperpremiere/remotion/out/` es un
+descarte, no un entregable.
+
+**HyperFrames no tiene vista previa, y no es una omisión.** Su contrato pide que la timeline
+quede **pausada** y registrada en `window.__timelines` para que el capturador la posicione
+cuadro por cuadro: abrir ese HTML en un navegador muestra el primer cuadro y nada más. El
+panel lo dice con esas palabras en vez de abrir una ventana vacía, porque un "no se puede" a
+secas suena a que algo está roto y esto es así por diseño.
+
+La ventana se apaga por tres caminos, y hacen falta los tres: el panel avisa al cerrarse, el
+motor adopta y baja la sesión anterior cuando se recarga, y hay un watchdog de media hora de
+inactividad. Sin ninguno de ellos, cerrar Premiere dejaría un webpack en watch comiendo
+memoria hasta que alguien lo note.
+
+### El bug de Node 26, que no avisa
+
+Remotion baja su Chrome con `extract-zip`, que en **Node 26.1+** abandona la extracción a
+mitad y **no tira error** ([extract-zip#154](https://github.com/maxogden/extract-zip/issues/154),
+[remotion#7409](https://github.com/remotion-dev/remotion/issues/7409)): el proceso sale con
+código 0 y en el disco no queda el binario. El instalador lo ataca por los dos lados —un
+`override` de `yauzl` y, después, **verificar que el ejecutable exista**— y si falta lo
+descomprime con `ditto`/`unzip` del sistema. Cuando igual no está, ⚙ lo dice con esas
+palabras: *"Remotion está instalado pero le falta su navegador"*, que manda a bajar 137 MB
+de Chrome y no a reinstalar 400.
+
+Hay una segunda trampa, y es peor porque no falla nunca: `ensureBrowser()` decide **dónde**
+guardar el navegador subiendo desde el `process.cwd()` hasta encontrar un `package.json`.
+Llamado desde el panel —cuyo cwd lo deja Premiere— los 175 MB aterrizan en cualquier parte
+(la primera vez, en la raíz de este repositorio). Por eso la descarga corre en un proceso
+aparte con el `cwd` en la carpeta de instalación, el mismo con el que después corre el
+worker del render: si los dos no coinciden, se baja en un lugar y se busca en otro.
+
 ## Optimización de tokens
 
 - **Refinar / Feedback** usa prompt *lean*: **no reenvía el transcript completo** de la
@@ -2990,13 +3123,24 @@ botón—: **572 botones con contenido fuera de su caja pasaron a 30**, cero emp
 los veinticuatro parches no cambió **ni una** medición de ancho. Los 30 que quedan son el
 desplegable de micrófono en modo ícono, idéntico antes y después.
 
-Aparte, dos scripts a mano para cuando se toca el render:
+Aparte, tres scripts a mano para cuando se toca el render:
 `node test/manual/render-real.js` renderiza de verdad (dos `.mov`, ~2 min) y muestra qué
-fue aprendiendo; `node test/manual/mutaciones-render.js` mete a propósito cada regresión
-que estos tests dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando
-rompés el código no está probando nada. Acepta un filtro por nombre
+fue aprendiendo; `node test/manual/motores-comparar.js` corre los **mismos marcadores** por
+los dos motores de animación con el modelo y el render de verdad, alternándolos para que la
+hora y la carga del proveedor no se cuelen en el número, y mide lo que de otro modo se
+adivina: tiempo del modelo aparte del render, **cuántos peldaños** de la escalera de
+arreglos hizo falta (que es el que más cuesta y el más fácil de pasar por alto: un motor
+que "anda" con dos llamadas por marcador cuesta el doble y no falla nunca), tamaño,
+**cuadros leídos** y el **alpha preguntado a `ffprobe`**, que es el modo de falla más
+callado de los dos motores — un `.mov` sin canal alfa se abre, se ve bien solo, y en
+Premiere tapa el video con un rectángulo negro. No puntúa el diseño: deja los `.mov` y el
+código de cada corrida para mirarlos.
+
+Y `node test/manual/mutaciones-render.js` mete a propósito cada regresión que estos tests
+dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando rompés el código no
+está probando nada. Acepta un filtro por nombre
 (`node test/manual/mutaciones-render.js sesión`) para cuando se tocó una sola parte, y hace
-falta: son **318** y la corrida entera son casi tres horas.
+falta: son **380** y la corrida entera son casi tres horas.
 
 Y al lado, `node test/manual/mutaciones-verificar.js`, que no corre ninguna: para cada
 mutación comprueba que el texto ORIGINAL siga en su archivo. Contesta dos preguntas en un
@@ -3021,6 +3165,15 @@ imprime el prompt real de cinco pedidos con **menciones** (tres niveles en una f
 misma instrucción después de reordenar la lista, una mención colgada, una referencia que el
 disco no tiene, y una instrucción vieja con "imagen 2" en texto plano). Los tres aceptan
 `--out archivo.md`.
+
+Los cuatro (los tres de arriba y `ocho-caminos.js`) aceptan además `--motor remotion`, y
+hay que correrlos con los dos. No porque el contexto cambie —el objetivo, el transcript y
+la instrucción son los mismos— sino porque el pedido se **arma** distinto: el contrato, el
+bloque de assets y el system prompt los escribe el motor, y un camino que se quede atrás no
+falla, sale un recurso sin la marca y se descubre viendo el video. Un id de motor que no
+existe corta ahí mismo en vez de caer en el de siempre, que es al revés que en el panel y a
+propósito: acá lo escribió una persona hace dos segundos, y darle calladamente la medición
+del otro motor es peor que no darle ninguna.
 
 Y las **menciones** tienen su propia mitad en la suite, porque tocan el camino más caro que
 hay acá. Del lado del motor: que una mención se traduzca al número del pedido y no al de la

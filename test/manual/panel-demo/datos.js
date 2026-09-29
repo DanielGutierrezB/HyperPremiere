@@ -356,7 +356,7 @@
         msg: "Error: la composición volvió sin el andamiaje que el motor de captura necesita: no declara " +
           "duración (data-duration) y no registra su timeline en window.__timelines. No la mando a " +
           "renderizar: saldría un video congelado. El problema NO está en el hardware. El HTML se guardó " +
-          "igual (ya se pagó): mirálo con “Editar HTML” y renderizalo a mano.",
+          "igual (ya se pagó): mirálo con “Editar código” y renderizalo a mano.",
         etapaFallada: "model", conFondo: false
       },
       {
@@ -531,7 +531,16 @@
       concurrencia: 3,
       // El micrófono del dictado, por NOMBRE ('' = el del sistema). Con
       // ?e=mic-perdido se siembra uno que no está en la lista.
-      microfono: ""
+      microfono: "",
+      // El motor de animación con el que se compone lo NUEVO. Con
+      // ?e=remotion queda elegido Remotion ya instalado, y con
+      // ?e=remotion-sin-instalar el estado que va a ver la mayoría la
+      // primera vez: ofrecido en el desplegable y con su botón al lado.
+      renderEngine: "hyperframes",
+      motores: [
+        { id: "hyperframes", nombre: "HyperFrames (HTML + GSAP)", ext: ".html", lenguaje: "markup", instalado: true, motivo: "", instalable: false },
+        { id: "remotion", nombre: "Remotion (React)", ext: ".tsx", lenguaje: "tsx", instalado: true, motivo: "", instalable: true }
+      ]
     },
     // Lo que ffmpeg lista en la máquina de la maqueta: los índices son los de
     // avfoundation (cambian al enchufar algo; por eso se guarda el nombre).
@@ -645,8 +654,8 @@
     // Carriles de render que perfiló el motor en esta máquina.
     carrilesDeRender: 2,
 
-    // HTML que devuelve "Editar HTML" / "Ver y editar el HTML" (recortado, pero
-    // con la forma real de una composición HyperFrames).
+    // El código que devuelve "Editar código" (recortado, pero con la forma real
+    // de una composición HyperFrames).
     htmlDeEjemplo: [
       '<!DOCTYPE html>',
       '<html lang="es">',
@@ -696,6 +705,53 @@
       '  <\/script>',
       '</body>',
       '</html>'
+    ].join("\n"),
+
+    // El MISMO recurso escrito para el otro motor, que es lo que devuelve
+    // "Editar código" cuando la versión se generó con Remotion. Está acá para
+    // que la maqueta pueda mostrar el editor resaltando TSX: es otro componente
+    // de Prism y otros colores, y si algo no se lee se ve en esa foto y no en un
+    // test. Se elige con ?e=remotion.
+    tsxDeEjemplo: [
+      "import React from 'react';",
+      "import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, spring } from 'remotion';",
+      '',
+      'const PALETA = { texto: "#efeadf", acento: "#f5a524", tenue: "#8b8578" };',
+      'const BLOQUES = ["Disparador", "Condición", "Acción"];',
+      '',
+      '/** Un bloque de la lista: entra cuando le toca y se queda. */',
+      'const Bloque: React.FC<{ texto: string; desde: number; i: number }> = ({ texto, desde, i }) => {',
+      '  const frame = useCurrentFrame();',
+      '  const { fps } = useVideoConfig();',
+      '  const entra = spring({ frame: frame - desde, fps, config: { damping: 200 } });',
+      '  const x = interpolate(entra, [0, 1], [60, 0]);',
+      '  return (',
+      '    <div style={{',
+      '      opacity: entra, transform: `translateX(${x}px)`,',
+      '      borderLeft: `3px solid ${PALETA.acento}`, paddingLeft: 28, marginBottom: 34,',
+      '      fontSize: 64, fontWeight: 600, color: PALETA.texto,',
+      '    }}>',
+      '      <span style={{ color: PALETA.tenue, fontSize: 34, marginRight: 20 }}>{i + 1}</span>',
+      '      {texto}',
+      '    </div>',
+      '  );',
+      '};',
+      '',
+      'export default function Marcador() {',
+      '  const frame = useCurrentFrame();',
+      '  const { durationInFrames, fps } = useVideoConfig();',
+      '  // La duración la manda el marcador de Premiere: se LEE, no se escribe.',
+      '  const sale = interpolate(frame, [durationInFrames - 15, durationInFrames], [1, 0], {',
+      "    extrapolateLeft: 'clamp', extrapolateRight: 'clamp',",
+      '  });',
+      '  return (',
+      '    <AbsoluteFill style={{ opacity: sale, padding: 120, justifyContent: "center" }}>',
+      '      {BLOQUES.map((b, i) => (',
+      '        <Bloque key={b} texto={b} desde={Math.round(i * 0.8 * fps)} i={i} />',
+      '      ))}',
+      '    </AbsoluteFill>',
+      '  );',
+      '}'
     ].join("\n")
   };
 })(typeof window !== "undefined" ? window : this);

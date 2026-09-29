@@ -7,6 +7,7 @@
 
 const { test, ok, eq } = require('./harness');
 const { composeAnimation } = require('../bridge/compose');
+const { motor } = require('../bridge/render');
 
 // La composición más chica que pasa el contrato (ver composition.js): no
 // interesa el diseño, interesa que compose siga su camino normal.
@@ -40,6 +41,7 @@ function correr(provider, report) {
   return composeAnimation({
     provider: provider,
     config: { model: 'modelo-de-prueba', provider: 'test' },
+    motor: motor('hyperframes'),
     systemPrompt: 'sistema', userPrompt: 'usuario', images: [],
     durationSec: 3, markerSlug: 'marcador-1', report: report,
   });

@@ -208,7 +208,7 @@ function dibujarCola(dictado, espia) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -328,7 +328,7 @@ async function dibujarCorreccion(dictado, espia) {
   if (dictado) ctx.HPDictado = dictado;
   ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'corrections-contexto.js', 'corrections.js']) {
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPCorrections.init({

@@ -54,6 +54,10 @@
   // Los de Cursor son otros nodos, no los mismos: los dos proveedores pueden
   // estar configurados a la vez y el renglón de uno no puede pisar al del otro.
   var cursorStatus, apikeyHint;
+  // Lo que hay que llamar para que la fila del motor de animación refleje la
+  // config recién leída. Lo devuelve initMotores al montarse, que es lo que hace
+  // que todo el estado de esa fila (el catálogo, el botón) quede adentro suyo.
+  var aplicarMotores = null;
 
   // Nivel de pensamiento (esfuerzo) de Claude: es la palanca de CALIDAD, no de
   // velocidad nada más. Diseñar una animación es razonamiento, así que subirlo
@@ -644,6 +648,10 @@
     else { cfgApiKey.removeAttribute("data-has"); cfgApiKey.setAttribute("placeholder", "Pegá tu API key"); }
     if (cfg.hasSession && loginStatus) { loginStatus.textContent = "✓ Sesión de Claude activa"; loginStatus.className = "muted login-ok"; }
     if (cfgEffortSel) cfgEffortSel.value = cfg.effort || "high";
+    // El motor de animación viene con su catálogo y el estado de cada uno; el
+    // desplegable se arma de eso y no de una lista escrita en el panel, así que
+    // agregar un motor en el bridge lo hace aparecer acá sin tocar esto.
+    if (aplicarMotores) aplicarMotores(cfg);
     // cfg.model viene del motor, que ya aplica el default por proveedor.
     populateModels(cfgProviderSel.value, cfg.model);
     applyProviderUI();
@@ -788,6 +796,142 @@
     HPMicSelect.refrescar("al abrir el panel");
   }
 
+  // ── Motor de animación ────────────────────────────────────────────────
+  //
+  // El selector decide con qué se escribe lo NUEVO, y nada más: cada versión ya
+  // generada recuerda con qué nació, así que refinar, corregir, re-renderizar y
+  // editar a mano siguen usando el motor de ESA versión (el dato vive en su
+  // ficha; ver bridge/render/motores.js). Eso es lo que deja probar Remotion en
+  // un marcador sin que las veinte animaciones aprobadas de la clase cambien de
+  // lenguaje por debajo.
+  //
+  // Lo que el panel tiene que resolver acá es un caso que el otro selector no
+  // tiene: un motor puede estar ELEGIBLE pero no INSTALADO. Se ofrece igual —
+  // esconderlo dejaría al editor sin manera de descubrir que existe, y el botón
+  // de instalarlo vive justo al lado del que falta.
+
+  // Lo que dice la licencia de Remotion, que es su única condición de uso. Se
+  // escribe en el tooltip y no en un cartel: es un dato que se lee una vez, al
+  // elegirlo, y un cartel permanente en ⚙ sería ruido en todas las sesiones
+  // siguientes. El texto sale de la página de precios de Remotion.
+  var LICENCIAS = {
+    remotion: "Licencia gratuita para personas y empresas de hasta 3 integrantes, " +
+      "con uso comercial sin límite. De 4 en adelante, Remotion pide su licencia de empresa.",
+  };
+
+  function initMotores() {
+    var caja = document.getElementById("cfg-engine");
+    var linea = document.getElementById("engine-status");
+    var btn = document.getElementById("btn-install-engine");
+    var barra = document.getElementById("engine-progress");
+    var relleno = document.getElementById("engine-fill");
+    if (!caja || !linea || typeof HPWidgets === "undefined") return;
+    var hpLog = (typeof HPLog !== "undefined" && HPLog && HPLog.log) ? HPLog.log : function () {};
+    var sel = HPWidgets.select(caja);
+    // Lo último que contestó el motor. Se guarda porque la línea de estado y el
+    // botón se redibujan al cambiar de opción, sin volver a preguntar al disco.
+    var catalogo = [];
+
+    function elegido() {
+      return buscar(sel.value) || catalogo[0] || null;
+    }
+    function buscar(id) {
+      for (var i = 0; i < catalogo.length; i++) if (catalogo[i].id === id) return catalogo[i];
+      return null;
+    }
+
+    /** La línea de estado y el botón, según el motor que esté elegido. */
+    function pintar() {
+      var m = elegido();
+      if (!m) { linea.textContent = ""; return; }
+      var licencia = LICENCIAS[m.id] || "";
+      if (m.instalado) {
+        linea.textContent = licencia || "Viene con el panel: no hay nada que instalar.";
+        linea.className = "muted";
+      } else {
+        // El motivo lo escribe el motor y se muestra TAL CUAL: sabe si le falta
+        // el proyecto, las dependencias o el Chrome, y cada uno se arregla
+        // distinto. Un "no está instalado" genérico obligaría a abrir el log.
+        linea.textContent = m.motivo || "Todavía no está instalado en este equipo.";
+        linea.className = "muted is-warn";
+      }
+      if (btn) {
+        btn.setAttribute("data-hidden", (!m.instalado && m.instalable) ? "false" : "true");
+        // Dice "Instalar" a secas y no "Instalar Remotion (React)": el nombre
+        // está en el desplegable, pegado a la izquierda. Repetirlo le comía al
+        // desplegable 120 px y a 320 —el ancho en el que el editor deja el
+        // panel para ver el timeline— lo dejaba en «Remotio…», que es justo el
+        // dato que hay que leer para elegir.
+        btn.title = "Baja e instala " + m.nombre + " en ~/.hyperpremiere. Se hace una sola vez por equipo." +
+          (licencia ? "\n" + licencia : "");
+      }
+    }
+
+    function aplicar(cfg) {
+      catalogo = (cfg && cfg.motores) || [];
+      if (!catalogo.length) return;
+      // Y el resto del panel, que necesita el nombre de un motor en lugares que
+      // no leen la config (el tooltip de Corrections, el detalle de la Cola).
+      HPMotores.set(catalogo);
+      sel.setOptions(catalogo.map(function (m) {
+        // El nombre dice el lenguaje ("HyperFrames (HTML + GSAP)"), que es la
+        // diferencia que de verdad importa al elegir. El "— sin instalar" va en
+        // la opción misma y no solo en la línea de abajo: es lo que hace que se
+        // vea al desplegar, antes de elegirlo.
+        return { value: m.id, label: m.nombre + (m.instalado ? "" : " — sin instalar") };
+      }), (cfg && cfg.renderEngine) || catalogo[0].id);
+      pintar();
+    }
+
+    sel.onChange = function () {
+      var m = elegido();
+      pintar();
+      hpCall("setConfig", { renderEngine: sel.value })
+        .then(function () {
+          hpLog("Motor de animación: lo nuevo se va a componer con " + (m ? m.nombre : sel.value) + ".");
+          if (m && !m.instalado) {
+            hpLog("OJO: ese motor todavía no está instalado. Instalalo desde ⚙ antes de encolar.", "WARN");
+          }
+        })
+        .catch(function (e) {
+          linea.textContent = "No pude guardar el motor: " + ((e && e.message) || e);
+          linea.className = "muted is-error";
+        });
+    };
+
+    if (btn) btn.addEventListener("click", function () {
+      var m = elegido();
+      if (!m || m.instalado) return;
+      btn.disabled = true;
+      if (barra) barra.setAttribute("data-hidden", "false");
+      linea.textContent = "Instalando " + m.nombre + "… (se hace una sola vez, puede tardar varios minutos)";
+      linea.className = "muted";
+      hpLog("Instalando el motor " + m.nombre + " a pedido del editor.");
+      HPEngine.callProg("installRenderEngine", { engine: m.id }, function (p) {
+        if (!p) return;
+        if (typeof p.pct === "number" && relleno) relleno.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+        if (p.msg) linea.textContent = p.msg;
+        if (p.note) hpLog(p.note, p.level || "INFO");
+      }).then(function (r) {
+        btn.disabled = false;
+        if (!r || !r.ok) throw new Error((r && r.error) || "el motor no dijo por qué");
+        if (relleno) relleno.style.width = "100%";
+        hpLog(m.nombre + " quedó instalado.");
+        // Se relee del disco en vez de marcarlo instalado acá: lo que decide si
+        // se puede usar es que los archivos estén, y eso lo contesta el motor.
+        loadConfig();
+      }).catch(function (e) {
+        btn.disabled = false;
+        if (barra) barra.setAttribute("data-hidden", "true");
+        linea.textContent = "No se pudo instalar: " + ((e && e.message) || e);
+        linea.className = "muted is-error";
+        hpLog("La instalación de " + m.nombre + " falló: " + ((e && e.message) || e), "ERROR");
+      });
+    });
+
+    return aplicar;
+  }
+
   function init() {
     cfgProviderSel = HPWidgets.select(document.getElementById("cfg-provider"));
     cfgModelSel = HPWidgets.select(document.getElementById("cfg-model"));
@@ -882,10 +1026,7 @@
     var btnLoginToken = document.getElementById("btn-login-token");
     var loginUrl = "";
 
-    function openInBrowser(url) {
-      try { new CSInterface().openURLInDefaultBrowser(url); return; } catch (e) {}
-      try { window.open(url, "_blank"); } catch (e) {}
-    }
+    var openInBrowser = HPUtil.abrirEnNavegador;
     function onLoginSuccess() {
       loginStatus.textContent = "✓ Sesión de Claude activa";
       loginStatus.className = "muted login-ok";
@@ -1000,6 +1141,8 @@
       HPStore.onUsageChange(updateContextNote);
     }
 
+    // Antes de loadConfig: es esa lectura la que le da a la fila su catálogo.
+    aplicarMotores = initMotores();
     loadConfig();
     initMicrofono();
   }

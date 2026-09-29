@@ -131,6 +131,29 @@
         "Lo que dijo el proveedor: Credit balance is too low"
     };
   }
+  // ── Los dos motores de animación ──────────────────────────────────────
+  // Tres estados que se ven en ⚙ y se arreglan distinto, así que se dibujan
+  // distinto: elegido y listo, ofrecido pero sin instalar (con su botón al
+  // lado), e instalado a medias — el caso del bug de Node 26, donde Remotion
+  // está y su navegador no—. El tercero existe porque decir solo "no está
+  // instalado" mandaría al editor a reinstalar todo cuando lo que falta son
+  // 137 MB de Chrome.
+  function remotionEn(estado, motivo) {
+    D.config.motores = D.config.motores.map(function (m) {
+      if (m.id !== "remotion") return m;
+      return Object.assign({}, m, { instalado: estado, motivo: motivo || "" });
+    });
+  }
+  if (esc("remotion")) D.config.renderEngine = "remotion";
+  if (esc("remotion-sin-instalar")) {
+    remotionEn(false, "Remotion todavía no está instalado en esta máquina.");
+  }
+  if (esc("remotion-a-medias")) {
+    D.config.renderEngine = "remotion";
+    remotionEn(false, "Remotion está instalado pero le falta su navegador (Chrome Headless Shell). " +
+      "Volvé a tocar \"Instalar\": se baja y se verifica que haya quedado completo.");
+  }
+
   if (esc("whisper")) D.whisper = { ok: true, available: false, canInstall: true, installLabel: "mlx-whisper en un entorno propio", installMB: 260 };
   // El micrófono elegido en ⚙ ya no está enchufado: la fila lo dice en amarillo
   // y el dictado cae al del sistema.
@@ -594,13 +617,36 @@
     return v;
   }
 
+  // Si la ventana de vista previa ya está abierta. El panel dice cosas distintas
+  // la primera vez («abierta») y las siguientes («actualizada — mirá la ventana
+  // que ya tenías»), así que la maqueta tiene que poder mostrar las dos.
+  var vistaPreviaAbierta = false;
+
   var motor = {
     // — arranque —
     getVersion: function () { return D.version; },
     checkUpdate: function () { return luego(ok({ verified: true, changed: false, current: D.version, remote: D.version })); },
     selfUpdate: function () { return luego(ok({ verified: true, changed: false, version: D.version })); },
     engineStatus: function () {
-      return luego(ok({ depsReady: !esc("preparar"), renderLanes: D.carrilesDeRender }));
+      return luego(ok({
+        depsReady: !esc("preparar"), renderLanes: D.carrilesDeRender,
+        // El catálogo también viaja acá, no solo en getConfig: este chequeo
+        // corre al abrir el panel, y es lo que deja que una fila de Corrections
+        // dibujada en el primer segundo ya sepa nombrar su motor.
+        motores: D.config.motores,
+      }));
+    },
+    installRenderEngine: function (body, prog) {
+      var id = (body && body.engine) || "remotion";
+      return correrEtapas(prog, [
+        { ms: 500, pct: 5, msg: "Bajando Remotion (son varios cientos de MB)…" },
+        { ms: 900, pct: 60, msg: "Preparando el proyecto base…" },
+        { ms: 900, pct: 85, msg: "Bajando el navegador del render…" },
+        { ms: 500, pct: 95, msg: "Verificando que el navegador haya quedado completo…" }
+      ], function () {
+        remotionEn(true, "");
+        return ok({ mensaje: "Remotion 4.0.410 quedó listo.", engine: id });
+      });
     },
     prepareEngine: function (_a, prog) {
       return correrEtapas(prog, [
@@ -1004,7 +1050,46 @@
       });
       return luego(ok({ versions: out }));
     },
-    readMarkerHtml: function () { return luego(ok({ html: D.htmlDeEjemplo })); },
+    // El editor de código abre la versión en SU lenguaje: el motor y la
+    // gramática vienen con el texto, y de eso depende con qué lo resalta Prism.
+    readMarkerHtml: function () {
+      const remo = D.config.renderEngine === "remotion";
+      return luego(ok({
+        html: remo ? D.tsxDeEjemplo : D.htmlDeEjemplo,
+        engine: remo ? "remotion" : "hyperframes",
+        lenguaje: remo ? "tsx" : "markup",
+      }));
+    },
+
+    // La vista previa. Los dos finales que hay que poder mirar en la maqueta:
+    // el motor que puede (devuelve una URL y el panel la abre) y el que NO
+    // puede, que contesta con el MOTIVO — porque un "no se puede" a secas suena
+    // a que algo está roto y esto es así por diseño.
+    previewComposition: function () {
+      if (D.config.renderEngine !== "remotion") {
+        return luego({
+          ok: false, engine: "hyperframes",
+          error: "HyperFrames (HTML + GSAP) no tiene vista previa: su contrato pide la timeline " +
+            "pausada para poder capturarla cuadro por cuadro, así que abrirla en un navegador " +
+            "muestra el primer cuadro y nada más.\n" +
+            "Para ver cómo quedó, renderizala: es lo mismo que mostraría una vista previa.",
+        });
+      }
+      // La primera vez se levanta, después se reusa: son dos mensajes distintos
+      // en el panel («abierta» contra «actualizada — mirá la ventana que ya
+      // tenías»), y el segundo es el que evita que el editor la busque de nuevo.
+      const arrancado = !vistaPreviaAbierta;
+      vistaPreviaAbierta = true;
+      return luego(ok({
+        engine: "remotion", url: "http://localhost:60762/",
+        arrancado: arrancado, etiqueta: "Marcador 11 v3",
+      }));
+    },
+    closePreview: function () {
+      const andaba = vistaPreviaAbierta;
+      vistaPreviaAbierta = false;
+      return luego(ok({ apagados: andaba ? ["remotion"] : [] }));
+    },
     findRenderedVideo: function (body) {
       return luego(ok({ movPath: movDe(body.sequenceName, body.markerSlug, body.version || 1, "claude-opus-5", true) }));
     },

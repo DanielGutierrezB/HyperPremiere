@@ -228,7 +228,7 @@ test('las TRES formas de rehacer tienen tres dibujos, y ninguno se gasta dos vec
 
 test('el resto de los glifos de la Cola y de Corrections también son iconos', function () {
   // Los que quedaban tipeados: 📌 Colocar, 🧹 Limpiar, ⏹ vaciar, ⏸ pausar,
-  // ▶ Iniciar/Reanudar, ▲▼ mover, ✕ quitar, ✎ Feedback y ✎ Editar HTML.
+  // ▶ Iniciar/Reanudar, ▲▼ mover, ✕ quitar, ✎ Feedback y ✎ Editar código.
   //
   // El ✎ estaba en DOS botones que hacen cosas distintas —dar feedback y editar
   // el HTML—, que es el mismo error del ↻ en chico. Son dos conceptos: un globo

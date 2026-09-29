@@ -243,7 +243,7 @@ function dibujarCola(jobs) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -558,9 +558,9 @@ test('el PROGRESO se lee con la fila plegada; el DETALLE del terminado, no', fun
   // bajaron con el detalle.
   has(cab.buscar('qj-ctrls').texto(), 'Feedback');
   eq(cab.texto().indexOf('Limpiar previas'), -1, 'Limpiar previas se fue al cuerpo');
-  eq(cab.texto().indexOf('Editar HTML'), -1, 'y Editar HTML también');
+  eq(cab.texto().indexOf('Editar código'), -1, 'y Editar código también');
   has(cuerpo.texto(), 'Limpiar previas');
-  has(cuerpo.texto(), 'Editar HTML');
+  has(cuerpo.texto(), 'Editar código');
 
   // Y el tiempo sigue apareciendo en un trabajo que viene de un `queue.json`
   // viejo, que guardaba las etapas y no el total. Sin el respaldo, esos trabajos

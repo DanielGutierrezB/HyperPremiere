@@ -516,7 +516,7 @@
       adv.className = "hp-avanzado";
       var s = document.createElement("summary");
       s.textContent = "Avanzado";
-      s.title = "El transcript de este tramo y el editor de HTML";
+      s.title = "El transcript de este tramo y el editor de código";
       adv.appendChild(s);
       var cuerpo = document.createElement("div");
       cuerpo.className = "hp-avanzado-body";

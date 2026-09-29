@@ -14,7 +14,8 @@
 
   // Editor de código con resaltado de sintaxis: textarea transparente encima de
   // un <pre> coloreado por Prism (sirve offline, sin CDN). Devuelve { el,
-  // getValue, setValue }. Resalta HTML + CSS + JS embebidos.
+  // getValue, setValue, setLenguaje }. Resalta HTML + CSS + JS embebidos, o TSX
+  // según el motor con el que se escribió la composición que se está abriendo.
   function makeCodeEditor() {
     var caja = document.createElement("div");
     caja.className = "code-edit-wrap";
@@ -33,11 +34,22 @@
     caja.appendChild(box);
     caja.appendChild(buscador(input));
 
+    // Con qué gramática colorear. Lo dice el MOTOR de la versión abierta
+    // ('markup' en HyperFrames, 'tsx' en Remotion); si Prism no la trae, se cae
+    // a 'markup' y no a texto pelado, porque `markup` sobre un .tsx igual pinta
+    // los strings y los comentarios — menos que nada.
+    var lenguaje = "markup";
+    function gramatica() {
+      if (typeof Prism === "undefined" || !Prism.languages) return null;
+      return Prism.languages[lenguaje] || Prism.languages.markup || null;
+    }
+
     function paint() {
       var src = input.value;
-      if (typeof Prism !== "undefined" && Prism.languages && Prism.languages.markup) {
+      var g = gramatica();
+      if (g) {
         // Newline final: Prism/pre necesita que la última línea tenga cierre.
-        code.innerHTML = Prism.highlight(src + "\n", Prism.languages.markup, "markup");
+        code.innerHTML = Prism.highlight(src + "\n", g, lenguaje);
       } else {
         code.innerHTML = escapeHtml(src) + "\n";
       }
@@ -60,21 +72,22 @@
       el: caja,
       getValue: function () { return input.value; },
       setValue: function (v) { input.value = String(v == null ? "" : v); paint(); sync(); },
+      setLenguaje: function (l) { lenguaje = String(l || "markup"); paint(); },
       focus: function () { input.focus(); }
     };
   }
 
   /**
-   * La barra de BUSCAR del editor de HTML.
+   * La barra de BUSCAR del editor de código.
    *
    * ── Por qué existe ───────────────────────────────────────────────────
    *
    * Lo pidió el editor: "al editor del html, ¿podemos agregar una opción de
-   * buscar? La idea es poder buscar una palabra en específico". Un HTML generado
-   * tiene varios cientos de líneas y el arreglo a mano suele ser cambiar un color
-   * o un texto que aparece una vez: sin buscar, hay que barrerlo con la vista.
-   * El `⌘F` del navegador no sirve acá: CEF no lo trae, y aunque lo trajera
-   * buscaría en el panel entero y no en el campo.
+   * buscar? La idea es poder buscar una palabra en específico". Una composición
+   * generada tiene varios cientos de líneas y el arreglo a mano suele ser cambiar
+   * un color o un texto que aparece una vez: sin buscar, hay que barrerlo con la
+   * vista. El `⌘F` del navegador no sirve acá: CEF no lo trae, y aunque lo
+   * trajera buscaría en el panel entero y no en el campo.
    *
    * ── Cómo resalta, que es la decisión ─────────────────────────────────
    *
@@ -96,8 +109,8 @@
     var campo = document.createElement("input");
     campo.type = "text";
     campo.className = "code-find-input";
-    campo.placeholder = "Buscar en el HTML…";
-    campo.setAttribute("aria-label", "Buscar en el HTML");
+    campo.placeholder = "Buscar en el código…";
+    campo.setAttribute("aria-label", "Buscar en el código");
 
     var cuenta = document.createElement("span");
     cuenta.className = "code-find-count hp-dato";

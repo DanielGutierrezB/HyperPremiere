@@ -25,14 +25,13 @@ const { test, ok, eq, has } = require('./harness');
 const claude = require('../bridge/providers/claude-cli');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-cli', 'fake-claude.js');
-const SYSTEM_MD = path.join(__dirname, '..', 'bridge', 'prompt', 'system.md');
 
 // El CLI de mentira es un script con shebang: en Windows no arranca solo.
 const saltarEnWindows = process.platform === 'win32';
 
 // El system prompt DE VERDAD, no uno de juguete: la falla que motiva este
 // archivo es que se perdía justamente su sección de plantilla obligatoria.
-const SYSTEM = fs.readFileSync(SYSTEM_MD, 'utf8');
+const SYSTEM = require('../bridge/render').motor('hyperframes').systemPrompt();
 
 // Un prompt de usuario con todo lo que en teoría podía romperse en el viaje:
 // acentos, eñes, emoji, comillas, signos que cmd.exe interpreta (%, &, ^, |),

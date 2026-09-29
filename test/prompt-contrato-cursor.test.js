@@ -31,12 +31,13 @@ const claude = require('../bridge/providers/claude-cli');
 
 const FAKE_CURSOR = path.join(__dirname, 'fixtures', 'fake-cli', 'fake-cursor.js');
 const FAKE_CLAUDE = path.join(__dirname, 'fixtures', 'fake-cli', 'fake-claude.js');
-const SYSTEM_MD = path.join(__dirname, '..', 'bridge', 'prompt', 'system.md');
 
 // Los CLI de mentira son scripts con shebang: en Windows no arrancan solos.
 const saltarEnWindows = process.platform === 'win32';
 
-const SYSTEM = fs.readFileSync(SYSTEM_MD, 'utf8');
+// El system prompt de HyperFrames, que es de lo que hablan estas mediciones (era
+// el único motor cuando se hicieron).
+const SYSTEM = require('../bridge/render').motor('hyperframes').systemPrompt();
 const USUARIO = '## Instrucción del editor\nAnimá el concepto "sesgo" en 8 segundos.';
 
 function tmpLog() {
@@ -169,14 +170,14 @@ test('cursor: sin system prompt no se inventa el bloque, y el contrato igual cie
 
 // ── El costo: que repetir salga barato ──────────────────────────────────
 
-test('el recordatorio es el andamiaje y nada más (no una copia de system.md)', function () {
+test('el recordatorio es el andamiaje y nada más (no una copia del system prompt)', function () {
   const rec = contractReminder();
   // Repetir es pagar tokens de entrada en CADA llamada. Se repite lo que si
   // falta impide renderizar; lo de estilo no, porque saltearlo da composiciones
   // distintas, no composiciones rotas.
   ok(rec.length < 1200, 'el recordatorio es corto: ' + rec.length + ' caracteres');
   ok(rec.length < SYSTEM.length / 10,
-    'y es menos de la décima parte de system.md (' + rec.length + ' vs ' + SYSTEM.length + ')');
+    'y es menos de la décima parte del system prompt (' + rec.length + ' vs ' + SYSTEM.length + ')');
   has(rec, 'data-composition-id', 'repite el id de la composición');
   has(rec, 'data-duration', 'repite la duración');
   has(rec, 'data-fps', 'repite el resto del esqueleto');
@@ -228,5 +229,5 @@ test('claude sigue mandando el system prompt por su propio canal', async functio
   eq(mac.systemPromptVia, 'argumento', 'en mac va como argumento');
   eq(win.systemPromptVia, 'archivo', 'en Windows va por archivo');
   eq(win.systemPrompt, mac.systemPrompt, 'y es el mismo texto en las dos');
-  eq(mac.systemPrompt, SYSTEM.trim(), 'que es system.md entero');
+  eq(mac.systemPrompt, SYSTEM.trim(), 'que es el system prompt entero');
 });

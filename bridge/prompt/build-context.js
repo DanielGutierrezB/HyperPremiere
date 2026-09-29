@@ -15,6 +15,7 @@
 //   instruction: string,                           // qué pidió el editor para este recurso
 //   stillsCount: number,                           // stills que van como imágenes aparte
 //   promptOverride: { course?, sequence?, objective? }  // ajuste local de UNA corrección (ver promptLevels)
+//   engine: string,                                // con qué motor se va a renderizar ('' = el de siempre)
 // }
 //
 // Los tres últimos son los TRES NIVELES de lo que escribe el editor, del más
@@ -28,6 +29,17 @@
 // Límite blando para el resumen del transcript completo: mantiene el request
 // dentro de un tamaño razonable sin perder el hilo de la clase.
 const TRANSCRIPT_CHAR_LIMIT = 6000;
+
+/**
+ * Con qué motor se va a renderizar este pedido.
+ *
+ * Se pide perezosamente (adentro de la función y no arriba del archivo) para no
+ * cerrar un ciclo de requires: los motores necesitan el system prompt, que vive
+ * al lado de este módulo.
+ */
+function motorDe(ctx) {
+  return require('../render').motor((ctx || {}).engine);
+}
 
 // Formatea segundos como M:SS.d para timecodes legibles en el prompt.
 function formatTime(seconds) {
@@ -259,11 +271,12 @@ function buildUserPrompt(ctx) {
   }
   parts.push((instruction || '').trim() || '(sin instrucción específica: proponé el recurso que mejor refuerce el objetivo)');
 
-  parts.push('\n## Duración objetivo');
-  parts.push(
-    `La composición debe durar ${duration.toFixed(2)} s (declarala en data-duration del #stage y ` +
-      'que la timeline cubra exactamente ese rango).'
-  );
+  // La duración y el contrato los redacta EL MOTOR, no este archivo: en
+  // HyperFrames la duración se declara en `data-duration` y en Remotion se lee
+  // con `useVideoConfig()`. Son instrucciones opuestas para el mismo dato, así
+  // que escribirlas acá obligaba a que este módulo supiera de GSAP.
+  // El bloque va al final del prompt (ver más abajo) porque cierra con el
+  // "devolvé SOLO…", que tiene que ser lo último que el modelo lee.
 
   // Acá NO se dice cómo llegan las imágenes (adjuntas al mensaje o como archivos
   // en disco): eso lo sabe el proveedor y lo agrega él. Cuando este texto lo
@@ -280,16 +293,9 @@ function buildUserPrompt(ctx) {
     );
   }
 
-  // Recordatorio del contrato (reduce reintentos por HTML inválido).
-  parts.push('\n## Contrato obligatorio (verificá antes de responder)');
-  parts.push(
-    '- El <div id="stage"> DEBE tener: data-composition-id, data-width="1920", data-height="1080", ' +
-      'data-duration (número > 0 = duración en segundos) y data-fps="30".\n' +
-      '- El script DEBE terminar con window.__timelines[COMP_ID] = tl; (COMP_ID = data-composition-id).\n' +
-      '- Sin esos tres (data-composition-id, data-duration > 0, __timelines) el render falla.'
-  );
-
-  parts.push('\nDevolvé SOLO el HTML completo de la composición.');
+  // Duración + contrato + "devolvé SOLO…", en la voz del motor que va a
+  // renderizar esto (reduce reintentos por una composición inválida).
+  parts.push(motorDe(ctx).bloqueDeContrato(duration));
 
   return parts.join('\n');
 }

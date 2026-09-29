@@ -856,16 +856,31 @@
       var detalle = document.createElement("div");
       detalle.className = "qj-detalle";
       detalle.appendChild(msg);
-      if (plata.getAttribute("data-hidden") !== "true") {
+      // Con qué motor se compuso este recurso. Va acá y no en el encabezado
+      // porque es un dato de identidad, no de progreso: se mira cuando algo
+      // salió distinto de lo esperado ("¿este lo hice con Remotion?"), y ese es
+      // exactamente el momento en que la fila se abre. Un recurso viejo no lo
+      // trae —su trabajo se encoló antes de que hubiera dos motores— y ahí no se
+      // dibuja: inventarle "HyperFrames" sería afirmar algo que no se leyó.
+      var motorNodo = null;
+      if (j.engine) {
+        motorNodo = document.createElement("span");
+        motorNodo.className = "qj-motor hp-dato";
+        motorNodo.textContent = HPMotores.nombre(j.engine);
+        motorNodo.title = "El motor con el que se escribió esta versión. Refinarla, corregirla o " +
+          "re-renderizarla vuelve a usar éste, aunque en ⚙ elijas otro.";
+      }
+      if (plata.getAttribute("data-hidden") !== "true" || motorNodo) {
         var fila = document.createElement("div");
         fila.className = "qj-detalle-datos";
-        fila.appendChild(plata);
+        if (plata.getAttribute("data-hidden") !== "true") fila.appendChild(plata);
+        if (motorNodo) fila.appendChild(motorNodo);
         detalle.appendChild(fila);
       }
       var mas = document.createElement("div");
       mas.className = "qj-ctrls qj-detalle-acciones";
       if (puedeAbrir) {
-        mas.appendChild(iconBtn("Editar HTML", "Editar el HTML de este marcador y renderizarlo de nuevo (en la pestaña Marcadores)",
+        mas.appendChild(iconBtn("Editar código", "Editar el código de este marcador y renderizarlo de nuevo (en la pestaña Marcadores)",
           (function (job) { return function () { deps.goToJobMarker(job, true); }; })(j), "codigo"));
       }
       // Limpiar las versiones previas de ESTE recurso, cuando el editor ya

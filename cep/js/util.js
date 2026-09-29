@@ -729,7 +729,22 @@
       (men.aviso ? "\nOJO: " + men.aviso + "." : "");
   }
 
+  /**
+   * Abre una URL en el navegador del editor, no adentro del panel.
+   *
+   * Vive acá desde que hay dos que la necesitan —la autorización de Claude y la
+   * vista previa de una composición— y con dos copias la segunda se escribe
+   * distinta. El `window.open` de respaldo es para la maqueta y los tests, que
+   * corren en un navegador de verdad y no tienen la API de CEP.
+   */
+  function abrirEnNavegador(url) {
+    if (!url) return false;
+    try { new CSInterface().openURLInDefaultBrowser(url); return true; } catch (e) { /* no es CEP */ }
+    try { global.open(url, "_blank"); return true; } catch (e) { return false; }
+  }
+
   global.HPUtil = {
+    abrirEnNavegador: abrirEnNavegador,
     debounce: debounce,
     micOpcional: micOpcional,
     nombreQueLleva: nombreQueLleva,

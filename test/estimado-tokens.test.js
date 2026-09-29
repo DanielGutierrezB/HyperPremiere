@@ -366,7 +366,7 @@ test('la vista de la Cola le pide el cuerpo a la cola, no manda el payload crudo
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -442,8 +442,11 @@ async function loQueViaja(body) {
   return visto.arg;
 }
 
-const SYSTEM_CHARS = fs.readFileSync(
-  path.join(__dirname, '..', 'bridge', 'prompt', 'system.md'), 'utf8').length;
+// El system prompt del motor con el que se compone. Se le pide al motor —y no
+// se lee un archivo— porque desde que hay dos, el system prompt es la suma de
+// la parte común y la del motor: leer un solo .md volvería a contar de menos.
+const SYSTEM_CHARS = require('../bridge/render')
+  .motor('hyperframes').systemPrompt().length;
 
 /** Los caracteres de prompt que de verdad recibió el proveedor. */
 function charsQueViajaron(arg) {

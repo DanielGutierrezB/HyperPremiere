@@ -167,7 +167,7 @@ function dibujar(jobs, opts) {
   // de feedback es el cuerpo de ficha compartido, con su campo de chips y su barra
   // de controles. Los tres son reales, no dobles: es justo lo que se vino a
   // compartir.
-  for (const f of ['util.js', 'iconos.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'menciones.js', 'campo.js', 'prompt-card.js', 'queue-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   }
   ctx.HPQueueView.init({
@@ -214,9 +214,9 @@ test('el nombre lleva al timeline, sin arrastrar el panel a otra pestaña', func
   has(nombre.title, 'timeline', 'lo que promete el tooltip es lo que hace');
 });
 
-test('a Marcadores se sigue llegando por “Editar HTML”, que sí lo necesita', function () {
+test('a Marcadores se sigue llegando por “Editar código”, que sí lo necesita', function () {
   const d = dibujar([terminado()]);
-  d.panel.porTexto('Editar HTML').click();
+  d.panel.porTexto('Editar código').click();
   eq(d.espia.aMarcadores.length, 1);
   eq(d.espia.aMarcadores[0].abrirEditor, true, 'y con el editor abierto');
   eq(d.espia.timeline.length, 0);

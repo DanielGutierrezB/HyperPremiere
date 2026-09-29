@@ -204,7 +204,7 @@
       projectPath: ctx.projectPath, sequenceName: origen.sequenceName,
       markerSlug: m.slug, version: version
     }).then(function (r) {
-      if (!r || !r.ok || !r.html) throw new Error((r && r.error) || "no pude leer el HTML de la v" + version);
+      if (!r || !r.ok || !r.html) throw new Error((r && r.error) || "no pude leer el código de la v" + version);
 
       var job = jobBase(m);
       job.kind = "feedback";
@@ -359,8 +359,9 @@
     meta.className = "corr-meta hp-dato";
     meta.textContent = "v" + m.latestVersion + (m.model ? " [" + m.model + "]" : "") +
       " · " + m.versions.length + (m.versions.length === 1 ? " versión" : " versiones");
-    meta.title = "La última versión de este recurso y con qué modelo se hizo. Adentro se elige " +
-      "sobre cuál rediseñar.";
+    meta.title = "La última versión de este recurso, con qué modelo y con qué motor se hizo" +
+      (m.engine ? " (" + HPMotores.nombre(m.engine) + ")" : "") +
+      ". Adentro se elige sobre cuál rediseñar.";
     der.appendChild(meta);
     var pastilla = document.createElement("span");
     pastilla.className = "hp-estado";

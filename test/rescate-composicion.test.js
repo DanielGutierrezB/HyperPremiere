@@ -21,6 +21,7 @@ const { test, ok, eq, has } = require('./harness');
 const claude = require('../bridge/providers/claude-cli');
 const cursor = require('../bridge/providers/cursor-cli');
 const { composeAnimation } = require('../bridge/compose');
+const { motor } = require('../bridge/render');
 
 const FAKE_CLAUDE = path.join(__dirname, 'fixtures', 'fake-cli', 'fake-claude.js');
 const FAKE_CURSOR = path.join(__dirname, 'fixtures', 'fake-cli', 'fake-cursor.js');
@@ -136,6 +137,7 @@ function correrCompose(provider, report) {
   return composeAnimation({
     provider: provider,
     config: { model: 'modelo-de-prueba', provider: 'test' },
+    motor: motor('hyperframes'),
     systemPrompt: 'sistema', userPrompt: 'usuario', images: [],
     durationSec: 3, markerSlug: 'marcador-1', report: report,
   });

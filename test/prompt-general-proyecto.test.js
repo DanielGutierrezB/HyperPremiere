@@ -30,6 +30,7 @@ const vm = require('vm');
 const { test, ok, eq, has } = require('./harness');
 
 const engine = require('../bridge/engine.js');
+const motores = require('../bridge/render');
 const { buildUserPrompt } = require('../bridge/prompt/build-context');
 const CEP = path.join(__dirname, '..', 'cep', 'js');
 
@@ -377,15 +378,21 @@ test('sin ningún prompt general, la instrucción del marcador no habla de prece
   has(p, 'un cartel con los tres componentes');
 });
 
-test('el system prompt le dice la regla de precedencia en todos los pedidos', function () {
-  // El pedido dice quién gana cuando los dos están; el system prompt dice que la
-  // regla existe siempre, para que no la deduzca de un pedido a otro.
-  const sys = fs.readFileSync(path.join(__dirname, '..', 'bridge', 'prompt', 'system.md'), 'utf8');
-  has(sys, 'tres niveles');
-  has(sys, 'Prompt general del curso');
-  has(sys, 'Prompt de esta secuencia');
-  has(sys, 'manda el más específico');
-  has(sys, 'se suma', 'lo que no se contradice no se descarta');
+// La regla de precedencia es del PROYECTO, no del lenguaje en el que se
+// compone: sale de la parte común del system prompt y por lo tanto la tienen
+// que decir los dos motores. Se pregunta por los dos para que agregar un tercero
+// que se arme su prompt de cero no pueda perderla en silencio.
+motores.ids().forEach(function (id) {
+  test('el system prompt de ' + id + ' le dice la regla de precedencia', function () {
+    // El pedido dice quién gana cuando los dos están; el system prompt dice que
+    // la regla existe siempre, para que no la deduzca de un pedido a otro.
+    const sys = motores.motor(id).systemPrompt();
+    has(sys, 'tres niveles');
+    has(sys, 'Prompt general del curso');
+    has(sys, 'Prompt de esta secuencia');
+    has(sys, 'manda el más específico');
+    has(sys, 'se suma', 'lo que no se contradice no se descarta');
+  });
 });
 
 // ── El panel, con el disco de verdad detrás ──────────────────────────

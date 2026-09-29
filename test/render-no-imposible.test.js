@@ -17,6 +17,7 @@
 
 const { test, ok, eq, has } = require('./harness');
 const { composeAnimation } = require('../bridge/compose');
+const { motor } = require('../bridge/render');
 const { esErrorDeComposicion, argsDeRender, correrEscalera } = require('../bridge/render/hyperframes');
 
 /** La composición más chica que pasa el contrato. */
@@ -52,6 +53,7 @@ function correr(provider, report) {
   return composeAnimation({
     provider: provider,
     config: { model: 'modelo-de-prueba', provider: 'test' },
+    motor: motor('hyperframes'),
     systemPrompt: 'sistema', userPrompt: 'usuario', images: [],
     durationSec: 3, markerSlug: 'marcador-13',
     report: report || function () {},
@@ -79,7 +81,7 @@ test('el motivo se entiende sin abrir el código, y dice qué hacer', async func
   } catch (e) { error = e; }
   has(error.message, 'no quedó renderizable', 'arranca por lo que pasó');
   has(error.message, 'video congelado', 'explica por qué no se intenta igual');
-  has(error.message, 'Renderizar HTML', 'y deja una salida a mano');
+  has(error.message, 'Editar código', 'y deja una salida a mano, con el nombre del botón que la abre');
   ok(!/GPU|placa|worker/i.test(error.message),
     'y NO menciona hardware: el problema es la composición, no la máquina');
 });

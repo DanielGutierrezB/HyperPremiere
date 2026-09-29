@@ -181,7 +181,7 @@ test('re-renderizar sin nada generado avisa y no deja la carpeta hecha', async f
       markerSlug: 'Marcador 1', marker: { duration: 5 },
     });
   } catch (e) { error = (e && e.message) || String(e); }
-  eq(error, 'No hay versiones (HTML) para re-renderizar de Marcador 1', 'cambió el aviso al editor');
+  eq(error, 'No hay versiones para re-renderizar de Marcador 1', 'cambió el aviso al editor');
   eq(contenido(p.dir).join(' · '), 'Curso de IA.prproj', 'dejó la carpeta hecha por un reintento imposible');
 });
 

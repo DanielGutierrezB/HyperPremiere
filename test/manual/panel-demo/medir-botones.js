@@ -157,7 +157,7 @@ const ABRIR = async function (modo) {
       return [].slice.call(document.querySelectorAll('.qbtn'))
         .filter(function (b) { return (b.textContent || '').indexOf(t) !== -1; });
     };
-    const objetivo = conTexto(modo === 'cola' ? 'Feedback' : 'Editar HTML')[0];
+    const objetivo = conTexto(modo === 'cola' ? 'Feedback' : 'Editar código')[0];
     if (objetivo) objetivo.click();
     await respirar(800);
     abrirDetalles();

@@ -69,6 +69,15 @@ const VISTAS = [
   { nombre: 'cola', escenario: '', abrir: 'cola', esperar: '.queue-job' },
   { nombre: 'corrections', escenario: '', abrir: 'corrections', esperar: '.corr-row' },
   { nombre: 'config', escenario: '', abrir: 'config', esperar: '#btn-save-config' },
+  // ⚙ con un motor de animación que falta. Se mide aparte del `config` normal
+  // porque trae un color que la otra vista no tiene: la línea del motivo en
+  // ámbar (`is-warn`), que es texto de aviso sobre el fondo del overlay y no
+  // sobre el del panel. Y porque es la única vista donde el desplegable y un
+  // botón comparten la fila, que a 320 px es donde algo se corta.
+  {
+    nombre: 'config-motor-falta', escenario: '?e=remotion-sin-instalar',
+    abrir: 'config', esperar: '#row-engine',
+  },
 ];
 
 const SOLO = arg('--vistas', '');

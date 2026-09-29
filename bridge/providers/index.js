@@ -93,6 +93,17 @@ function stripHtmlFence(text) {
   const htmlFence = trimmed.match(/```html\s*\n([\s\S]*?)```/i);
   if (htmlFence) return htmlFence[1].trim();
 
+  // Fence etiquetado con el lenguaje de una composición de Remotion.
+  //
+  // Sin esto, el motor de Remotion se rompía entero por acá: el modelo devuelve
+  // su componente en un fence ```tsx y la heurística de abajo solo desenvuelve
+  // lo que PARECE HTML, así que el `.tsx` llegaba con los backticks pegados y
+  // no compilaba nunca. El filtro de abajo no se puede aflojar —desenvolver
+  // cualquier fence haría que una respuesta en prosa CON un ejemplo de código
+  // adentro se tome por la composición— así que se nombran los lenguajes.
+  const codeFence = trimmed.match(/```(?:tsx|jsx|typescript|ts|javascript|js)\s*\n([\s\S]*?)```/i);
+  if (codeFence) return codeFence[1].trim();
+
   // Fence generico: solo lo usamos si el contenido parece HTML,
   // para no comernos texto que tenga fences de otro lenguaje.
   const anyFence = trimmed.match(/```[a-zA-Z0-9-]*\s*\n([\s\S]*?)```/);
@@ -229,7 +240,7 @@ function docsAsFilesNote(refs) {
  *   sin recordatorio), para confirmar que no aparecen rechazos.
  *
  * No hay margen que ganar: el contrato ya se cumple siempre. De hecho el
- * control negativo —borrarle al prompt system.md ENTERO y la sección de
+ * control negativo —borrarle al prompt el system prompt ENTERO y la sección de
  * contrato de build-context.js— igual devolvió `id="stage"`,
  * `data-composition-id` y `window.__timelines[...]` en 4 de 4: estos modelos
  * conocen las convenciones de HyperFrames sin que se las digamos.
@@ -244,30 +255,24 @@ function docsAsFilesNote(refs) {
  * empieza a colgar secciones mucho más largas después del contrato, la pregunta
  * se vuelve a abrir — y entonces se vuelve a medir, no a suponer.
  *
- * Qué repite y qué no: SOLO el andamiaje —el contenedor con sus data-*, la
- * timeline única y su registro—, que son las tres cosas sin las cuales el
+ * Qué repite y qué no: SOLO el andamiaje —en HyperFrames el contenedor con sus
+ * data-*, la timeline única y su registro—, que son las cosas sin las cuales el
  * render no existe. Nada de estilo: saltear el estilo da composiciones
- * distintas, no composiciones rotas.
+ * distintas, no composiciones rotas. El texto lo escribe cada motor, porque su
+ * andamiaje es otro; la medición de arriba es de HyperFrames, que era el único
+ * motor cuando se hizo.
  *
  * Los proveedores con system prompt de verdad (claude-cli, claude-api) NO usan
  * esto: ahí el contrato ya viaja donde se obedece.
  *
+ * @param {string} [engine] Con qué motor se está componiendo.
  * @returns {string}
  */
-function contractReminder() {
-  return '\n\n---\n\n' +
-    '# ANTES DE RESPONDER — el contrato que no se negocia\n\n' +
-    'Esto va último porque es lo único sin lo cual el render NO EXISTE. ' +
-    'Repasá los cuatro puntos sobre tu propio HTML antes de mandarlo:\n\n' +
-    '1. UN solo contenedor raíz, con TODOS estos atributos:\n' +
-    '   `<div id="stage" data-composition-id="comp" data-start="0" ' +
-    'data-width="1920" data-height="1080" data-duration="…" data-fps="30">`\n' +
-    '   donde `data-duration` es la duración objetivo que te pedí arriba, en segundos, número > 0.\n' +
-    '2. UNA sola timeline GSAP, pausada, con tiempos absolutos.\n' +
-    '3. El script TERMINA registrándola con la MISMA clave que `data-composition-id`:\n' +
-    "   `window.__timelines['comp'] = tl;`\n" +
-    '4. Devolvé SOLO el HTML, de `<!DOCTYPE html>` a `</html>`. Nada antes, nada después.\n\n' +
-    'Si falta cualquiera de los cuatro, la composición no se puede renderizar y el trabajo se pierde entero.';
+function contractReminder(engine) {
+  // El texto es del MOTOR: lo que hay que repetir es SU andamiaje. Se pide
+  // perezosamente para no cerrar un ciclo de requires (los motores importan
+  // utilidades de este archivo).
+  return require('../render').motor(engine).recordatorioFinal();
 }
 
 /**

@@ -372,8 +372,8 @@ const MUTACIONES = [
   {
     nombre: 'el render se manda igual con la composición rota',
     archivo: 'bridge/compose.js',
-    de: '  if (best.problem) {\n    throw Object.assign(new Error(',
-    a:  '  if (false && best.problem) {\n    throw Object.assign(new Error(',
+    de: '  if (best.problema) {\n    throw Object.assign(new Error(',
+    a:  '  if (false && best.problema) {\n    throw Object.assign(new Error(',
   },
   {
     nombre: 'un error de composición se toma como problema de máquina',
@@ -881,7 +881,10 @@ const MUTACIONES = [
   },
   {
     nombre: 'el system prompt deja de fijar la regla de precedencia',
-    archivo: 'bridge/prompt/system.md',
+    // En la parte COMÚN del system prompt, que es la que comparten los dos
+    // motores: la precedencia de los tres niveles es del proyecto, no del
+    // lenguaje en el que se compone.
+    archivo: 'bridge/prompt/system-comun.md',
     de: 'Cuando dos se contradicen, **manda el más específico**',
     a:  'Cuando dos se contradicen, elegí vos cuál conviene',
   },
@@ -2187,7 +2190,7 @@ const MUTACIONES = [
     // que el semáforo no contaba, ~177 tokens por marcador con assets.
     nombre: 'el estimado no ve el bloque de las imágenes a incrustar',
     archivo: 'bridge/engine.js',
-    de: '    userPrompt += bloqueDeAssets(assetInfos) +',
+    de: '    userPrompt += bloqueDeAssets(assetInfos, motor) +',
     a:  '    userPrompt += "" +',
   },
 
@@ -3170,6 +3173,226 @@ const MUTACIONES = [
     a:  '    var vista = montar(root, Object.assign({ compacto: true }, opts || {}));',
   },
 
+  // ── Los dos motores de animación ────────────────────────────────
+  //
+  // Lo que hay que perseguir acá son las decisiones que fallan CALLADAS. Un
+  // motor que no renderiza se nota en el primer clip; un motor que se elige mal
+  // no se nota nunca: sale un video, se ve razonable, y recién se descubre
+  // cuando alguien quiere refinar el recurso y le vuelve otro diseño.
+
+  {
+    // La regla que hace que todo lo generado hasta la 1.7.0 siga andando sin
+    // migrar un archivo. Con la ausencia de `engine` significando "no sé", cada
+    // recurso viejo del disco pasaría a interpretarse con el motor de ⚙: un HTML
+    // con GSAP mandado a Remotion no compila, y el editor pierde su historial
+    // entero sin haber cambiado nada más que un desplegable.
+    nombre: 'una ficha sin engine se lee con el motor de ⚙ en vez de con el de siempre',
+    archivo: 'bridge/render/motores.js',
+    // La mutación tiene que cambiar el COMPORTAMIENTO, y sacarle el
+    // `|| PREDETERMINADO` no lo cambia: `motor(undefined)` ya cae en el de
+    // siempre. El error de verdad —el que alguien escribiría— es resolver la
+    // ausencia con lo que diga el selector, y ahí cada recurso viejo del disco
+    // pasa a interpretarse con el motor de hoy.
+    de: '  return motor((meta && meta.engine) || PREDETERMINADO);',
+    a:  "  return motor((meta && meta.engine) || require('../engine').getConfig().renderEngine);",
+  },
+  {
+    // Un id desconocido tiene que caer en el motor de siempre, no tirar: ese id
+    // viaja en la ficha de cada versión y en la config del disco, así que puede
+    // venir de un panel MÁS NUEVO o escrito mal a mano, y ninguna de las dos
+    // cosas puede dejar a alguien sin poder abrir su propio proyecto.
+    nombre: 'un motor desconocido deja al proyecto sin poder abrirse',
+    archivo: 'bridge/render/motores.js',
+    de: '  return registro.get(key) || registro.get(PREDETERMINADO);',
+    a:  '  return registro.get(key);',
+  },
+  {
+    // La config guarda SOLO ids que el panel conoce. Sin el chequeo, ⚙ mostraría
+    // "HyperFrames" (porque el que lee tolera lo desconocido) mientras el archivo
+    // dice otra cosa, y el próximo que lo lea no sabría cuál de los dos miente.
+    nombre: 'la config acepta guardar un motor que no existe',
+    archivo: 'bridge/engine.js',
+    de: '  if (patch.renderEngine !== undefined && motores.existe(patch.renderEngine)) {',
+    a:  '  if (patch.renderEngine !== undefined) {',
+  },
+  {
+    // Refinar usa el motor de la versión PREVIA, no el de ⚙. Sin esto, lo que se
+    // le muestra al modelo como "la versión previa" está en un lenguaje y lo que
+    // se le pide está en el otro: no es refinar, es rehacerlo de cero
+    // mintiéndole sobre la base.
+    nombre: 'refinar pasa el recurso al motor de ⚙ en vez de al que lo escribió',
+    archivo: 'bridge/engine.js',
+    de: '  const motor = previa && previa.engine\n    ? motores.motor(previa.engine)\n    : motores.motor(config.renderEngine);',
+    a:  '  const motor = motores.motor(config.renderEngine);',
+  },
+  {
+    // Re-renderizar es volver a capturar un código que ya está escrito: el
+    // selector no lo reinterpreta. Con el motor de ⚙, reintentar el render de un
+    // recurso viejo lo manda al motor equivocado y el error habla de compilación
+    // cuando el problema es de ruteo.
+    nombre: 're-renderizar usa el motor de ⚙ y no el de la versión en disco',
+    archivo: 'bridge/engine.js',
+    // El comentario va adentro del `de` para que esto agarre el
+    // `motorDeFicha(...)` de `rerenderLatest` y no el de `listOtherResources`,
+    // que es la misma línea escrita igual. Sin eso, la mutación se aplicaba en
+    // la continuidad —donde el motor solo decide un fence— y sobrevivía.
+    de: '  // a capturar un código que ya está escrito: el selector no lo reinterpreta.\n' +
+        '  const motor = motores.motorDeFicha(readMeta(path.join(baseDir, metaDe(latest.name))));',
+    a:  '  const motor = motores.motor(loadConfig().renderEngine);',
+  },
+  {
+    // La ficha de una versión tiene que anotar con qué motor se hizo. Sin eso,
+    // todo lo nuevo queda indistinguible de lo viejo y se lee como HyperFrames:
+    // un recurso hecho con Remotion se ofrece a re-renderizarse con el otro
+    // motor, que no entiende su código.
+    nombre: 'la ficha deja de anotar con qué motor se hizo la versión',
+    archivo: 'bridge/store/project-fs.js',
+    de: '    engine: c.engine,',
+    a:  '    engine: undefined,',
+  },
+  {
+    // El `.meta.json` se busca sacando CUALQUIER extensión. Con el
+    // `replace(/\.html$/)` que había, un `.tsx` devolvía el nombre del archivo de
+    // código: la ficha se leía del .tsx, que no es JSON, y el motor salía
+    // siempre como el de siempre. Nada tira.
+    nombre: 'la ficha de una versión .tsx no se encuentra',
+    archivo: 'bridge/store/versions.js',
+    de: "  return String(name || '').replace(/\\.[^.\\/\\\\]+$/, '') + '.meta.json';",
+    a:  "  return String(name || '').replace(/\\.html$/, '') + '.meta.json';",
+  },
+  {
+    // Las versiones de un marcador son UNA cadena, sean .html o .tsx: la v3 en
+    // TSX viene después de la v2 en HTML. Con una sola extensión, el panel deja
+    // de ver la mitad de las versiones y `nextVersion` empieza a pisar archivos.
+    nombre: 'las versiones de los dos motores se cuentan como cadenas separadas',
+    archivo: 'bridge/engine.js',
+    de: "    return { ok: true, versions: listVersions(baseDir, markerSlug, motores.extensiones()) };",
+    a:  "    return { ok: true, versions: listVersions(baseDir, markerSlug, '.html') };",
+  },
+  {
+    // Cada motor valida SU lenguaje. Con el validador del otro, un componente de
+    // Remotion perfecto se reporta como "no encuentro el contenedor #stage" y el
+    // modelo recibe un pedido de arreglo que no tiene nada que ver.
+    nombre: 'la composición se valida con el contrato del otro motor',
+    archivo: 'bridge/compose.js',
+    de: '    const seen = motor.revisar(stripHtmlFence(gen.text), {',
+    a:  "    const seen = require('./render').motor('hyperframes').revisar(stripHtmlFence(gen.text), {",
+  },
+  {
+    // El fence con el que se le muestra al modelo su propio código. Un bloque
+    // ```html con TSX adentro le dice que eso es markup, y lo que devuelve es
+    // markup.
+    nombre: 'el código del modelo se le devuelve marcado como el lenguaje del otro motor',
+    archivo: 'bridge/render/motor-remotion.js',
+    de: "  fence: 'tsx',",
+    a:  "  fence: 'html',",
+  },
+  {
+    // Un import fuera de la lista se corta ANTES de renderizar. Sin esto se paga
+    // el bundle y el Chrome para descubrir en el navegador que falta un módulo,
+    // y el error aparece a mitad del render en vez de alimentar la escalera.
+    nombre: 'un import prohibido pasa la validación y muere en el navegador',
+    archivo: 'bridge/render/motor-remotion.js',
+    de: '    const prohibidos = importsDe(txt).filter((n) => !permitido(n));',
+    a:  '    const prohibidos = [];',
+  },
+  {
+    // Prosa se distingue de código mal escrito. Sin esta pregunta, una negativa
+    // del modelo entra por la misma puerta que un componente incompleto y sale
+    // "falta el export default": cierto y completamente engañoso, porque no hay
+    // componente ninguno — y encima se gasta la llamada de arreglo mandándole su
+    // propia negativa a corregir.
+    nombre: 'una negativa del modelo se confunde con un componente incompleto',
+    archivo: 'bridge/render/motor-remotion.js',
+    de: '    if (!pareceCodigo(txt)) {',
+    a:  '    if (false) {',
+  },
+  {
+    // La duración de Remotion es la del MARCADOR. Con un cero, el componente
+    // recibiría una composición sin cuadros y el render saldría vacío o cortado:
+    // el modelo no puede arreglarlo porque no es un dato que él escriba.
+    nombre: 'la duración de Remotion deja de venir del marcador',
+    archivo: 'bridge/render/motor-remotion.js',
+    de: '    const dur = Number((opts || {}).durationSec) || 0;\n    return { code: txt, fixes: [], problema: null, duration: dur };',
+    a:  '    return { code: txt, fixes: [], problema: null, duration: 0 };',
+  },
+  {
+    // El bloque de assets de cada motor explica cómo se incrusta una imagen EN
+    // SU lenguaje. Una ruta relativa en un `<img>` dentro de React no carga
+    // nada: el logo del curso simplemente no aparece, sin ningún error.
+    nombre: 'a Remotion se le explica incrustar imágenes como en HTML',
+    archivo: 'bridge/render/motor-remotion.js',
+    de: "      'INCRUSTALA con `<Img src={staticFile(\"assets/NOMBRE\")} />` (`Img` y `staticFile` vienen de `remotion`) — ' +",
+    a:  "      'INCRUSTALA con `<img src=\"assets/NOMBRE\">` — ' +",
+  },
+  {
+    // El system prompt es común + el del motor. Sin la parte común, Remotion
+    // pierde los criterios de diseño (el "menos es más", el presupuesto de
+    // texto, la zona segura) y los tres niveles del contexto: el resultado
+    // renderiza igual y se ve peor, que es el modo de falla más caro.
+    nombre: 'el system prompt de un motor pierde la parte común',
+    archivo: 'bridge/prompt/system.js',
+    de: "  return comun + '\\n\\n' + propio + '\\n';",
+    a:  "  return propio + '\\n';",
+  },
+
+  // ── La vista previa ─────────────────────────────────────────────
+
+  {
+    // Un motor que no puede previsualizar tiene que DECIRLO. Sin el chequeo se
+    // llama a una función que no existe y el editor recibe "vistaPrevia is not a
+    // function" — que no le dice nada y suena a que el panel está roto, cuando
+    // en realidad es así por diseño.
+    nombre: 'previsualizar un motor que no puede tira un error de programador',
+    archivo: 'bridge/engine.js',
+    de: "    if (typeof motor.vistaPrevia !== 'function') {",
+    a:  '    if (false) {',
+  },
+  {
+    // Lo que hay en el editor gana sobre el disco: es lo que hace que editar y
+    // mirar sea un ciclo. Al revés, el editor toca el código, aprieta vista
+    // previa, ve exactamente lo de antes y no entiende por qué.
+    nombre: 'la vista previa muestra el disco y no lo que se está editando',
+    archivo: 'bridge/engine.js',
+    de: "    const code = String(body.code || '').trim() ||\n      (enDisco ? fs.readFileSync(enDisco.file, 'utf8') : '');",
+    a:  "    const code = enDisco ? fs.readFileSync(enDisco.file, 'utf8') : String(body.code || '').trim();",
+  },
+  {
+    // La sesión de Studio cuelga de `process` y no del módulo. Con una variable
+    // de módulo, el ⟳ del panel deja un webpack en watch que nadie puede apagar
+    // y la próxima vista previa levanta un segundo (ver bridge/vivos.js).
+    nombre: 'recargar el panel deja un Studio huérfano y levanta otro',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: "const caja = vivos.adoptar('remotion-studio', {",
+    a:  'const caja = ({',
+  },
+  {
+    // Un hijo que se murió solo no puede seguir contando como sesión viva: la
+    // próxima vista previa reusaría un puerto que ya no contesta y el editor
+    // abriría una ventana con "no se puede acceder a este sitio".
+    nombre: 'una vista previa muerta se sigue reusando',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: '  return !!(s && s.hijo && s.hijo.exitCode === null && !s.hijo.killed);',
+    a:  '  return !!s;',
+  },
+  {
+    // Sin fondo, la vista previa tiene que mostrar el damero de transparencia:
+    // mirar un clip con alfa sobre negro esconde justo los problemas de
+    // contraste que el alfa vuelve a traer cuando el clip va sobre el video.
+    nombre: 'la vista previa de un clip con alfa se muestra opaca',
+    archivo: 'bridge/engine.js',
+    de: '    const conFondo = body.background !== undefined\n      ? body.background === true\n      : ficha.background === true;',
+    a:  '    const conFondo = true;',
+  },
+  {
+    // Cerrar el panel apaga la vista previa. Sin esto queda un webpack en watch
+    // hasta que alguien lo note, y el watchdog de inactividad tarda media hora.
+    nombre: 'cerrar el panel no apaga la vista previa',
+    archivo: 'bridge/engine.js',
+    de: "      if (m.cerrarVistaPrevia().andaba) apagados.push(id);",
+    a:  '      void m;',
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3189,7 +3412,8 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'menciones', 'menciones-panel', 'menciones-campo', 'feedback-imagenes',
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
-  'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible'];
+  'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
+  'motores-dos'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test

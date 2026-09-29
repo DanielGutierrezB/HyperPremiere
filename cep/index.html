@@ -68,7 +68,7 @@
         <strong>Generar</strong> (1ª vez): crea el recurso desde cero, con todo el contexto (objetivo + transcript completo + imágenes).<br>
         <strong>Generar (refinar) / Feedback:</strong> ajusta sobre la versión previa con tu nueva instrucción. Manda menos contexto (no reenvía el transcript completo de la clase) para ahorrar tokens.<br>
         <strong>Regenerar desde cero:</strong> descarta lo anterior y crea uno nuevo solo con la instrucción + recursos actuales (contexto completo otra vez).<br>
-        <strong>Editar HTML manualmente:</strong> abrís una versión, la retocás a mano y la renderizás sin gastar IA.</p>
+        <strong>Editar código manualmente:</strong> abrís una versión, la retocás a mano y la renderizás sin gastar IA. Se abre en el lenguaje del motor con el que se generó (HTML en HyperFrames, React en Remotion).</p>
 
         <p class="help-diff"><strong>— Feedback y tokens —</strong><br>
         En un feedback estás refinando algo ya generado, así que las imágenes ya adjuntas aparecen <strong>apagadas (gris)</strong> y <strong>no se reenvían</strong> al modelo → ahorrás tokens (las imágenes son lo más caro). Si un ajuste depende de <em>ver</em> una imagen, tocá su <strong>📤 reenviar</strong> para reactivarla. Cualquier imagen <strong>nueva</strong> que agregues en el feedback entra activa sola. Ojo: las imágenes marcadas <strong>✓ usar</strong> se incrustan en el gráfico igual, se reenvíen o no (el logo/ícono aparece aunque el modelo no lo "vea").</p>
@@ -318,6 +318,24 @@
           <span id="baseurl-hint" class="muted"></span>
         </div>
 
+        <!-- Con QUÉ se escribe y se renderiza una animación. Son dos lenguajes
+             distintos: HyperFrames es un HTML con GSAP y Remotion son
+             componentes de React. El selector decide lo NUEVO; cada versión ya
+             generada recuerda con qué nació y se sigue refinando y
+             re-renderizando con ése (ver bridge/render/motores.js).
+             Remotion no viene con el panel —son ~400 MB con su Chrome— así que
+             se instala a pedido, desde el botón de al lado. -->
+        <div id="row-engine" class="cfg-row">
+          <label class="field-label">Motor de animación</label>
+          <div class="engine-row">
+            <div id="cfg-engine" class="hp-select"></div>
+            <button id="btn-install-engine" type="button" class="btn-mic-test" data-hidden="true"
+                    title="Baja e instala este motor en ~/.hyperpremiere. Se hace una sola vez por equipo.">Instalar</button>
+          </div>
+          <span id="engine-status" class="muted"></span>
+          <div id="engine-progress" class="hp-bar" data-hidden="true"><div id="engine-fill" class="hp-bar-fill"></div></div>
+        </div>
+
         <div class="cfg-row">
           <label class="field-label" for="cfg-concurrency">Diseños en paralelo (IA)</label>
           <input type="number" id="cfg-concurrency" class="offset-input" min="1" max="8" step="1" value="3"
@@ -409,6 +427,9 @@
        menciones de referencias. Van temprano y sin dependencias: los usan tanto
        las vistas como el widget del dictado. -->
   <script src="js/iconos.js"></script>
+  <!-- Qué motores de animación hay y cómo se llama cada uno. Va con los helpers
+       porque no depende de nada y lo consultan tres vistas distintas. -->
+  <script src="js/motores.js"></script>
   <script src="js/menciones.js"></script>
   <script src="js/campo.js"></script>
   <script src="js/log.js"></script>

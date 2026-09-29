@@ -50,11 +50,19 @@ const {
 // (`@[curso/logo.svg]`) y su traducción al número que el modelo ya entiende.
 const menciones = require('./prompt/menciones');
 const { buildObjectivePrompt } = require('./prompt/objective');
-const { renderComposition, renderLanes } = require('./render/hyperframes');
-// Conseguir una composición renderizable (escalera de llamadas al modelo) y el
-// contrato que tiene que cumplir.
-const { composeAnimation, problemText } = require('./compose');
-const { inspectComposition, PROBLEM } = require('./composition');
+const { renderLanes } = require('./render/hyperframes');
+// Los MOTORES de animación. Este archivo ya no habla de GSAP ni de React: le
+// pide al motor que corresponda su prompt, su contrato y su render.
+//
+// Cuál corresponde depende de QUÉ se está haciendo, y la distinción importa:
+//   - lo NUEVO (Generar, Regenerar desde cero) usa el motor de ⚙;
+//   - lo que YA EXISTE (refinar, corregir, re-renderizar, editar a mano) usa el
+//     motor con el que nació esa versión, que viaja en su ficha.
+// Cambiar el selector no reinterpreta el trabajo hecho: un HTML de la semana
+// pasada no se vuelve React porque hoy el editor eligió Remotion.
+const motores = require('./render');
+// Conseguir una composición renderizable (escalera de llamadas al modelo).
+const { composeAnimation } = require('./compose');
 const {
   slugify,
   ensureOutputDir,
@@ -78,7 +86,7 @@ const {
   addReference,
   removeReference,
   setReferenceUse,
-  lastCompositionHtml,
+  lastComposition,
   saveStills,
   saveResources,
   // Con qué nombre queda un adjunto en el disco. Lo necesita el estimado, que
@@ -86,7 +94,11 @@ const {
   resourceFileName,
 } = require('./store/project-fs');
 // Nomenclatura versionada ("<slug> vN [modelo].ext"): parse/format canónicos.
-const { versionFile, nextVersion, listVersions, groupBySlug } = require('./store/versions');
+// `metaDe` traduce el nombre de una composición al de su ficha, que es de donde
+// sale con qué motor se escribió.
+const {
+  versionFile, nextVersion, listVersions, groupBySlug, metaName: metaDe,
+} = require('./store/versions');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -149,9 +161,25 @@ function windowsExtraPaths() {
   process.env.PATH = merged.join(sep);
 })();
 
-const SYSTEM_PROMPT_PATH = path.join(__dirname, 'prompt', 'system.md');
-const CONFIG_DIR = path.join(os.homedir(), '.hyperpremiere');
-const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+/**
+ * Dónde vive la config de esta máquina.
+ *
+ * Se resuelve CADA VEZ y no una sola al cargar el módulo. Parece un detalle y no
+ * lo es: varios tests mueven `process.env.HOME` a un temporal justo para no
+ * escribirle la config al editor que esté corriéndolos, y con la ruta calculada
+ * al cargar, ese `HOME` no cambiaba nada — el primer archivo de la suite que
+ * pedía el motor la fijaba con el HOME real y los demás escribían ahí igual.
+ *
+ * No era teórico: en el `~/.hyperpremiere/config.json` de esta máquina había un
+ * `apiKey: "sk-nueva"` puesto por `test/dictado-refinar.test.js` y el modelo
+ * cambiado a `falso` por `test/menciones.test.js`. Correr los tests le cambiaba
+ * el proveedor y el modelo al panel, y ninguno fallaba por eso.
+ *
+ * Que cueste dos `path.join` por lectura no se mide: la config se toca una vez
+ * por generación, no por cuadro.
+ */
+function configDir() { return path.join(os.homedir(), '.hyperpremiere'); }
+function configPath() { return path.join(configDir(), 'config.json'); }
 const DEFAULT_PROVIDER = 'claude-cli';
 
 // Modelo por defecto por proveedor. Vacío = el editor lo define (API compat / Ollama).
@@ -189,7 +217,7 @@ function normalizeEffort(value) {
 // Migra el formato viejo plano (model/apiKey/baseUrl arriba) sin perder nada.
 function loadRawConfig() {
   let stored = {};
-  try { stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) || {}; } catch (e) {}
+  try { stored = JSON.parse(fs.readFileSync(configPath(), 'utf8')) || {}; } catch (e) {}
 
   const raw = {
     provider: stored.provider && String(stored.provider).trim() ? stored.provider : DEFAULT_PROVIDER,
@@ -200,6 +228,13 @@ function loadRawConfig() {
     // El micrófono del dictado, por NOMBRE ('' = el del sistema). Es de la
     // máquina, como el resto de este archivo, no del proyecto ni del proveedor.
     microfono: String(stored.microfono || '').trim(),
+    // El MOTOR de animación con el que se genera lo nuevo. Está al lado del
+    // micrófono y no adentro de `perProvider` porque no es del proveedor:
+    // cualquier modelo puede escribir para cualquiera de los dos motores, y
+    // cambiar de Claude a Cursor no tiene por qué cambiar el lenguaje en el que
+    // se compone. Un id que este panel no conoce se resuelve al de siempre, no
+    // tira (ver motor() en render/motores.js).
+    renderEngine: String(stored.renderEngine || '').trim() || motores.PREDETERMINADO,
     perProvider: (stored.perProvider && typeof stored.perProvider === 'object') ? stored.perProvider : {},
   };
 
@@ -215,8 +250,8 @@ function loadRawConfig() {
 }
 
 function saveRawConfig(raw) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf8');
+  fs.mkdirSync(configDir(), { recursive: true });
+  fs.writeFileSync(configPath(), JSON.stringify(raw, null, 2), 'utf8');
 }
 
 // Vista PLANA del proveedor activo (lo que consumen los providers): incluye
@@ -233,6 +268,7 @@ function loadConfig() {
     oauthToken: raw.oauthToken || '',
     effort: raw.effort,
     microfono: raw.microfono || '',
+    renderEngine: raw.renderEngine,
     perProvider: raw.perProvider,
   };
 }
@@ -263,6 +299,14 @@ function saveConfig(patch) {
   if (patch.microfono !== undefined && patch.microfono !== null) {
     raw.microfono = String(patch.microfono).trim();
   }
+  // El motor solo se guarda si el panel LO CONOCE. No es defensa contra el
+  // editor —el desplegable ofrece los que hay— sino contra dejar escrito en el
+  // disco un id que no existe: el que lee tolera eso cayendo al motor de
+  // siempre, y entonces ⚙ mostraría "HyperFrames" mientras el archivo dice otra
+  // cosa, y el próximo que lo lea no sabría cuál de los dos le está mintiendo.
+  if (patch.renderEngine !== undefined && motores.existe(patch.renderEngine)) {
+    raw.renderEngine = String(patch.renderEngine).trim().toLowerCase();
+  }
   raw.perProvider[provider] = slot;
   saveRawConfig(raw);
   // Guardar la config es lo único que puede cambiar QUÉ refina el dictado sin
@@ -287,6 +331,13 @@ function maskConfig(cfg) {
     effort: cfg.effort || DEFAULT_EFFORT,
     usesEffort: usesEffortFlag(cfg.provider),
     microfono: cfg.microfono || '',
+    // Qué motor está elegido y qué motores hay, con su estado de instalación.
+    // Los dos juntos porque el desplegable de ⚙ necesita las dos cosas para
+    // dibujarse una vez, y porque el estado es lo que decide si al lado va el
+    // botón de instalar: preguntarlo por separado dejaba un parpadeo en el que
+    // Remotion aparecía como disponible antes de saber si estaba.
+    renderEngine: cfg.renderEngine || motores.PREDETERMINADO,
+    motores: motores.catalogo(),
   };
 }
 
@@ -899,27 +950,19 @@ function mimeDeImagen(s) {
  * decodificó la imagen para escribirla, así que las sabe; el que estima no las
  * lee a propósito —abrir los píxeles de una captura de 3,5 MB para acertarle a
  * diecisiete caracteres es pagar mucho más de lo que informa—.
+ *
+ * El TEXTO es del motor —cómo se incrusta una imagen es `<img src="assets/…">`
+ * en HyperFrames y `<Img src={staticFile('assets/…')}/>` en Remotion—; lo que
+ * queda acá es dónde va en el pedido y que el estimado lo cuente.
  */
-function bloqueDeAssets(infos) {
+function bloqueDeAssets(infos, motor) {
   if (!infos.length) return '';
-  return '\n\n## Imágenes provistas disponibles como ARCHIVO (para incrustar)\n' +
-    'Las imágenes de referencia también están disponibles como archivos en la carpeta assets/ del proyecto ' +
-    '(con sus dimensiones reales en px — respetá el aspect ratio al usarlas):\n' +
-    infos.map((a) => '- assets/' + a.name + (a.w && a.h ? ' (' + a.w + '×' + a.h + ' px)' : '')).join('\n') +
-    '\nSi la instrucción pide USAR o incluir una imagen provista (un logo, icono, foto o marca), ' +
-    'INCRUSTALA tal cual con <img src="assets/NOMBRE"> (ruta relativa exacta) — NO la recrees ni dibujes una aproximación. ' +
-    'Escalala manteniendo su proporción (usá las dimensiones de arriba) y ubicala según la instrucción. ' +
-    'Si son solo referencia visual (por ej. un frame del video para leer composición/paleta), usalas como contexto y NO las incrustes.';
+  return motor.bloqueDeAssets(infos);
 }
 
 /** El bloque del marcador "con fondo": otro pedazo del pedido que el estimado tiene que ver. */
-function bloqueDeFondo() {
-  return '\n\n## Fondo (esta composición LLEVA FONDO — NO es transparente)\n' +
-    '- Cubrí TODO el #stage (1920×1080) con un fondo OPACO de pantalla completa; sin zonas transparentes.\n' +
-    '- Estilo MINIMALISTA con algo de TEXTURA sutil (grano fino, gradiente suave, patrón geométrico tenue o ruido leve). Nada recargado.\n' +
-    '- La temática del fondo debe relacionarse con el OBJETIVO de la clase y el tema de este tramo del transcript (evocá el concepto, no lo hagas literal).\n' +
-    '- CONTRASTE: lo que va al frente (texto/gráficos) debe leerse con claridad sobre el fondo. Asegurá suficiente diferencia de luminosidad; si hace falta, poné un velo/oscurecido detrás del texto.\n' +
-    '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
+function bloqueDeFondo(motor) {
+  return motor.bloqueDeFondo();
 }
 
 // Guarda las imágenes provistas como ARCHIVOS embebibles (asset-01.png, …) en
@@ -977,11 +1020,40 @@ async function prepareGeneration(body, mode, onProgress) {
   const dicho = men.textos;
 
   report({ pct: 5, msg: 'Armando el contexto…' });
-  const systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8');
+
+  // Config activa. Se lee ACÁ arriba y no más abajo porque de ella sale el
+  // motor, y del motor sale el system prompt: todo lo que se arma después
+  // depende de con qué se va a renderizar esto.
+  const config = loadConfig();
+  // Fondo opcional: con fondo => mp4 opaco HD; sin fondo => mov con alpha.
+  const withBackground = body.background === true;
+  const videoExt = withBackground ? 'mp4' : 'mov';
+  const baseDir = ensureOutputDir(projectPath, sequenceName);
+  const version = nextVersion(baseDir, markerSlug);
+
+  // La versión previa, para refinar. Se lee ACÁ —antes de resolver el motor—
+  // porque de ella sale CON QUÉ MOTOR se hizo, y eso manda sobre el selector de
+  // ⚙: refinar es pedirle al modelo "tomá esto y mejoralo", y lo que le
+  // mostramos como base está escrito en el lenguaje de un motor. Mandarle un
+  // HTML con GSAP pidiéndole React no es refinar, es rehacerlo de cero
+  // mintiéndole sobre la base; y el resultado tampoco se podría renderizar como
+  // la versión anterior.
+  //
+  // Si el panel mandó el código previo lo usamos (es lo que el editor está
+  // mirando), pero el MOTOR siempre sale del disco: la ficha es el único lugar
+  // donde ese dato está escrito.
+  const previa = mode === 'adjust' && version > 1
+    ? lastComposition(baseDir, markerSlug, version)
+    : null;
+  const motor = previa && previa.engine
+    ? motores.motor(previa.engine)
+    : motores.motor(config.renderEngine);
+  const systemPrompt = motor.systemPrompt();
   // Refinamiento (adjust): prompt lean — no reenviar el transcript completo (ya
-  // tiene el HTML previo + el fragmento del marcador). Ahorra tokens en feedback.
+  // tiene el código previo + el fragmento del marcador). Ahorra tokens en feedback.
   const leanPrompt = mode === 'adjust';
   let userPrompt = buildUserPrompt({
+    engine: motor.id,
     objective, transcriptSegments: transcript, marker, markerTranscript,
     instruction: dicho.instruction, stillsCount: stillsList.length,
     // Los dos niveles generales viajan por separado hasta acá: quién le gana a
@@ -999,14 +1071,7 @@ async function prepareGeneration(body, mode, onProgress) {
     lean: leanPrompt,
   });
 
-  // Config activa (necesitamos el modelo antes de armar los nombres de archivo).
-  const config = loadConfig();
-  // Fondo opcional: con fondo => mp4 opaco HD; sin fondo => mov con alpha.
-  const withBackground = body.background === true;
-  const videoExt = withBackground ? 'mp4' : 'mov';
-  const baseDir = ensureOutputDir(projectPath, sequenceName);
-  const version = nextVersion(baseDir, markerSlug);
-  const outPaths = paths(baseDir, markerSlug, version, config.model, videoExt);
+  const outPaths = paths(baseDir, markerSlug, version, config.model, videoExt, motor.ext);
 
   // La ficha de DÓNDE VA este recurso se escribe ANTES de gastar el modelo, no
   // al final. Es el único dato que no se puede reconstruir mirando el disco: el
@@ -1021,6 +1086,10 @@ async function prepareGeneration(body, mode, onProgress) {
   writeVersionMeta(outPaths.meta, fichaDeGeneracion({
     sequenceName, markerSlug, marker,
     version, model: config.model, provider: config.provider, mode,
+    // Con qué motor se hizo. Se anota junto con el modelo y por el mismo
+    // motivo: es lo que hace falta para volver a tocar esta versión más
+    // adelante, cuando el selector de ⚙ ya diga otra cosa.
+    engine: motor.id,
     instruction, prompts,
     // Se termina de escribir cuando el render sale bien; si esto queda en
     // true, la generación no llegó al final.
@@ -1028,17 +1097,16 @@ async function prepareGeneration(body, mode, onProgress) {
   }));
 
   // Modo "ajustar": toma como REFERENCIA la última versión ya generada.
-  // Si el panel no mandó el HTML previo, lo leemos del disco.
+  // Si el panel no mandó el código previo, usamos el que ya leímos del disco.
   if (mode === 'adjust') {
-    let prevHtml = String(previousHtml || '').trim();
-    if (!prevHtml && version > 1) prevHtml = lastCompositionHtml(baseDir, markerSlug, version);
+    const prevCode = String(previousHtml || '').trim() || (previa ? previa.code : '');
     userPrompt += [
       '', '## Refinamiento sobre la versión previa',
       'Ya generaste una versión de este recurso (abajo). Tomala como REFERENCIA:',
       'mantené lo que funciona y aplicá la nueva instrucción del editor sobre esa base.',
       '', '### Nueva instrucción', (dicho.adjustment || dicho.instruction || '').trim() || '(sin detalle)',
-      '', '### Versión previa (HTML)', '```html', prevHtml || '(no disponible)', '```',
-      '', 'Devolvé SOLO el HTML completo de la versión refinada.',
+      '', '### Versión previa', '```' + motor.fence, prevCode || '(no disponible)', '```',
+      '', 'Devolvé SOLO ' + motor.comoSeLlama + ' completo de la versión refinada.',
     ].join('\n');
   }
   saveStills(outPaths.stillsDir, stillsList);
@@ -1051,7 +1119,7 @@ async function prepareGeneration(body, mode, onProgress) {
   const assetList = (Array.isArray(body.assets) ? body.assets : []).map(stillToDataUrl).filter(Boolean);
   const assetsDir = path.join(baseDir, '_assets', markerSlug);
   const assetInfos = saveAssets(assetsDir, assetList);
-  userPrompt += bloqueDeAssets(assetInfos);
+  userPrompt += bloqueDeAssets(assetInfos, motor);
 
   // Recursos de referencia (PDFs, docs) subidos por el editor: se guardan al
   // lado de la render y se le pasan al modelo por el camino que su proveedor
@@ -1110,7 +1178,7 @@ async function prepareGeneration(body, mode, onProgress) {
 
   // Fondo: si el marcador se genera CON fondo, instruir un fondo opaco de
   // pantalla completa (minimalista, con textura, temático y con buen contraste).
-  if (withBackground) userPrompt += bloqueDeFondo();
+  if (withBackground) userPrompt += bloqueDeFondo(motor);
 
   // Continuidad: SOLO inyectar el HTML de otros marcadores si la instrucción
   // realmente pide continuar/retomar/mantener estilo (ahorra tokens y latencia;
@@ -1141,7 +1209,13 @@ async function prepareGeneration(body, mode, onProgress) {
           'contenido de este tramo. No lo copies literal: es la misma familia, no el mismo cartel.\n'
         : 'Otros recursos ya generados en esta clase (referencia de continuidad y estilo)\n' +
           'Mantené coherencia con estos (tu instrucción pide continuar/retomar):\n') +
-        others.items.map((o) => '### ' + o.slug + '\n```html\n' + o.html + '\n```').join('\n\n');
+        // Cada recurso se marca con el fence del motor con el que se hizo, no
+        // con el de este pedido: si la clase arrancó en HyperFrames y hoy se
+        // genera con Remotion, lo que se le muestra al modelo sigue siendo HTML
+        // y decirle que es TSX lo haría leer React donde hay markup. El pedido
+        // es "seguí ese sistema visual", que se lee igual en los dos lenguajes.
+        others.items.map((o) => '### ' + o.slug + '\n```' + motores.motor(o.engine).fence +
+          '\n' + o.html + '\n```').join('\n\n');
       continuidadNota = (dirigido ? 'sigue el diseño de ' : 'continuidad con ') +
         others.items.map((o) => o.slug).join(' + ');
     }
@@ -1229,8 +1303,8 @@ async function prepareGeneration(body, mode, onProgress) {
   let html, usage;
   try {
     ({ html, usage } = await composeAnimation({
-      provider, config: Object.assign({}, config, { readDirs, docFiles }),
-      systemPrompt, userPrompt, images: stillsList,
+      provider, config: Object.assign({}, config, { readDirs, docFiles, engine: motor.id }),
+      motor, systemPrompt, userPrompt, images: stillsList,
       durationSec, markerSlug, report,
     }));
   } catch (e) {
@@ -1241,34 +1315,40 @@ async function prepareGeneration(body, mode, onProgress) {
     // abajo. Acá es donde el motor se entera; provider-salud.js lo recuerda.
     providerSalud.anotar(config.provider, cliErrors.causa(String((e && e.message) || e)),
       String((e && e.message) || e));
-    // compose corta cuando la composición no es renderizable. El HTML igual se
+    // compose corta cuando la composición no es renderizable. El código igual se
     // guarda: ya se pagó, y es con lo que el editor puede ver qué pasó o
-    // arreglarlo a mano y darle a "Renderizar HTML".
+    // arreglarlo a mano y darle a "Renderizar código".
     if (e && e.noRenderizable && e.html) {
       try {
-        fs.writeFileSync(outPaths.html, e.html, 'utf8');
-        e.message += '\nEl HTML quedó guardado en: ' + outPaths.html;
+        fs.writeFileSync(outPaths.code, e.html, 'utf8');
+        e.message += '\nEl código quedó guardado en: ' + outPaths.code;
       } catch (e2) {}
     }
     throw e;
   }
   const modelMs = Date.now() - modelStartedAt;
 
-  fs.writeFileSync(outPaths.html, html, 'utf8');
+  fs.writeFileSync(outPaths.code, html, 'utf8');
   report({
     pct: 55,
     // ↑ es la entrada COMPLETA, con la caché: `inputTokens` a secas es apenas lo
     // que no estaba cacheado y este aviso mostraba "↑6" (ver makeUsage).
-    msg: 'HTML listo · Tokens: ↑' + usage.totalInputTokens + ' ↓' + usage.outputTokens,
+    msg: 'Composición lista · Tokens: ↑' + usage.totalInputTokens + ' ↓' + usage.outputTokens,
     usage: usage,
   });
 
   // "prepared": todo lo que renderPrepared necesita para renderizar + guardar meta.
   return {
-    ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.html, metaPath: outPaths.meta,
+    ok: true, html, outMovPath: outPaths.mov, htmlPath: outPaths.code, metaPath: outPaths.meta,
     durationSec, videoExt, version, markerSlug, baseDir,
     usage, background: withBackground, instruction, prompts, marker, assetsDir, sequenceName,
     model: config.model, provider: config.provider, mode, adjustment, modelMs,
+    // Con qué se renderiza y con qué se anota en la ficha. Viaja en el paquete
+    // en vez de volver a leerse de ⚙ en renderPrepared: entre el momento en que
+    // el modelo compone y el momento en que esto se renderiza pasan minutos, y
+    // el editor puede haber cambiado el selector mientras tanto. Lo que se
+    // renderiza tiene que ser lo que se compuso.
+    engine: motor.id,
   };
 }
 
@@ -1342,6 +1422,7 @@ function fichaDeGeneracion(g, extra) {
     instruction: g.instruction,
     adjustment: g.mode === 'adjust' ? g.adjustment : undefined,
     prompts: g.prompts,
+    engine: g.engine,
     background: g.background,
     // Antes de renderizar todavía no hay archivo de video: el formato lo pone el
     // que ya lo escribió.
@@ -1378,14 +1459,17 @@ function buildHistory(baseDir, markerSlug, version) {
   return history;
 }
 
-// Etapa 2 (RENDER): renderiza el HTML preparado y guarda la metadata.
+// Etapa 2 (RENDER): renderiza la composición preparada y guarda la metadata.
 async function renderPrepared(prepared, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   if (!prepared || !prepared.ok) throw new Error('renderPrepared: prepared inválido');
   report({ pct: 60, msg: prepared.background ? 'Renderizando video HD (con fondo)…' : 'Renderizando el video con alpha…' });
   const renderStartedAt = Date.now();
-  await renderComposition({
-    html: prepared.html, outMovPath: prepared.outMovPath, durationSec: prepared.durationSec,
+  // El motor que COMPUSO esto, que viaja en el paquete. Ver `engine` en
+  // prepareGeneration: leerlo de ⚙ acá renderizaría con otro motor del que
+  // escribió el código si el editor tocó el selector mientras la cola avanzaba.
+  await motores.motor(prepared.engine).renderizar({
+    code: prepared.html, outPath: prepared.outMovPath, durationSec: prepared.durationSec,
     onProgress: report, format: prepared.videoExt,
     assetsDir: prepared.assetsDir,
   });
@@ -1457,13 +1541,19 @@ function estimateTokens(body) {
     // Sale de la config, que es la puerta que va a atender la llamada; el cuerpo
     // lo puede traer para preguntar por OTRA (¿y si mandara esto por Claude?).
     const docs = repartirDocumentos(resources, body.provider || loadConfig().provider);
+    // El motor cambia el tamaño del pedido: el system prompt de Remotion y el de
+    // HyperFrames no miden lo mismo, y tampoco el contrato ni el bloque de
+    // assets. El cuerpo lo puede traer para preguntar por OTRO motor, igual que
+    // con el proveedor.
+    const motor = motores.motor(body.engine || loadConfig().renderEngine);
 
     let systemPrompt = '';
-    try { systemPrompt = fs.readFileSync(SYSTEM_PROMPT_PATH, 'utf8'); } catch (e) {}
+    try { systemPrompt = motor.systemPrompt(); } catch (e) {}
 
     let userPrompt = '';
     try {
       userPrompt = buildUserPrompt({
+        engine: motor.id,
         objective: body.objective || '',
         transcriptSegments: transcript,
         marker,
@@ -1492,9 +1582,9 @@ function estimateTokens(body) {
     }
     // Los tres bloques que prepareGeneration le agrega DESPUÉS de armar el
     // cuerpo, con las mismas funciones que los escriben.
-    userPrompt += bloqueDeAssets(assetInfos) +
+    userPrompt += bloqueDeAssets(assetInfos, motor) +
       bloqueDeDocumentos(docs.textuales) +
-      (body.background === true ? bloqueDeFondo() : '');
+      (body.background === true ? bloqueDeFondo(motor) : '');
 
     const promptChars = systemPrompt.length + userPrompt.length;
     const inputTokensEst = Math.ceil(promptChars / 4) +
@@ -1673,7 +1763,7 @@ function findMarkerSlug(slugs, n) {
 // Devuelve { items, missing }: `missing` son los números que pediste y todavía
 // no tienen ningún diseño generado, para poder avisarlo en vez de ignorarlo.
 function listOtherResources(baseDir, currentSlug, wanted) {
-  const bySlug = groupBySlug(baseDir, ['.html']);
+  const bySlug = groupBySlug(baseDir, motores.extensiones());
   const slugs = Object.keys(bySlug).filter((s) => s !== currentSlug);
   const items = [];
   const missing = [];
@@ -1682,8 +1772,12 @@ function listOtherResources(baseDir, currentSlug, wanted) {
     const latest = bySlug[slug][bySlug[slug].length - 1]; // orden ascendente → última
     try {
       let html = fs.readFileSync(path.join(baseDir, latest.name), 'utf8');
-      if (html.length > maxChars) html = html.slice(0, maxChars) + '\n<!-- …(recortado)… -->';
-      items.push({ slug: slug + ' v' + latest.version, html: html });
+      // El aviso del recorte se escribe con el comentario del LENGUAJE del
+      // archivo: un `<!-- … -->` pegado al final de un .tsx es un error de
+      // sintaxis, y lo que el modelo ve a continuación es código roto.
+      const motor = motores.motorDeFicha(readMeta(path.join(baseDir, metaDe(latest.name))));
+      if (html.length > maxChars) html = html.slice(0, maxChars) + '\n' + motor.comentario('…(recortado)…');
+      items.push({ slug: slug + ' v' + latest.version, html: html, engine: motor.id });
       return html.length;
     } catch (e) { return 0; }
   }
@@ -2012,7 +2106,7 @@ function listMarkerVersions(body) {
     // de que ese marcador haya generado nada. Sin carpeta la lista es vacía, que
     // es la misma respuesta que daba con la carpeta recién creada.
     const baseDir = outputDirPath(body.projectPath, body.sequenceName);
-    return { ok: true, versions: listVersions(baseDir, markerSlug, '.html') };
+    return { ok: true, versions: listVersions(baseDir, markerSlug, motores.extensiones()) };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e), versions: [] };
   }
@@ -2102,12 +2196,18 @@ function findMarkerPosition(baseDir, slug, versions, ctx) {
     return out;
   }
 
-  // 3) El HTML: la duración está declarada en la composición, la posición no.
+  // 3) El código: la duración puede estar declarada en la composición, la
+  // posición nunca. Y "puede": en HyperFrames está (`data-duration` en el
+  // `#stage`), en Remotion NO está por diseño —el componente la lee de
+  // `useVideoConfig()` justamente para no desincronizarse del marcador—. Que
+  // esta fuente no conteste con Remotion no es una pérdida: lo que la hacía
+  // falta era rescatar recursos viejos, y esos son todos HyperFrames.
   for (let i = versions.length - 1; i >= 0; i--) {
-    const htmlPath = versionFile(baseDir, slug, versions[i].version, '.html');
-    if (!htmlPath) continue;
+    const file = versionFile(baseDir, slug, versions[i].version, '.html');
+    if (!file) continue;
     try {
-      const seen = inspectComposition(fs.readFileSync(htmlPath, 'utf8'), { durationSec: 0, markerSlug: slug });
+      const seen = motores.motor('hyperframes')
+        .revisar(fs.readFileSync(file, 'utf8'), { durationSec: 0, markerSlug: slug });
       if (seen.duration > 0) { out.duration = seen.duration; out.source = 'html'; return out; }
     } catch (e) {}
   }
@@ -2128,7 +2228,7 @@ function sequenceNameOfDir(dir, groups) {
   // Sin transcript, la ficha lo guarda desde la v1.4.33.
   for (const slug of Object.keys(groups)) {
     for (const v of groups[slug]) {
-      const meta = readMeta(path.join(dir, v.name.replace(/\.html$/, '.meta.json')));
+      const meta = readMeta(path.join(dir, metaDe(v.name)));
       if (meta && meta.sequenceName) return String(meta.sequenceName);
     }
   }
@@ -2165,7 +2265,7 @@ function correctionSources(root) {
     let st = null;
     try { st = fs.statSync(dir); } catch (e) { continue; }
     if (!st.isDirectory()) continue;
-    const groups = groupBySlug(dir, ['.html']);
+    const groups = groupBySlug(dir, motores.extensiones());
     const count = Object.keys(groups).length;
     if (!count) continue;
     // El nombre puede no estar (una clase vieja, sin transcript ni ficha): se
@@ -2246,7 +2346,7 @@ function listCorrections(body) {
     const baseDir = path.join(root, folderSlug);
     const sourceSequenceName = elegida.source.sequenceName;
 
-    const byHtml = groupBySlug(baseDir, ['.html']);
+    const byHtml = groupBySlug(baseDir, motores.extensiones());
     const byVideo = groupBySlug(baseDir, ['.mov', '.mp4']);
     // La cola se lee una vez para toda la lista: es el respaldo de los recursos
     // a los que les falta la ficha, y son varios en las clases viejas.
@@ -2264,11 +2364,18 @@ function listCorrections(body) {
       const hasVideo = (v) => videos.some((e) => e.version === v);
       const latest = versions[versions.length - 1];
       const pos = findMarkerPosition(baseDir, slug, versions, { folderSlug, queueJobs });
+      // Con qué motor se hizo CADA versión, no solo la última: el editor de
+      // código abre la que quiera, y de eso depende con qué resaltarla y con
+      // qué re-renderizarla. Una clase puede tener versiones de los dos.
+      const motorDe = (v) => motores.motorDeFicha(readMeta(path.join(baseDir, metaDe(v.name)))).id;
       return {
         slug,
         latestVersion: latest.version,
         model: latest.model || '',
-        versions: versions.map((v) => ({ version: v.version, model: v.model || '', hasVideo: hasVideo(v.version) })),
+        engine: motorDe(latest),
+        versions: versions.map((v) => ({
+          version: v.version, model: v.model || '', engine: motorDe(v), hasVideo: hasVideo(v.version),
+        })),
         start: pos.start,
         duration: pos.duration,
         timeSource: pos.source,
@@ -2315,7 +2422,7 @@ function saveCorrectionPosition(body) {
     if (!(start >= 0)) return { ok: false, error: 'el segundo de entrada no puede ser negativo' };
 
     const baseDir = outputDirPath(body.projectPath, body.sequenceName);
-    const versions = listVersions(baseDir, markerSlug, '.html');
+    const versions = listVersions(baseDir, markerSlug, motores.extensiones());
     if (!versions.length) return { ok: false, error: 'no hay versiones de ' + markerSlug };
     const version = versions[versions.length - 1].version;
     const metaPath = versionFile(baseDir, markerSlug, version, '.meta.json') ||
@@ -2334,25 +2441,155 @@ function saveCorrectionPosition(body) {
   }
 }
 
-// Lee el HTML de una versión concreta de un marcador.
+/**
+ * El código de una versión concreta de un marcador, para el editor del panel.
+ *
+ * Devuelve además el MOTOR: de eso depende con qué lo resalta Prism y con qué
+ * se va a renderizar cuando el editor le dé a guardar. Sin ese dato el panel
+ * tendría que adivinarlo de la extensión, que es la única otra pista que tiene.
+ */
 function readMarkerHtml(body) {
   try {
     body = body || {};
     const markerSlug = String(body.markerSlug || '').trim();
     const version = parseInt(body.version, 10);
     if (!markerSlug || !version) return { ok: false, error: 'faltan markerSlug/version' };
-    // Abrir un HTML ya guardado: si la carpeta no está, no hay versión que abrir.
+    // Abrir una composición ya guardada: si la carpeta no está, no hay versión
+    // que abrir.
     const baseDir = outputDirPath(body.projectPath, body.sequenceName);
-    const p = versionFile(baseDir, markerSlug, version, '.html');
-    if (!p) return { ok: false, error: 'no se encontró la versión ' + version };
-    return { ok: true, html: fs.readFileSync(p, 'utf8'), version };
+    const enDisco = archivoDeVersion(baseDir, markerSlug, version);
+    if (!enDisco) return { ok: false, error: 'no se encontró la versión ' + version };
+    return {
+      ok: true, html: fs.readFileSync(enDisco.file, 'utf8'), version,
+      engine: enDisco.motor.id, lenguaje: enDisco.motor.lenguaje,
+    };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
 }
 
-// Renderiza un HTML editado a mano por el editor como una NUEVA versión, SIN
-// llamar al modelo. Se marca como [manual] en el nombre. Devuelve el .mov.
+/**
+ * El archivo de composición de una versión, con el motor que lo escribió.
+ *
+ * Se busca por CADA extensión conocida en vez de armar el nombre: la del
+ * archivo la decidió el motor con el que se generó, y quien pregunta por "la
+ * v2" no tiene por qué saber cuál fue. `null` si esa versión no está.
+ */
+function archivoDeVersion(baseDir, markerSlug, version) {
+  for (const ext of motores.extensiones()) {
+    const file = versionFile(baseDir, markerSlug, version, ext);
+    if (!file) continue;
+    return {
+      file: file,
+      motor: motores.motorDeFicha(readMeta(path.join(baseDir, metaDe(path.basename(file))))),
+    };
+  }
+  return null;
+}
+
+/**
+ * Abre la VISTA PREVIA de una composición: reproducirla en vivo, sin renderizar.
+ *
+ * Es la respuesta a "¿puedo ver esto antes de pagar un render?". Hasta acá la
+ * única forma de mirar una animación era renderizarla —ocho segundos por
+ * mirada, y otros ocho si el timing no cerraba—. Lo que se abre es un
+ * reproductor con timeline: se scrubea, se pone en loop, se marca un tramo.
+ *
+ * NO renderiza, NO llama al modelo y NO escribe una versión. El botón que hace
+ * entrar un clip a la secuencia sigue siendo el de siempre.
+ *
+ * Si `code` viene en el cuerpo, se mira ESO y no lo que hay en disco: es lo que
+ * convierte al editor de código y a la ventana de vista previa en un par
+ * —editás, apretás vista previa, y lo que estaba en pantalla cambia— sin tener
+ * que guardar una versión por cada mirada.
+ *
+ * No todos los motores pueden: HyperFrames pide su timeline PAUSADA para que el
+ * capturador la posicione cuadro por cuadro, así que abrir ese HTML muestra el
+ * primer cuadro y nada más. Cuando el motor no la ofrece se dice CON el motivo,
+ * porque "no se puede" a secas suena a que algo está roto.
+ */
+async function previewComposition(body) {
+  try {
+    body = body || {};
+    const markerSlug = String(body.markerSlug || '').trim();
+    const version = parseInt(body.version, 10);
+    if (!markerSlug) return { ok: false, error: 'falta markerSlug' };
+
+    const baseDir = outputDirPath(body.projectPath, body.sequenceName);
+    const enDisco = version ? archivoDeVersion(baseDir, markerSlug, version) : null;
+    // El código puede venir del editor sin guardar; el MOTOR siempre sale de la
+    // ficha, que es el único lugar donde está declarado. Sin versión en disco
+    // —previsualizar algo recién pegado— manda el que diga el cuerpo.
+    const motor = enDisco ? enDisco.motor : motores.motor(body.engine);
+
+    if (typeof motor.vistaPrevia !== 'function') {
+      return {
+        ok: false, engine: motor.id,
+        error: motor.nombre + ' no tiene vista previa: su contrato pide la timeline pausada ' +
+          'para poder capturarla cuadro por cuadro, así que abrirla en un navegador ' +
+          'muestra el primer cuadro y nada más.\n' +
+          'Para ver cómo quedó, renderizala: es lo mismo que mostraría una vista previa.',
+      };
+    }
+
+    const code = String(body.code || '').trim() ||
+      (enDisco ? fs.readFileSync(enDisco.file, 'utf8') : '');
+    if (!code) return { ok: false, error: 'no encontré la versión ' + (version || '') + ' para previsualizar' };
+
+    // La duración: la del marcador si el panel la manda (es la verdad de
+    // Premiere), y si no la que anotó la ficha de esa versión. Sin ninguna de
+    // las dos no hay vista previa posible: es el largo de la composición.
+    const ficha = enDisco ? (readMeta(path.join(baseDir, metaDe(path.basename(enDisco.file)))) || {}) : {};
+    const durationSec = Number((body.marker || {}).duration) ||
+      Number((ficha.marker || {}).duration) || 0;
+    if (!(durationSec > 0)) {
+      return { ok: false, error: 'no sé cuánto dura este marcador, así que no puedo armar la vista previa' };
+    }
+    // Con fondo se ve opaco y sin fondo con el damero de transparencia, igual
+    // que saldría el render: mirar un clip con alfa sobre negro esconde
+    // justamente los problemas de contraste que el alfa vuelve a traer.
+    const conFondo = body.background !== undefined
+      ? body.background === true
+      : ficha.background === true;
+
+    const r = await motor.vistaPrevia({
+      code: code,
+      durationSec: durationSec,
+      format: conFondo ? 'mp4' : 'mov',
+      // Qué se está mirando. Dice "editado" cuando el código vino del editor y
+      // no del disco, porque son dos cosas distintas y la ventana es la misma:
+      // sin eso, un editor que probó un cambio y no lo guardó no tiene manera de
+      // saber si está mirando su cambio o la versión de antes.
+      etiqueta: markerSlug + (version ? ' v' + version : '') +
+        (String(body.code || '').trim() ? ' (editado, sin guardar)' : ''),
+    });
+    return Object.assign({ ok: true, engine: motor.id }, r);
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+}
+
+/**
+ * Apaga la vista previa de todos los motores que tengan una.
+ *
+ * Lo llama el panel al cerrarse. No alcanza con el watchdog de inactividad de
+ * media hora: cerrar Premiere y dejar un webpack en watch comiendo memoria es
+ * exactamente la clase de cosa que se descubre una semana después.
+ */
+function closePreview() {
+  const apagados = [];
+  motores.ids().forEach((id) => {
+    const m = motores.motor(id);
+    if (typeof m.cerrarVistaPrevia !== 'function') return;
+    try {
+      if (m.cerrarVistaPrevia().andaba) apagados.push(id);
+    } catch (e) { /* apagar no puede fallar el cierre del panel */ }
+  });
+  return { ok: true, apagados };
+}
+
+// Renderiza una composición editada a mano por el editor como una NUEVA
+// versión, SIN llamar al modelo. Se marca como [manual] en el nombre.
 async function renderManualHtml(body, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   body = body || {};
@@ -2361,25 +2598,34 @@ async function renderManualHtml(body, onProgress) {
   const durationSec = Number(marker.duration) || 0;
   if (durationSec <= 0) throw new Error('marker.duration debe ser > 0');
   let cleanHtml = String(body.html || '').trim();
-  if (!cleanHtml) throw new Error('El HTML está vacío');
   const markerSlug = String(body.markerSlug || '').trim() || slugify(marker.name);
+  // El motor de la versión que el editor ABRIÓ, que el panel devuelve con el
+  // código (ver readMarkerHtml). Guardar a mano es seguir tocando esa versión,
+  // no empezar una nueva: lo que hay en el editor está escrito en el lenguaje
+  // de SU motor, y validarlo o renderizarlo con el otro no puede salir bien.
+  const motor = motores.motor(body.engine);
+  if (!cleanHtml) throw new Error('La composición está vacía');
   // Acá no hay modelo al que volver: si al editar a mano se desalinea el id o se
   // pierde la duración, el render sale CONGELADO y sin explicación. Se completa
   // el andamiaje igual que en la generación, y se avisa en el log.
-  const manual = inspectComposition(cleanHtml, { durationSec, markerSlug });
-  cleanHtml = manual.html;
+  const manual = motor.revisar(cleanHtml, { durationSec, markerSlug });
+  cleanHtml = manual.code;
   if (manual.fixes.length) {
-    report({ note: 'HTML manual: andamiaje completado en código · ' + manual.fixes.join(' · ') });
+    report({ note: 'Edición manual: andamiaje completado en código · ' + manual.fixes.join(' · ') });
   }
-  // Si lo que pegaron no es HTML, no hay nada que reparar ni que renderizar:
+  // Si lo que pegaron no es código, no hay nada que reparar ni que renderizar:
   // saldría un clip de la duración pedida en negro después de esperarlo. Suele
-  // ser un copiar-pegar de la respuesta de un chat en vez del HTML.
-  if (manual.problem === PROBLEM.NOT_HTML) {
-    throw new Error('Lo que hay en el editor no es una composición HTML: no encuentro ni una etiqueta.\n' +
-      'Pegá el HTML completo de la composición (empieza en `<` y trae su <script>), no el texto de una respuesta.');
+  // ser un copiar-pegar de la respuesta de un chat en vez de la composición.
+  if (manual.problema === motores.PROBLEMA.NO_ES_CODIGO) {
+    throw new Error('Lo que hay en el editor no es una composición de ' + motor.nombre + '.\n' +
+      'Pegá ' + motor.comoSeLlama + ' completo de la composición, no el texto de una respuesta.');
   }
-  if (manual.problem) {
-    report({ note: 'OJO, el HTML manual puede renderizar congelado: ' + problemText(manual.problem) + '.', level: 'WARN' });
+  if (manual.problema) {
+    report({
+      note: 'OJO, esta edición manual puede renderizar congelada: ' +
+        motor.textoDeProblema(manual.problema) + '.',
+      level: 'WARN',
+    });
   }
 
   const baseDir = ensureOutputDir(projectPath, sequenceName);
@@ -2388,15 +2634,15 @@ async function renderManualHtml(body, onProgress) {
   // en mov: un recurso opaco cambiaba de formato al editarlo a mano.
   const withBackground = body.background === true;
   const videoExt = withBackground ? 'mp4' : 'mov';
-  const outPaths = paths(baseDir, markerSlug, version, 'manual', videoExt);
+  const outPaths = paths(baseDir, markerSlug, version, 'manual', videoExt, motor.ext);
 
-  report({ pct: 20, msg: 'Guardando HTML editado…' });
-  fs.writeFileSync(outPaths.html, cleanHtml, 'utf8');
+  report({ pct: 20, msg: 'Guardando la edición…' });
+  fs.writeFileSync(outPaths.code, cleanHtml, 'utf8');
 
   report({ pct: 40, msg: withBackground ? 'Renderizando video HD (con fondo)…' : 'Renderizando el video con alpha…' });
   const renderStartedAt = Date.now();
-  await renderComposition({
-    html: cleanHtml, outMovPath: outPaths.mov, durationSec, onProgress: report,
+  await motor.renderizar({
+    code: cleanHtml, outPath: outPaths.mov, durationSec, onProgress: report,
     format: videoExt,
     assetsDir: path.join(baseDir, '_assets', markerSlug),
   });
@@ -2404,6 +2650,7 @@ async function renderManualHtml(body, onProgress) {
   writeVersionMeta(outPaths.meta, {
     sequenceName, markerSlug, marker,
     version, model: 'manual', provider: 'manual', mode: 'manual-edit',
+    engine: motor.id,
     // La instrucción de la ficha es el ENCARGO del recurso, no lo último que se
     // le hizo: es lo que se le vuelve a mandar al modelo la próxima vez que se
     // corrija. Escribir acá "(edición manual)" borraba el encargo original, y a
@@ -2424,13 +2671,13 @@ async function renderManualHtml(body, onProgress) {
     history: buildHistory(baseDir, markerSlug, version),
   });
 
-  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.html, version, markerSlug };
+  return { ok: true, movPath: outPaths.mov, htmlPath: outPaths.code, version, markerSlug };
 }
 
-// Re-renderiza la ÚLTIMA versión de un marcador (HTML ya diseñado en disco) SIN
-// volver a llamar a la IA: es el "reintentar render" de la cola, para cuando el
-// modelo ya había terminado y lo que falló fue el render. Si el video no llegó a
-// escribirse, usa la ruta nueva de esa versión.
+// Re-renderiza la ÚLTIMA versión de un marcador (la composición ya diseñada en
+// disco) SIN volver a llamar a la IA: es el "reintentar render" de la cola, para
+// cuando el modelo ya había terminado y lo que falló fue el render. Si el video
+// no llegó a escribirse, usa la ruta nueva de esa versión.
 async function rerenderLatest(body, onProgress) {
   const report = typeof onProgress === 'function' ? onProgress : function () {};
   body = body || {};
@@ -2440,17 +2687,20 @@ async function rerenderLatest(body, onProgress) {
   if (durationSec <= 0) throw new Error('re-render: marker.duration debe ser > 0');
 
   // Re-render lee antes de escribir, y lo que lee decide si hay algo que hacer:
-  // sin HTML previo esto se corta acá, y crear la carpeta para después tirar
-  // dejaba un directorio vacío por un reintento imposible. El video sí se
-  // escribe adentro, pero ahí la carpeta ya existe —de ella salió el HTML— y
-  // renderComposition crea la del archivo de salida igual.
+  // sin composición previa esto se corta acá, y crear la carpeta para después
+  // tirar dejaba un directorio vacío por un reintento imposible. El video sí se
+  // escribe adentro, pero ahí la carpeta ya existe —de ella salió el código— y
+  // el render crea la del archivo de salida igual.
   const baseDir = outputDirPath(body.projectPath, body.sequenceName);
-  const versions = listVersions(baseDir, markerSlug, '.html');
-  if (!versions.length) throw new Error('No hay versiones (HTML) para re-renderizar de ' + markerSlug);
+  const versions = listVersions(baseDir, markerSlug, motores.extensiones());
+  if (!versions.length) throw new Error('No hay versiones para re-renderizar de ' + markerSlug);
   const latest = versions[versions.length - 1];
-  const srcHtmlPath = versionFile(baseDir, markerSlug, latest.version, '.html');
-  const html = srcHtmlPath ? fs.readFileSync(srcHtmlPath, 'utf8') : '';
-  if (!html) throw new Error('No se encontró el HTML de la última versión (v' + latest.version + ')');
+  const srcHtmlPath = path.join(baseDir, latest.name);
+  const html = fs.readFileSync(srcHtmlPath, 'utf8');
+  if (!html) throw new Error('La composición de la última versión (v' + latest.version + ') está vacía');
+  // El motor con el que NACIÓ esta versión, no el de ⚙. Re-renderizar es volver
+  // a capturar un código que ya está escrito: el selector no lo reinterpreta.
+  const motor = motores.motorDeFicha(readMeta(path.join(baseDir, metaDe(latest.name))));
 
   const withBackground = body.background === true;
   const videoExt = withBackground ? 'mp4' : 'mov';
@@ -2461,13 +2711,16 @@ async function rerenderLatest(body, onProgress) {
   if (!movPath) movPath = paths(baseDir, markerSlug, latest.version, latest.model || 'x', videoExt).mov;
 
   report({ pct: 30, msg: 'Re-render de v' + latest.version + ' (sin re-diseñar)…' });
-  await renderComposition({ html, outMovPath: movPath, durationSec, onProgress: report, format: videoExt, assetsDir: path.join(baseDir, '_assets', markerSlug) });
+  await motor.renderizar({
+    code: html, outPath: movPath, durationSec, onProgress: report, format: videoExt,
+    assetsDir: path.join(baseDir, '_assets', markerSlug),
+  });
   return { ok: true, movPath, htmlPath: srcHtmlPath, version: latest.version, markerSlug, background: withBackground };
 }
 
 // Limpia VIDEOS de versiones viejas de una secuencia —o de UN marcador, si viene
 // `markerSlug`—: deja solo el video (.mov/.mp4) de la ÚLTIMA versión y borra los
-// anteriores. NO toca los .html (historial/editor, y lo que la pestaña
+// anteriores. NO toca las composiciones (historial/editor, y lo que la pestaña
 // Corrections necesita para volver sobre una versión vieja) ni stills/recursos:
 // el peso está en los videos, esos archivos son kilobytes. Devuelve cuánto liberó.
 // Agrupa los archivos de VIDEO por marcador con su versión: { slug: [{name,version,path,size}] }.
@@ -2564,7 +2817,37 @@ function engineStatus() {
     // Cuántos renders aguanta esta máquina en paralelo. La decide el módulo de
     // render (que ya perfila RAM/cores) y la cola la usa como techo de su carril.
     renderLanes: renderLanes(),
+    // Y en qué estado está cada motor de animación. Va acá además de en la
+    // config porque este es el chequeo que el panel corre AL ABRIRSE: si
+    // Remotion quedó a medio instalar (un npm install cortado, el Chrome sin
+    // extraer), el editor se entera antes de encolar veinte marcadores que van a
+    // fallar todos por lo mismo.
+    motores: motores.catalogo(),
   };
+}
+
+/**
+ * Instala un motor a pedido. `{ engine: 'remotion' }`.
+ *
+ * Es aparte de "Preparar motor" —que instala las dependencias del panel— porque
+ * lo que se baja acá es de OTRO tamaño y para OTRA cosa: Remotion son ~400 MB
+ * (React, webpack, su Chrome Headless Shell) y solo los necesita quien elija
+ * ese motor. Meterlo en la preparación inicial sería cobrarle esa descarga a
+ * todos los editores, incluidos los que nunca lo van a usar.
+ */
+async function installRenderEngine(body, onProgress) {
+  const report = typeof onProgress === 'function' ? onProgress : function () {};
+  const id = String((body || {}).engine || '').trim().toLowerCase();
+  if (!motores.existe(id)) return { ok: false, error: 'no conozco el motor "' + id + '"' };
+  const motor = motores.motor(id);
+  if (typeof motor.instalar !== 'function') {
+    return { ok: false, error: motor.nombre + ' no se instala aparte: viene con el panel.' };
+  }
+  try {
+    return await motor.instalar(report);
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
 }
 // Corre `npm install` en bridge/ (trae hyperframes + su Chromium). Reporta
 // progreso por onProgress({ pct, msg }). Devuelve { ok } o { ok:false, error }.
@@ -2779,6 +3062,7 @@ module.exports = {
   cleanupPreview,
   engineStatus,
   prepareEngine,
+  installRenderEngine,
   estimateTokens,
   listMarkerVersions,
   readMarkerHtml,
@@ -2804,8 +3088,16 @@ module.exports = {
   microfonoListar: () => microfono.microfonoListar(loadConfig()),
   microfonoProbar: (body, prog) => dictado.probarMicrofono(body, prog, loadConfig()),
   deriveObjective,
+  // Mirar una composición en vivo, sin renderizarla, y apagar eso al cerrar el
+  // panel. Solo la ofrecen los motores que pueden (ver previewComposition).
+  previewComposition,
+  closePreview,
   getConfig,
   setConfig: saveConfig,
+  // La config SIN enmascarar. No la usa el panel (que recibe `getConfig`, con la
+  // API key tapada): la usan los arneses de test/manual/, que llaman al modelo
+  // de verdad y necesitan la credencial entera para pasársela al proveedor.
+  loadConfig,
   testProvider,
   listOllamaModels,
   listClaudeModels,

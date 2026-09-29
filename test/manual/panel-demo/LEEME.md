@@ -109,6 +109,15 @@ se combinan con coma (`?e=whisper,otra-secuencia`):
 | `?e=cursor-sin-sesion` | el caso del editor: el CLI está instalado y falta el login — ⚙ nombra a **Cursor** (no a Claude) y da el comando con la ruta completa |
 | `?e=cursor-sin-cli` | el binario no está (`spawn cursor-agent ENOENT`): otro cartel, con el comando de instalación, y el Diagnóstico arma la ficha igual diciendo dónde buscó |
 | `?e=cursor-sin-cupo` | hay credencial y la cuenta no tiene cupo: ⚙ en **ámbar**, ni verde (mentiría) ni rojo (no falta configurar nada) |
+| `?e=remotion` | Remotion elegido y listo: el selector de **Motor de animación** en su segunda opción, con la condición de la licencia gratuita debajo |
+| `?e=remotion-sin-instalar` | lo que va a ver la mayoría la primera vez: Remotion se ofrece en el desplegable con un «— sin instalar» y al lado aparece su botón. Esconderlo dejaría al editor sin manera de descubrir que existe |
+| `?e=remotion-a-medias` | instalado a medias: Remotion está y su navegador no (el bug de Node 26). Es un cartel aparte del anterior a propósito — decir solo «no está instalado» manda a reinstalar 400 MB cuando lo que falta son 137 de Chrome |
+
+Con `?e=remotion` además cambia lo que devuelve **Editar código**: el mismo recurso escrito
+en TSX en vez de en HTML. Es otra gramática de Prism y otros colores, así que es la única
+forma de ver si se lee. Y la **Vista previa** contesta distinto según el motor —una URL que
+el panel abre, o el motivo de por qué HyperFrames no puede—, que son los dos estados que
+`capturar-motor.js` fotografía.
 
 ## Sacar las capturas del interior de la ficha
 

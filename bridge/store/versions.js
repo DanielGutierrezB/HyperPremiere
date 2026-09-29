@@ -49,6 +49,20 @@ function formatBase(markerSlug, version, model) {
   return m ? `${base} [${m}]` : base;
 }
 
+/**
+ * El `.meta.json` que le corresponde a un archivo de composición.
+ *
+ * Existe desde que la extensión de la composición depende del motor: el
+ * `replace(/\.html$/, '.meta.json')` que estaba escrito en tres lugares no
+ * tocaba un `.tsx` y devolvía el nombre sin cambiar, así que la ficha se leía
+ * del archivo de código —que no es JSON— y el motor de esa versión salía
+ * siempre como el de siempre. Un modo de falla mudo: nada tira, y la mitad de
+ * las versiones cambian de motor sin que nadie lo pida.
+ */
+function metaName(name) {
+  return String(name || '').replace(/\.[^.\/\\]+$/, '') + '.meta.json';
+}
+
 /** Entradas del directorio; [] si no existe o no se puede leer. */
 function listEntries(baseDir) {
   try { return fs.readdirSync(baseDir); } catch (e) { return []; }
@@ -85,12 +99,18 @@ function nextVersion(baseDir, markerSlug) {
 /**
  * Versiones existentes de un marcador con el sufijo dado, orden ascendente.
  * Devuelve [{ version, model, name }].
+ *
+ * `suffix` puede ser uno o varios. Varios hace falta desde que hay más de un
+ * motor: las versiones de un mismo marcador pueden ser unas `.html` y otras
+ * `.tsx`, y para "cuál fue la última" eso da igual — es una sola cadena de
+ * versiones, no dos.
  */
 function listVersions(baseDir, markerSlug, suffix) {
+  const quiere = Array.isArray(suffix) ? suffix : [suffix];
   const out = [];
   for (const name of listEntries(baseDir)) {
     const p = parseName(name);
-    if (p && p.slug === markerSlug && p.suffix === suffix) {
+    if (p && p.slug === markerSlug && quiere.indexOf(p.suffix) !== -1) {
       out.push({ version: p.version, model: p.model, name });
     }
   }
@@ -119,6 +139,7 @@ function groupBySlug(baseDir, suffixes) {
 module.exports = {
   parseName,
   formatBase,
+  metaName,
   versionFile,
   nextVersion,
   listVersions,

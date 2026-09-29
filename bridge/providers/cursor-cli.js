@@ -246,7 +246,13 @@ async function complete({ systemPrompt, userPrompt, images, model, config, onAct
     // `contractTail: true` para volver a medirlo cuando cambie el modelo por
     // defecto o cuando engine.js empiece a agregar secciones mucho más largas
     // después del contrato (test/manual/cursor-contrato.js).
-    (cfg.contractTail ? contractReminder() : '');
+    //
+    // El texto lo pone el MOTOR: el andamiaje que hay que repetir es el suyo
+    // (un `#stage` con sus `data-*` en HyperFrames, un `export default` y la
+    // lista de imports en Remotion). Con el texto escrito acá, prender esta
+    // cola con Remotion le habría repetido al modelo el contrato del otro
+    // motor — peor que no repetir nada.
+    (cfg.contractTail ? contractReminder(cfg.engine) : '');
 
   // En Windows el prompt NO puede ir como argumento: con shell (que el shim
   // .cmd exige) la línea pasa por cmd.exe, que la corta a los 8191 caracteres,

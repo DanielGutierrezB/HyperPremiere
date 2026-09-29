@@ -12,7 +12,7 @@
 // De punta a punta quiere decir: un proyecto de verdad en un temporal con sus
 // dos archivos, el PANEL de verdad montado como lo carga el navegador (HPStore +
 // HPGeneral + HPQueue), la cola releyendo el disco al momento de generar, y el
-// MOTOR de verdad armando el pedido con su system.md y su build-context. Lo
+// MOTOR de verdad armando el pedido con su system prompt y su build-context. Lo
 // único falso es el proveedor: en vez de llamar al modelo, anota lo que le
 // habría mandado. Es el último eslabón antes de la nube, así que lo que se
 // imprime acá es literalmente lo que se paga.
@@ -44,6 +44,10 @@ process.env.HOME = CASA;
 process.env.USERPROFILE = CASA;
 
 const engine = require('../../bridge/engine.js');
+// Con qué motor se arma el pedido (`--motor remotion`). El contexto no cambia
+// —el objetivo, el transcript y la instrucción son los mismos— pero el contrato
+// y el system prompt que lo envuelven los escribe el motor.
+const MOTOR_ELEGIDO = require('./motor-elegido').motorElegido();
 
 const RAIZ = path.join(__dirname, '..', '..');
 const CEP = path.join(RAIZ, 'cep', 'js');
@@ -238,7 +242,7 @@ function montarPanel(proyecto, notas) {
   // con `HPPromptCard`, que necesita a los cuatro. Sin ellos la fila no se dibuja
   // y este arnés corta con «la pestaña de correcciones no dibujó la fila», que
   // suena a un problema de Corrections y es una dependencia que falta.
-  for (const f of ['util.js', 'iconos.js', 'store.js', 'general-prompt.js', 'refs.js',
+  for (const f of ['util.js', 'iconos.js', 'motores.js', 'store.js', 'general-prompt.js', 'refs.js',
     'menciones.js', 'campo.js', 'stills.js', 'prompt-card.js', 'queue.js',
     'corrections-contexto.js', 'corrections.js']) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
@@ -280,7 +284,7 @@ async function main() {
   // 2. El proveedor falso y la config que lo elige.
   let visto = null;
   proveedorEspia(function (arg) { if (!visto) visto = arg; });
-  engine.setConfig({ provider: 'ollama', model: 'falso' });
+  engine.setConfig({ provider: 'ollama', model: 'falso', renderEngine: MOTOR_ELEGIDO.id });
 
   // 3. El panel encola un marcador y la cola relee el disco antes de generar.
   const notas = [];
