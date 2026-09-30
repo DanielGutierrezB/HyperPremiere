@@ -30,6 +30,8 @@ const { test, ok, eq, has } = require('./harness');
 const engine = require('../bridge/engine');
 const motores = require('../bridge/render');
 const studio = require('../bridge/render/remotion-studio');
+const contrato = require('../bridge/prompt/contrato');
+const lenguajes = require('../bridge/render/lenguajes');
 const vivos = require('../bridge/vivos');
 const { paths, writeVersionMeta, readMeta, lastComposition } = require('../bridge/store/project-fs');
 const { metaName, listVersions, nextVersion } = require('../bridge/store/versions');
@@ -256,7 +258,11 @@ test('el catálogo incluye los que NO están instalados', function () {
 test('preguntar por un motor no puede tirar aunque su chequeo se caiga', function () {
   // `estado()` toca el disco. Que eso tire no puede dejar sin desplegable a los
   // otros motores: se cuenta como "no instalado, y este es el motivo".
-  const roto = { id: 'roto', nombre: 'Roto', ext: '.x', estado: function () { throw new Error('el disco dijo no'); } };
+  const roto = {
+    id: 'roto', nombre: 'Roto',
+    lenguaje: { ext: '.x', fence: 'x', prism: 'markup', comoSeLlama: 'lo que sea', comentario: (t) => t },
+    estado: function () { throw new Error('el disco dijo no'); },
+  };
   motores.registrar(roto);
   try {
     const cat = motores.catalogo();
@@ -286,7 +292,7 @@ test('una ficha CON engine manda sobre cualquier otra cosa', function () {
 
 test('el engine se guarda en la ficha y vuelve a leerse', function () {
   const dir = carpeta();
-  const p = paths(dir, 'marcador-1', 1, 'claude-opus-5', 'mov', REMO.ext);
+  const p = paths(dir, 'marcador-1', 1, 'claude-opus-5', 'mov', REMO.lenguaje.ext);
   writeVersionMeta(p.meta, {
     sequenceName: 'Clase 12', markerSlug: 'marcador-1', version: 1,
     model: 'claude-opus-5', engine: 'remotion',
@@ -297,8 +303,8 @@ test('el engine se guarda en la ficha y vuelve a leerse', function () {
 
 test('la extensión del archivo de composición la decide el motor', function () {
   const dir = carpeta();
-  eq(path.extname(paths(dir, 'm', 1, 'x', 'mov', HF.ext).code), '.html');
-  eq(path.extname(paths(dir, 'm', 1, 'x', 'mov', REMO.ext).code), '.tsx');
+  eq(path.extname(paths(dir, 'm', 1, 'x', 'mov', HF.lenguaje.ext).code), '.html');
+  eq(path.extname(paths(dir, 'm', 1, 'x', 'mov', REMO.lenguaje.ext).code), '.tsx');
   eq(path.extname(paths(dir, 'm', 1, 'x', 'mov').code), '.html',
     'y sin decir nada es .html, que es lo que corresponde a todo lo que ya está en disco');
 });
@@ -504,22 +510,36 @@ test('una versión que es PROSA se saltea, con el motor que corresponda', functi
 
 // ── 4. Lo que Remotion corta antes de gastar un render ──────────────
 
-test('prosa se reconoce como "esto no es un componente"', function () {
-  // Y no como "falta el export default", que es cierto y completamente
-  // engañoso: no hay componente ninguno, así que no hay nada que arreglar.
-  const r = REMO.revisar('No puedo generar eso. Cambiá a Agent mode, por favor.', { durationSec: 3 });
-  eq(r.problema, motores.PROBLEMA.NO_ES_CODIGO);
-  has(REMO.textoDeProblema(r.problema), 'no es un componente');
+test('la prosa se descarta ANTES de revisar el contrato', function () {
+  // Son dos preguntas y se hacen en orden: `esCodigo` es barata y sintáctica,
+  // `revisar` es caro (en Remotion compila con Babel). Juntas, preguntar "¿esto
+  // es prosa?" compilaba el archivo entero.
+  //
+  // Y el orden importa para lo que LEE el editor: revisar prosa contesta "falta
+  // el export default", que es cierto y completamente engañoso — no hay
+  // componente ninguno, así que no hay nada que arreglar.
+  ok(!REMO.esCodigo('No puedo generar eso. Cambiá a Agent mode, por favor.'));
+  ok(!REMO.esCodigo(''), 'una respuesta vacía tampoco es código');
+  ok(!REMO.esCodigo('   \n  '));
+  ok(!REMO.esCodigo('No puedo. Te falta el import de `remotion` y el export default.'),
+    'prosa que NOMBRA un import al pasar sigue siendo prosa');
+  ok(REMO.esCodigo(TSX_BUENO), 'y un componente de verdad sí lo es');
 });
 
-test('una respuesta vacía también', function () {
-  eq(REMO.revisar('', {}).problema, motores.PROBLEMA.NO_ES_CODIGO);
-  eq(REMO.revisar('   \n  ', {}).problema, motores.PROBLEMA.NO_ES_CODIGO);
+test('cada motor reconoce SU lenguaje y no el del otro', function () {
+  ok(HF.esCodigo(htmlBueno('m')));
+  ok(!HF.esCodigo('No puedo hacerlo. Te falta el `<div id="stage">` con su data-duration.'),
+    'prosa que nombra un tag al pasar no es HTML: si se colara, el reparador le ' +
+    'adoptaría ese div y saldría un video en negro que no falla');
+  ok(!REMO.esCodigo(htmlBueno('m')), 'un HTML no es un componente de Remotion');
 });
 
-test('prosa que NOMBRA un import al pasar sigue siendo prosa', function () {
-  const txt = 'No puedo. Te falta el import de `remotion` y el export default del componente.';
-  eq(REMO.revisar(txt, {}).problema, motores.PROBLEMA.NO_ES_CODIGO);
+test('el enum compartido de "no es código" no existe más', function () {
+  // Tenía UN solo miembro y existía nada más para que project-fs y compose
+  // pudieran comparar contra él. El precio era el mismo literal escrito en tres
+  // archivos que no se referenciaban: cambiando uno, compose dejaba de matchear
+  // EN SILENCIO y la prosa se guardaba como versión. Ahora es un booleano.
+  eq(motores.PROBLEMA, undefined);
 });
 
 test('un import fuera de la lista se corta ANTES de levantar Chrome', function () {
@@ -556,20 +576,28 @@ test('un componente sin export default no se "arregla" adivinando', function () 
   has(REMO.textoDeProblema(r.problema), 'export default');
 });
 
-test('un componente sano pasa derecho y con su duración', function () {
+test('un componente sano pasa derecho y sin tocarle nada', function () {
   const r = REMO.revisar(TSX_BUENO, { durationSec: 8.5 });
   eq(r.problema, null);
-  eq(r.duration, 8.5, 'la duración es la del marcador: el modelo no la escribe');
   eq(r.fixes.length, 0);
 });
 
-test('la duración de Remotion sale del marcador, no del código', function () {
+test('Remotion no declara la duración en el código, y contesta eso', function () {
   // Es la diferencia estructural entre los dos motores, y elimina dos de los
   // problemas que el contrato de HyperFrames tiene que perseguir: acá el modelo
-  // no puede equivocarse en un dato que no escribe.
-  eq(REMO.revisar(TSX_BUENO, { durationSec: 12 }).duration, 12);
-  eq(REMO.revisar(TSX_BUENO, { durationSec: 3 }).duration, 3,
-    'el mismo código, otra duración: la manda quien llama');
+  // no puede equivocarse en un dato que no escribe. Cero no es un error, es la
+  // verdad — y `revisar` ya no devuelve duración, porque no era asunto suyo.
+  eq(REMO.duracionDeclarada(TSX_BUENO), 0);
+  eq(REMO.revisar(TSX_BUENO, { durationSec: 12 }).duration, undefined);
+});
+
+test('HyperFrames sí la declara, y de ahí se rescatan los recursos viejos', function () {
+  // Es la última fuente de la cascada de Corrections: para un recurso al que le
+  // falta la ficha, el `data-duration` del archivo es lo único que queda.
+  eq(HF.duracionDeclarada(htmlBueno('m')), 3);
+  eq(HF.duracionDeclarada('<div id="stage" data-composition-id="m" data-duration="9"></div>'), 9);
+  eq(HF.duracionDeclarada('No puedo hacer eso.'), 0, 'de la prosa no sale ninguna duración');
+  eq(HF.duracionDeclarada(''), 0);
 });
 
 // ── 4 bis. La vista previa: mirar sin renderizar ────────────────────
@@ -583,8 +611,8 @@ test('la duración de Remotion sale del marcador, no del código', function () {
 function motorConVistaPrevia(id) {
   const visto = { pedidos: [], apagados: 0 };
   motores.registrar({
-    id: id, nombre: 'De juguete', ext: '.tsx', lenguaje: 'tsx', fence: 'tsx',
-    comoSeLlama: 'el componente',
+    id: id, nombre: 'De juguete',
+    lenguaje: lenguajes.TSX,
     estado: function () { return { instalado: true, motivo: '' }; },
     vistaPrevia: function (o) {
       visto.pedidos.push(o);
@@ -773,11 +801,33 @@ test('y cada uno dice SOLO su propio contrato', function () {
 });
 
 test('el bloque de contrato del pedido lleva la duración del marcador', function () {
-  has(HF.bloqueDeContrato(8.5), '8.50', 'HyperFrames se la hace declarar');
-  has(HF.bloqueDeContrato(8.5), 'data-duration');
-  has(REMO.bloqueDeContrato(8.5), '8.50', 'Remotion se la dice igual…');
-  has(REMO.bloqueDeContrato(8.5), 'useVideoConfig', '…pero para que la LEA de ahí');
-  has(REMO.bloqueDeContrato(8.5), 'NO la escribas', 'y le prohíbe escribirla a mano');
+  const a = contrato.bloqueDeContrato(HF, 8.5);
+  has(a, '8.50', 'HyperFrames se la hace declarar');
+  has(a, 'data-duration');
+  const b = contrato.bloqueDeContrato(REMO, 8.5);
+  has(b, '8.50', 'Remotion se la dice igual…');
+  has(b, 'useVideoConfig', '…pero para que la LEA de ahí');
+  has(b, 'NO la escribas', 'y le prohíbe escribirla a mano');
+});
+
+test('las reglas del contrato viajan a los TRES lugares o a ninguno', function () {
+  // El modo de falla que esto cubre es mudo: si las reglas están tipeadas a mano
+  // en cada bloque, agregás una al checklist, te olvidás del recordatorio, y los
+  // proveedores que MÁS lo necesitan —los que no tienen canal de system prompt—
+  // reciben un contrato incompleto sin que nada avise.
+  [HF, REMO].forEach(function (m) {
+    ok(m.reglas.length >= 3, m.id + ' declara sus reglas');
+    const tres = [
+      contrato.bloqueDeContrato(m, 5),
+      contrato.recordatorioFinal(m),
+      contrato.promptDeArreglo(m, 'pedido', 'código', null, 5),
+    ];
+    m.reglas.forEach(function (regla) {
+      tres.forEach(function (bloque, i) {
+        has(bloque, regla, m.id + ': la regla «' + regla.slice(0, 40) + '…» falta en el bloque ' + i);
+      });
+    });
+  });
 });
 
 test('cada motor explica cómo se incrusta una imagen EN SU lenguaje', function () {
@@ -795,32 +845,32 @@ test('el recordatorio final repite el andamiaje del motor que se está usando', 
   // Remotion tiene que repetir SU contrato: con el texto escrito en
   // providers/index.js, prenderlo le repetía al modelo el contrato del otro
   // motor, que es peor que no repetir nada.
-  has(HF.recordatorioFinal(), '__timelines');
-  has(REMO.recordatorioFinal(), 'export default');
-  ok(REMO.recordatorioFinal().indexOf('__timelines') === -1);
+  has(contrato.recordatorioFinal(HF), '__timelines');
+  has(contrato.recordatorioFinal(REMO), 'export default');
+  ok(contrato.recordatorioFinal(REMO).indexOf('__timelines') === -1);
 });
 
 test('el prompt de arreglo le muestra su código en el fence que corresponde', function () {
-  has(HF.promptDeArreglo('pedido', htmlBueno('m'), null, 3), '```html');
-  has(REMO.promptDeArreglo('pedido', TSX_BUENO, null, 3), '```tsx');
-  eq(HF.fence, 'html');
-  eq(REMO.fence, 'tsx');
+  has(contrato.promptDeArreglo(HF, 'pedido', htmlBueno('m'), null, 3), '```html');
+  has(contrato.promptDeArreglo(REMO, 'pedido', TSX_BUENO, null, 3), '```tsx');
+  eq(HF.lenguaje.fence, 'html');
+  eq(REMO.lenguaje.fence, 'tsx');
 });
 
 test('cada motor comenta en la sintaxis de su lenguaje', function () {
   // Se usa para avisar que un código se recortó. Un `<!-- … -->` pegado al final
   // de un .tsx es un error de sintaxis, y lo que el modelo lee a continuación es
   // código roto.
-  has(HF.comentario('recortado'), '<!--');
-  has(REMO.comentario('recortado'), '/*');
+  has(HF.lenguaje.comentario('recortado'), '<!--');
+  has(REMO.lenguaje.comentario('recortado'), '/*');
 });
 
 test('cada motor sabe cómo nombrarse en un mensaje al editor', function () {
   // Entra en los errores que lee el editor ("contestó en prosa en vez de
   // devolver el HTML" / "…el componente"), así que no puede ser una palabra
   // fija: sería mentirle con el nombre del otro motor.
-  has(HF.comoSeLlama, 'HTML');
-  has(REMO.comoSeLlama, 'componente');
-  eq(HF.lenguaje, 'markup', 'y con qué lo resalta Prism en el editor del panel');
-  eq(REMO.lenguaje, 'tsx');
+  has(HF.lenguaje.comoSeLlama, 'HTML');
+  has(REMO.lenguaje.comoSeLlama, 'componente');
+  eq(HF.lenguaje.prism, 'markup', 'y con qué lo resalta Prism en el editor del panel');
+  eq(REMO.lenguaje.prism, 'tsx');
 });

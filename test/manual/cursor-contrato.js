@@ -69,6 +69,9 @@ const { buildUserPrompt } = require('../../bridge/prompt/build-context');
 // puntaje cuenta cosas de SU contrato (que el `#stage` esté, que la timeline
 // quede registrada). Correrla con Remotion mediría otra cosa.
 const SYSTEM = require('../../bridge/render').motor('hyperframes').systemPrompt();
+// El motor con el que se arma el pedido. Es entrada obligatoria: el contrato que
+// cierra el prompt es de un motor, y sin decir cuál no hay prompt que armar.
+const MOTOR_DEL_PROMPT = require('../../bridge/render').motor('hyperframes');
 
 const DURACION = 8.5;
 const MARKER_SLUG = 'marcador-12';
@@ -111,7 +114,7 @@ const CONTEXTO = {
   stillsCount: 0,
 };
 
-const PEDIDO_BASE = buildUserPrompt(CONTEXTO);
+const PEDIDO_BASE = buildUserPrompt(Object.assign({ motor: MOTOR_DEL_PROMPT }, CONTEXTO));
 
 /**
  * El pedido tal como sale de engine.js, con la sección de continuidad si la hay.
@@ -148,7 +151,7 @@ function costos(pedido) {
     // Lo que medía el prompt ANTES del cambio: system + '---' + pedido.
     antes: SYSTEM.trim().length + '\n\n---\n\n'.length + pedido.length,
     encabezados: ENCABEZADOS,
-    recordatorio: contractReminder().length,
+    recordatorio: contractReminder(MOTOR_DEL_PROMPT).length,
   };
   c.despues = c.antes + c.encabezados + c.recordatorio;
   c.extra = c.despues - c.antes;

@@ -25,25 +25,43 @@
 //
 //   id            'hyperframes' | 'remotion'
 //   nombre        Cómo se llama para un editor.
-//   ext           Extensión del archivo de composición ('.html', '.tsx').
-//   lenguaje      Cómo resaltarlo en el editor del panel (Prism: 'markup'|'tsx').
-//   fence         Con qué se abre el bloque de código en un prompt ('html', 'tsx').
-//   comoSeLlama   "el HTML" / "el componente": entra en los mensajes al editor.
+//   lenguaje      En qué idioma se escribe: extensión, fence, gramática de Prism,
+//                 cómo se lo nombra y cómo se comenta. Ver lenguajes.js.
 //
-//   comentario(texto)                   El texto como comentario en SU lenguaje.
+//   esCodigo(code) → boolean            ¿Es código de este motor, o es prosa?
+//   duracionDeclarada(code) → number    Cuántos segundos DICE durar, o 0.
+//
+//       Cero no es un error: en Remotion la duración NO está en el código por
+//       diseño (se lee con `useVideoConfig()`), así que la respuesta honesta es
+//       "no lo dice". Lo pide la pestaña Corrections para los recursos viejos a
+//       los que les falta la ficha, y es la última fuente de la cascada — la
+//       peor, porque la posición no se puede recuperar de ahí, solo el largo.
 //   systemPrompt()                      El system prompt completo del motor.
-//   bloqueDeContrato(durationSec)       Recordatorio del contrato en el prompt de usuario.
+//   reglas                              Las reglas de SU contrato, una por renglón.
+//   duracionEnElPedido(durationSec)     Cómo se le pide la duración (declararla o leerla).
 //   bloqueDeAssets(infos)               Cómo se incrustan las imágenes provistas.
 //   bloqueDeFondo()                     Qué significa "con fondo" en este motor.
-//   recordatorioFinal()                 El contrato repetido al final (proveedores sin system real).
-//   promptDeArreglo(userPrompt, code, problema, durationSec)
-//                                       Pedido de arreglo DIRIGIDO sobre su propio código.
 //   textoDeProblema(problema)           Cómo se le dice al editor y al modelo.
 //
+//       El contrato se le dice al modelo en TRES lugares —el checklist del
+//       pedido, el recordatorio del final y el pedido de arreglo— y los tres se
+//       componen de `reglas` en `prompt/contrato.js`. Antes eran tres métodos
+//       con su prosa escrita a mano, o sea las mismas cuatro reglas tipeadas
+//       seis veces entre los dos motores: agregar una a uno y olvidarla en otro
+//       no fallaba, dejaba a los proveedores sin system prompt con un contrato
+//       incompleto.
+//
 //   revisar(code, { durationSec, markerSlug })
-//       → { code, fixes, problema, duration }
-//       Completa en código lo que se pueda (sin gastar una llamada) y dice qué
-//       quedó mal. `problema` es un código (abajo), no una frase.
+//       → { code, fixes, problema, detalle? }
+//       Dado que YA es código (ver `esCodigo`), ¿cumple el contrato de este
+//       motor? Completa lo que se pueda sin gastar una llamada y dice qué quedó
+//       mal. `problema` es un código del propio motor, no una frase; `detalle`
+//       es opcional y dice cuál —qué import sobra, qué línea no compila—.
+//
+//       Son dos métodos y no uno a propósito. `esCodigo` es barata y sintáctica;
+//       esto es caro (en Remotion compila con Babel). Juntas, preguntar "¿esto
+//       es prosa?" compilaba el archivo entero: `lastComposition` camina para
+//       atrás por las versiones previas y pagaba una compilación por cada una.
 //
 //   renderizar({ code, outPath, durationSec, onProgress, format, assetsDir })
 //       → Promise<void>. `format` es 'mov' (alpha) o 'mp4' (con fondo).
@@ -70,31 +88,55 @@
 // El motor de siempre: el que usa todo lo que no dice cuál usa.
 const PREDETERMINADO = 'hyperframes';
 
-// Los problemas que puede tener una composición, sea del motor que sea.
+// Acá vivió un enum `PROBLEMA` de UN solo miembro —"esto no es código"— y no
+// está más. Existía nada más para que `project-fs` y `compose` pudieran comparar
+// contra él, y el precio era alto: el mismo literal escrito en tres archivos que
+// no se referenciaban entre sí, sostenido por convención. Si alguien cambiaba
+// uno, `compose.js` dejaba de matchear EN SILENCIO y la prosa se guardaba como
+// una versión — que es exactamente el desastre que sus comentarios narran.
 //
-// Son códigos y no frases porque los lee gente distinta: el prompt de arreglo
-// (que le habla al modelo), el log del panel (que le habla al editor) y los
-// tests. Cada motor usa los que le aplican y puede no usar ninguno de los
-// otros: `no-stage` no significa nada en Remotion, igual que `sin-componente`
-// no significa nada en HyperFrames.
-//
-// El único que TODOS comparten es el primero, y por eso vive acá: quien
-// orquesta corta distinto cuando el modelo no compuso nada (ver compose.js).
-const PROBLEMA = {
-  // No es una composición: el modelo contestó en prosa. Es de otra especie que
-  // los demás —no le falta andamiaje, no hay nada que arreglar—.
-  // El valor es 'not-html' y no 'no-es-codigo' por compatibilidad: así se llamó
-  // desde que existe y viaja en los errores que el panel ya sabe leer.
-  NO_ES_CODIGO: 'not-html',
-};
+// Ahora la pregunta se hace con `motor.esCodigo(code)`, que devuelve un booleano
+// y no se puede desalinear. Los códigos de problema que quedan son de CADA
+// motor, que es donde tenían que estar: `no-stage` no significa nada en Remotion
+// y `sin-export-default` no significa nada en HyperFrames.
 
 const registro = new Map();
+
+/**
+ * Lo que un motor no dice, dicho por él.
+ *
+ * Están acá y no en cada llamador porque eran cuatro `typeof x === 'function'`
+ * repartidos —uno en `catalogo()` y tres en `engine.js`— cada uno con su rama y
+ * uno con su `try/catch`. Un motor que tiene una forma GARANTIZADA no necesita
+ * que le pregunten si implementó algo: los que no lo hacen contestan lo que
+ * corresponde y el llamador queda con un solo camino.
+ *
+ * `null` y no una función para `vistaPrevia` e `instalar` a propósito: ahí el
+ * llamador SÍ tiene que cortar distinto (no hay nada que ofrecer), y un `null`
+ * lo dice sin obligar a nadie a escribir una función que no hace nada.
+ */
+const PORDEFECTO = {
+  // Viene con el panel: no hay nada que instalar ni que chequear.
+  estado: () => ({ instalado: true, motivo: '' }),
+  instalar: null,
+  // Sin vista previa, y el motivo lo escribe el MOTOR. Antes el motivo de
+  // HyperFrames vivía en `engine.js` —o sea que el orquestador sabía qué es
+  // `window.__timelines` y por qué GSAP pausado no se puede reproducir—, que es
+  // justo el conocimiento que el registro existe para sacarle de encima.
+  vistaPrevia: null,
+  motivoSinVistaPrevia: '',
+  cerrarVistaPrevia: () => ({ ok: true, andaba: false }),
+  // Cuántos segundos dice durar el código. Cero = no lo dice, que en Remotion es
+  // la verdad y no una falta.
+  duracionDeclarada: () => 0,
+};
 
 /** Anota un motor en el registro. Lo llaman los módulos de cada motor al cargarse. */
 function registrar(motor) {
   if (!motor || !motor.id) throw new Error('registrar: un motor necesita `id`');
-  registro.set(motor.id, motor);
-  return motor;
+  const completo = Object.assign({}, PORDEFECTO, motor);
+  registro.set(completo.id, completo);
+  return completo;
 }
 
 /**
@@ -138,7 +180,7 @@ function ids() {
 /** Las extensiones de composición de TODOS los motores ('.html', '.tsx'). */
 function extensiones() {
   const out = [];
-  registro.forEach((m) => { if (out.indexOf(m.ext) === -1) out.push(m.ext); });
+  registro.forEach((m) => { if (out.indexOf(m.lenguaje.ext) === -1) out.push(m.lenguaje.ext); });
   return out;
 }
 
@@ -154,7 +196,7 @@ function catalogo() {
     const m = registro.get(id);
     let st;
     try {
-      st = m.estado ? m.estado() : { instalado: true, motivo: '' };
+      st = m.estado();
     } catch (e) {
       // Preguntar si un motor está instalado toca el disco. Que eso tire no
       // puede dejar sin desplegable a los otros.
@@ -163,17 +205,17 @@ function catalogo() {
     return {
       id: id,
       nombre: m.nombre || id,
-      ext: m.ext,
-      lenguaje: m.lenguaje,
+      ext: m.lenguaje.ext,
+      lenguaje: m.lenguaje.prism,
       instalado: !!st.instalado,
       motivo: st.motivo || '',
-      instalable: typeof m.instalar === 'function',
+      instalable: !!m.instalar,
     };
   });
 }
 
 module.exports = {
-  PROBLEMA, PREDETERMINADO,
+  PREDETERMINADO,
   registrar, motor, motorDeFicha, ids, existe, extensiones, catalogo,
   // Solo para los tests: saca un motor del registro. Existe porque una de las
   // cosas que hay que probar es qué pasa cuando el chequeo de instalación de UN

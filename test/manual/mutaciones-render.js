@@ -128,7 +128,7 @@ const MUTACIONES = [
     // entera donde había que mergear sobre lo previo. La fila pasa de dato a
     // reconstrucción por haber contestado una pregunta que no tiene que ver.
     nombre: 'anotar el tramo a mano borra el contexto de la ficha',
-    archivo: 'bridge/engine.js',
+    archivo: 'bridge/versiones.js',
     de: '    mergeVersionMeta(metaPath, { sequenceName: body.sequenceName, markerSlug, marker });',
     a:  '    writeVersionMeta(metaPath, { sequenceName: body.sequenceName, markerSlug, marker });',
   },
@@ -2190,7 +2190,7 @@ const MUTACIONES = [
     // que el semáforo no contaba, ~177 tokens por marcador con assets.
     nombre: 'el estimado no ve el bloque de las imágenes a incrustar',
     archivo: 'bridge/engine.js',
-    de: '    userPrompt += bloqueDeAssets(assetInfos, motor) +',
+    de: '    userPrompt += motor.bloqueDeAssets(assetInfos) +',
     a:  '    userPrompt += "" +',
   },
 
@@ -3231,14 +3231,13 @@ const MUTACIONES = [
     // recurso viejo lo manda al motor equivocado y el error habla de compilación
     // cuando el problema es de ruteo.
     nombre: 're-renderizar usa el motor de ⚙ y no el de la versión en disco',
-    archivo: 'bridge/engine.js',
+    archivo: 'bridge/versiones.js',
     // El comentario va adentro del `de` para que esto agarre el
     // `motorDeFicha(...)` de `rerenderLatest` y no el de `listOtherResources`,
     // que es la misma línea escrita igual. Sin eso, la mutación se aplicaba en
     // la continuidad —donde el motor solo decide un fence— y sobrevivía.
-    de: '  // a capturar un código que ya está escrito: el selector no lo reinterpreta.\n' +
-        '  const motor = motores.motorDeFicha(readMeta(path.join(baseDir, metaDe(latest.name))));',
-    a:  '  const motor = motores.motor(loadConfig().renderEngine);',
+    de: '  const motor = previa.motor;',
+    a:  "  const motor = motores.motor('hyperframes');",
   },
   {
     // La ficha de una versión tiene que anotar con qué motor se hizo. Sin eso,
@@ -3265,7 +3264,7 @@ const MUTACIONES = [
     // TSX viene después de la v2 en HTML. Con una sola extensión, el panel deja
     // de ver la mitad de las versiones y `nextVersion` empieza a pisar archivos.
     nombre: 'las versiones de los dos motores se cuentan como cadenas separadas',
-    archivo: 'bridge/engine.js',
+    archivo: 'bridge/versiones.js',
     de: "    return { ok: true, versions: listVersions(baseDir, markerSlug, motores.extensiones()) };",
     a:  "    return { ok: true, versions: listVersions(baseDir, markerSlug, '.html') };",
   },
@@ -3275,17 +3274,17 @@ const MUTACIONES = [
     // modelo recibe un pedido de arreglo que no tiene nada que ver.
     nombre: 'la composición se valida con el contrato del otro motor',
     archivo: 'bridge/compose.js',
-    de: '    const seen = motor.revisar(stripHtmlFence(gen.text), {',
-    a:  "    const seen = require('./render').motor('hyperframes').revisar(stripHtmlFence(gen.text), {",
+    de: '    const seen = motor.revisar(code, {',
+    a:  "    const seen = require('./render').motor('hyperframes').revisar(code, {",
   },
   {
     // El fence con el que se le muestra al modelo su propio código. Un bloque
     // ```html con TSX adentro le dice que eso es markup, y lo que devuelve es
     // markup.
     nombre: 'el código del modelo se le devuelve marcado como el lenguaje del otro motor',
-    archivo: 'bridge/render/motor-remotion.js',
-    de: "  fence: 'tsx',",
-    a:  "  fence: 'html',",
+    archivo: 'bridge/render/lenguajes.js',
+    de: "  fence: 'tsx',\n  prism: 'tsx',",
+    a:  "  fence: 'html',\n  prism: 'tsx',",
   },
   {
     // Un import fuera de la lista se corta ANTES de renderizar. Sin esto se paga
@@ -3303,18 +3302,18 @@ const MUTACIONES = [
     // componente ninguno — y encima se gasta la llamada de arreglo mandándole su
     // propia negativa a corregir.
     nombre: 'una negativa del modelo se confunde con un componente incompleto',
-    archivo: 'bridge/render/motor-remotion.js',
-    de: '    if (!pareceCodigo(txt)) {',
-    a:  '    if (false) {',
+    archivo: 'bridge/compose.js',
+    de: '    if (!motor.esCodigo(code)) return { code: code, fixes: [], prosa: true };',
+    a:  '    void 0;',
   },
   {
     // La duración de Remotion es la del MARCADOR. Con un cero, el componente
     // recibiría una composición sin cuadros y el render saldría vacío o cortado:
     // el modelo no puede arreglarlo porque no es un dato que él escriba.
     nombre: 'la duración de Remotion deja de venir del marcador',
-    archivo: 'bridge/render/motor-remotion.js',
-    de: '    const dur = Number((opts || {}).durationSec) || 0;\n    return { code: txt, fixes: [], problema: null, duration: dur };',
-    a:  '    return { code: txt, fixes: [], problema: null, duration: 0 };',
+    archivo: 'bridge/render/motor-hyperframes.js',
+    de: "      return inspectComposition(String(code || ''), { durationSec: 0 }).duration || 0;",
+    a:  '      return 0;',
   },
   {
     // El bloque de assets de cada motor explica cómo se incrusta una imagen EN
@@ -3344,8 +3343,8 @@ const MUTACIONES = [
     // function" — que no le dice nada y suena a que el panel está roto, cuando
     // en realidad es así por diseño.
     nombre: 'previsualizar un motor que no puede tira un error de programador',
-    archivo: 'bridge/engine.js',
-    de: "    if (typeof motor.vistaPrevia !== 'function') {",
+    archivo: 'bridge/versiones.js',
+    de: '    if (!motor.vistaPrevia) {',
     a:  '    if (false) {',
   },
   {
@@ -3353,9 +3352,9 @@ const MUTACIONES = [
     // mirar sea un ciclo. Al revés, el editor toca el código, aprieta vista
     // previa, ve exactamente lo de antes y no entiende por qué.
     nombre: 'la vista previa muestra el disco y no lo que se está editando',
-    archivo: 'bridge/engine.js',
-    de: "    const code = String(body.code || '').trim() ||\n      (enDisco ? fs.readFileSync(enDisco.file, 'utf8') : '');",
-    a:  "    const code = enDisco ? fs.readFileSync(enDisco.file, 'utf8') : String(body.code || '').trim();",
+    archivo: 'bridge/versiones.js',
+    de: "    const code = String(body.code || '').trim() || (enDisco ? enDisco.code : '');",
+    a:  "    const code = (enDisco ? enDisco.code : '') || String(body.code || '').trim();",
   },
   {
     // La sesión de Studio cuelga de `process` y no del módulo. Con una variable
@@ -3380,7 +3379,7 @@ const MUTACIONES = [
     // mirar un clip con alfa sobre negro esconde justo los problemas de
     // contraste que el alfa vuelve a traer cuando el clip va sobre el video.
     nombre: 'la vista previa de un clip con alfa se muestra opaca',
-    archivo: 'bridge/engine.js',
+    archivo: 'bridge/versiones.js',
     de: '    const conFondo = body.background !== undefined\n      ? body.background === true\n      : ficha.background === true;',
     a:  '    const conFondo = true;',
   },
@@ -3388,9 +3387,9 @@ const MUTACIONES = [
     // Cerrar el panel apaga la vista previa. Sin esto queda un webpack en watch
     // hasta que alguien lo note, y el watchdog de inactividad tarda media hora.
     nombre: 'cerrar el panel no apaga la vista previa',
-    archivo: 'bridge/engine.js',
-    de: "      if (m.cerrarVistaPrevia().andaba) apagados.push(id);",
-    a:  '      void m;',
+    archivo: 'bridge/versiones.js',
+    de: '    .filter((id) => motores.motor(id).cerrarVistaPrevia().andaba);',
+    a:  '    .filter(() => false);',
   },
 
 ];

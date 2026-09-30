@@ -208,7 +208,7 @@ async function unaCorrida(motor, marcador, opts) {
   };
 
   const userPrompt = buildUserPrompt({
-    engine: motor.id,
+    motor: motor,
     objective: OBJETIVO,
     transcriptSegments: TRANSCRIPT,
     marker: {
@@ -228,7 +228,7 @@ async function unaCorrida(motor, marcador, opts) {
   try {
     const r = await composeAnimation({
       provider: getProvider(cfg.provider),
-      config: Object.assign({}, cfg, { engine: motor.id }),
+      config: Object.assign({}, cfg, { motor: motor }),
       motor: motor,
       systemPrompt: motor.systemPrompt(),
       userPrompt: userPrompt,
@@ -274,7 +274,7 @@ async function unaCorrida(motor, marcador, opts) {
 }
 
 function guardar(salida, motor, marcador, code) {
-  const file = path.join(salida, marcador.id + ' [' + motor.id + ']' + motor.ext);
+  const file = path.join(salida, marcador.id + ' [' + motor.id + ']' + motor.lenguaje.ext);
   fs.writeFileSync(file, code, 'utf8');
   return file;
 }

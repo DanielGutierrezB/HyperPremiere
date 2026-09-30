@@ -15,8 +15,12 @@
 //   instruction: string,                           // qué pidió el editor para este recurso
 //   stillsCount: number,                           // stills que van como imágenes aparte
 //   promptOverride: { course?, sequence?, objective? }  // ajuste local de UNA corrección (ver promptLevels)
-//   engine: string,                                // con qué motor se va a renderizar ('' = el de siempre)
+//   motor: object,                                 // el motor con el que se va a renderizar (ver render/motores.js)
 // }
+//
+// `motor` es el OBJETO y no su id: quien llama ya lo tiene en la mano, y
+// mandarle el id para que este módulo lo vuelva a resolver contra el registro
+// era pedirle a `prompt/` que dependa de `render/` para nada.
 //
 // Los tres últimos son los TRES NIVELES de lo que escribe el editor, del más
 // general al más específico: el prompt general del curso, el de la secuencia y
@@ -30,16 +34,8 @@
 // dentro de un tamaño razonable sin perder el hilo de la clase.
 const TRANSCRIPT_CHAR_LIMIT = 6000;
 
-/**
- * Con qué motor se va a renderizar este pedido.
- *
- * Se pide perezosamente (adentro de la función y no arriba del archivo) para no
- * cerrar un ciclo de requires: los motores necesitan el system prompt, que vive
- * al lado de este módulo.
- */
-function motorDe(ctx) {
-  return require('../render').motor((ctx || {}).engine);
-}
+// Las plantillas que arman el contrato del motor a partir de sus reglas.
+const contrato = require('./contrato');
 
 // Formatea segundos como M:SS.d para timecodes legibles en el prompt.
 function formatTime(seconds) {
@@ -295,7 +291,7 @@ function buildUserPrompt(ctx) {
 
   // Duración + contrato + "devolvé SOLO…", en la voz del motor que va a
   // renderizar esto (reduce reintentos por una composición inválida).
-  parts.push(motorDe(ctx).bloqueDeContrato(duration));
+  parts.push(contrato.bloqueDeContrato(ctx.motor, duration));
 
   return parts.join('\n');
 }

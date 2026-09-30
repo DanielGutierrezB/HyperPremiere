@@ -594,10 +594,19 @@ cuadro por cuadro: abrir ese HTML en un navegador muestra el primer cuadro y nad
 panel lo dice con esas palabras en vez de abrir una ventana vacía, porque un "no se puede" a
 secas suena a que algo está roto y esto es así por diseño.
 
-La ventana se apaga por tres caminos, y hacen falta los tres: el panel avisa al cerrarse, el
-motor adopta y baja la sesión anterior cuando se recarga, y hay un watchdog de media hora de
-inactividad. Sin ninguno de ellos, cerrar Premiere dejaría un webpack en watch comiendo
-memoria hasta que alguien lo note.
+La ventana se apaga por **dos** caminos, aunque haya tres mecanismos. El aviso del panel al
+cerrarse y la adopción del motor cubren el mismo evento —el ⟳ dispara los dos—, y la
+adopción es la que no se puede saltear porque no depende de que nadie llame a nada. El
+camino distinto es el watchdog de media hora de inactividad de Studio: es el único que cubre
+que Premiere se cierre de golpe, donde el `beforeunload` del panel no llega a correr. Sin
+ninguno, cerrar Premiere dejaría un webpack en watch comiendo memoria hasta que alguien lo
+note.
+
+Y una cosa que el mecanismo **no** hace, aunque el nombre `adoptar` lo sugiera: no se
+reengancha a la sesión anterior, la baja. Es la respuesta correcta para lo que `vivos.js`
+resolvía originalmente (un dictado a medias después de un ⟳ está muerto de todos modos), y
+es discutible acá: un Studio andando es un espectador pasivo, y bajarlo le rompe la pestaña
+al editor. Reengancharse pide guardar el puerto en disco y verificarlo, que es otro trabajo.
 
 ### El bug de Node 26, que no avisa
 

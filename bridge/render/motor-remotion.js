@@ -35,6 +35,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const { registrar } = require('./motores');
+const lenguajes = require('./lenguajes');
 const { systemPrompt } = require('../prompt/system');
 const instalacion = require('./remotion-instalar');
 const studio = require('./remotion-studio');
@@ -46,14 +47,12 @@ const { killTree } = require('../exec');
 const IDLE_TIMEOUT_MS = 300 * 1000;
 
 const PROBLEMA = {
-  NO_ES_CODIGO: 'not-html',
   SIN_EXPORT_DEFAULT: 'sin-export-default',
   IMPORT_PROHIBIDO: 'import-prohibido',
   NO_COMPILA: 'no-compila',
 };
 
 const TEXTO = {
-  [PROBLEMA.NO_ES_CODIGO]: 'esto no es un componente de Remotion',
   [PROBLEMA.SIN_EXPORT_DEFAULT]: 'falta el `export default` del componente',
   [PROBLEMA.IMPORT_PROHIBIDO]: 'importa un módulo que no está disponible en el render',
   [PROBLEMA.NO_COMPILA]: 'el código no compila',
@@ -143,17 +142,11 @@ function leerEventos(texto, alEvento) {
 module.exports = registrar({
   id: 'remotion',
   nombre: 'Remotion (React)',
-  ext: '.tsx',
-  // Prism: el editor del panel resalta TSX con el componente `tsx`.
-  lenguaje: 'tsx',
-  fence: 'tsx',
-  comoSeLlama: 'el componente',
+  lenguaje: lenguajes.TSX,
 
   PROBLEMA,
 
-  comentario(texto) {
-    return '/* ' + texto + ' */';
-  },
+  esCodigo: pareceCodigo,
 
   systemPrompt() {
     return systemPrompt('system-remotion.md');
@@ -163,19 +156,29 @@ module.exports = registrar({
     return TEXTO[problema] || 'el componente no cumple el contrato';
   },
 
-  bloqueDeContrato(durationSec) {
-    const d = Number(durationSec) || 0;
-    return '\n## Duración objetivo\n' +
-      'Esta composición dura ' + d.toFixed(2) + ' s. NO la escribas en el código: ' +
+  /**
+   * El contrato, como DATOS. Los tres lugares donde se le dice al modelo se
+   * componen de esta lista (ver prompt/contrato.js).
+   */
+  reglas: [
+    'UN archivo `.tsx` con `export default` del componente.',
+    'Imports SOLO de: ' + PERMITIDOS.join(', ') + '.',
+    'Sin `Math.random`, sin animación por CSS, sin timers: todo sale de `useCurrentFrame()`.',
+    "`interpolate` siempre con `extrapolateLeft: 'clamp'` y `extrapolateRight: 'clamp'`.",
+  ],
+
+  /**
+   * Cómo se le pide la duración: acá NO se escribe, se LEE.
+   *
+   * Es la diferencia estructural con el otro motor y elimina dos de sus modos de
+   * falla: el modelo no puede olvidarse un dato que no escribe ni ponerlo en
+   * cero. Decirle el número igual sirve para que calcule sus tiempos.
+   */
+  duracionEnElPedido(durationSec) {
+    return 'Esta composición dura ' + durationSec.toFixed(2) + ' s. NO la escribas en el código: ' +
       'leela con `useVideoConfig()` (`durationInFrames`, `fps`) y calculá tus tiempos contra eso. ' +
       'La duración la fija el marcador de Premiere, así que un número escrito a mano acá se ' +
-      'desincroniza en cuanto el marcador se mueva.\n' +
-      '\n## Contrato obligatorio (verificá antes de responder)\n' +
-      '- UN archivo `.tsx` con `export default` del componente.\n' +
-      '- Imports SOLO de: ' + PERMITIDOS.join(', ') + '.\n' +
-      '- Sin `Math.random`, sin animación por CSS, sin timers: todo sale de `useCurrentFrame()`.\n' +
-      '- `interpolate` siempre con `extrapolateLeft: \'clamp\'` y `extrapolateRight: \'clamp\'`.\n' +
-      '\nDevolvé SOLO el código del componente.';
+      'desincroniza en cuanto el marcador se mueva.';
   },
 
   bloqueDeAssets(infos) {
@@ -199,29 +202,6 @@ module.exports = registrar({
       '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
   },
 
-  recordatorioFinal() {
-    return '\n\n---\n\n' +
-      '# ANTES DE RESPONDER — el contrato que no se negocia\n\n' +
-      'Repasá estos cuatro puntos sobre tu propio código antes de mandarlo:\n\n' +
-      '1. UN archivo `.tsx` con `export default` de un componente de React.\n' +
-      '2. Imports SOLO de la lista permitida (`remotion`, `@remotion/*`, `react`).\n' +
-      '3. La duración sale de `useVideoConfig()`, no de un número escrito a mano.\n' +
-      '4. Devolvé SOLO el código. Nada antes, nada después.\n\n' +
-      'Si falta cualquiera de los cuatro, la composición no se puede renderizar y el trabajo se pierde entero.';
-  },
-
-  promptDeArreglo(userPrompt, code, problema, durationSec) {
-    return userPrompt +
-      '\n\n## Arreglo de estructura (NO rediseñes)\n' +
-      'Generaste el componente de abajo, pero ' + this.textoDeProblema(problema) + '.\n' +
-      'Devolvé EL MISMO componente —mismo diseño, mismos estilos, mismos tiempos— con SOLO eso corregido:\n' +
-      '- `export default` de la función del componente.\n' +
-      '- Imports únicamente de: ' + PERMITIDOS.join(', ') + '.\n' +
-      '- La duración desde `useVideoConfig()` (el marcador dura ' + Number(durationSec).toFixed(2) + ' s).\n' +
-      'No cambies nada más: sin esto el render falla, pero el diseño ya está aprobado.\n' +
-      '\n### Tu versión a corregir\n```tsx\n' + code + '\n```';
-  },
-
   /**
    * Valida el componente sin renderizar nada.
    *
@@ -233,14 +213,11 @@ module.exports = registrar({
    */
   revisar(code, opts) {
     const txt = String(code || '');
-    if (!pareceCodigo(txt)) {
-      return { code: txt, fixes: [], problema: PROBLEMA.NO_ES_CODIGO, duration: 0 };
-    }
 
     const prohibidos = importsDe(txt).filter((n) => !permitido(n));
     if (prohibidos.length) {
       return {
-        code: txt, fixes: [], duration: 0,
+        code: txt, fixes: [],
         problema: PROBLEMA.IMPORT_PROHIBIDO,
         detalle: 'importa ' + prohibidos.map((p) => '`' + p + '`').join(', ') +
           ', y el render solo tiene: ' + PERMITIDOS.join(', '),
@@ -248,7 +225,7 @@ module.exports = registrar({
     }
 
     if (!/export\s+default/.test(txt)) {
-      return { code: txt, fixes: [], problema: PROBLEMA.SIN_EXPORT_DEFAULT, duration: 0 };
+      return { code: txt, fixes: [], problema: PROBLEMA.SIN_EXPORT_DEFAULT };
     }
 
     // Compilar es la única validación que de verdad dice si esto anda. Se hace
@@ -260,15 +237,14 @@ module.exports = registrar({
         compilar(st.dir, txt);
       } catch (e) {
         return {
-          code: txt, fixes: [], duration: 0,
+          code: txt, fixes: [],
           problema: PROBLEMA.NO_COMPILA,
           detalle: String((e && e.message) || e).split('\n').slice(0, 3).join(' '),
         };
       }
     }
 
-    const dur = Number((opts || {}).durationSec) || 0;
-    return { code: txt, fixes: [], problema: null, duration: dur };
+    return { code: txt, fixes: [], problema: null };
   },
 
   renderizar(o) {

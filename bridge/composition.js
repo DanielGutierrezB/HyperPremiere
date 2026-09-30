@@ -411,4 +411,24 @@ function inspectComposition(html, opts) {
   return { html: repaired, fixes: fixes, problem: finalDuration > 0 ? null : PROBLEM.NO_DURATION, duration: finalDuration };
 }
 
-module.exports = { inspectComposition, auditFailure, PROBLEM };
+/**
+ * ¿Esto es una composición HTML, aunque esté incompleta?
+ *
+ * Es la pregunta BARATA —sintáctica, sin mirar el andamiaje— y hace falta antes
+ * que cualquier otra porque un modelo puede contestar EN PROSA: negarse, pedir
+ * una aclaración, explicar lo que haría. Sin esta pregunta, esa prosa entraba
+ * por la misma puerta que un HTML mal armado y salía "no encuentro el contenedor
+ * `#stage`": cierto y completamente engañoso, porque no había composición
+ * ninguna (la historia entera está en compose.js).
+ *
+ * Se exporta para que el motor de HyperFrames la use como su `esCodigo`. Es la
+ * MISMA que usa `inspectComposition` adentro, y eso es lo que hace que el
+ * `NOT_HTML` de ahí sea inalcanzable cuando se entra por el motor: el pipeline
+ * pregunta esto primero y corta.
+ */
+function esComposicionHtml(html) {
+  const out = String(html || '');
+  return looksLikeHtml(out, outsideComments(out));
+}
+
+module.exports = { inspectComposition, esComposicionHtml, auditFailure, PROBLEM };

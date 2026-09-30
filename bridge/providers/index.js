@@ -23,6 +23,11 @@
  * pide texto crudo. El dia que haga falta, se parten igual.
  */
 
+// Las plantillas que arman el contrato del motor a partir de sus reglas. Acá se
+// usa una sola —el recordatorio del final— y es prosa para el modelo, así que
+// vive con el resto de la prosa y no en este archivo.
+const contrato = require('../prompt/contrato');
+
 const PROVIDERS = {
   'claude-cli': './claude-cli',
   'claude-api': './claude-api',
@@ -265,14 +270,11 @@ function docsAsFilesNote(refs) {
  * Los proveedores con system prompt de verdad (claude-cli, claude-api) NO usan
  * esto: ahí el contrato ya viaja donde se obedece.
  *
- * @param {string} [engine] Con qué motor se está componiendo.
+ * @param {object} motor El motor con el que se está componiendo.
  * @returns {string}
  */
-function contractReminder(engine) {
-  // El texto es del MOTOR: lo que hay que repetir es SU andamiaje. Se pide
-  // perezosamente para no cerrar un ciclo de requires (los motores importan
-  // utilidades de este archivo).
-  return require('../render').motor(engine).recordatorioFinal();
+function contractReminder(motor) {
+  return contrato.recordatorioFinal(motor);
 }
 
 /**

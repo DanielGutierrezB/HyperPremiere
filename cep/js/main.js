@@ -2050,7 +2050,7 @@
           // El motor de la versión que se abrió, no el de ⚙: guardar a mano es
           // seguir tocando ESA versión, y lo que hay en el editor está escrito
           // en su lenguaje.
-          markerSlug: markerKey, html: html, engine: motorAbierto
+          markerSlug: markerKey, code: html, engine: motorAbierto
         },
         seqName: currentSequenceName, projectPath: currentProjectPath, markerKey: markerKey,
         label: markerKey + " (edición manual)", markerStart: marker.start, markerDuration: marker.duration
@@ -2549,12 +2549,17 @@
     checkWhisperStatus();
   }
 
-  // Al cerrar o recargar el panel, apagar la vista previa. Es best-effort a
-  // propósito y no la única defensa: `beforeunload` corre en el ⟳ pero Premiere
-  // puede cerrarse de golpe, así que del otro lado hay dos redes más —el motor
-  // adopta la sesión anterior al recargarse (ver bridge/vivos.js) y hay un
-  // watchdog de inactividad—. Sin ninguna de las tres, cerrar Premiere dejaría
-  // un webpack en watch comiendo memoria hasta que alguien lo note.
+  // Al cerrar o recargar el panel, apagar la vista previa.
+  //
+  // Son DOS redes y no tres, aunque haya tres mecanismos: esto y la adopción del
+  // motor (bridge/vivos.js) cubren el MISMO evento —el ⟳ dispara los dos— y la
+  // adopción es la que de verdad no se puede saltear, porque no depende de que
+  // nadie llame a nada. La otra red, la distinta, es el watchdog de inactividad
+  // del propio Studio: es la única que cubre que Premiere se cierre de golpe,
+  // donde `beforeunload` no corre.
+  //
+  // Sin ninguna, cerrar Premiere dejaría un webpack en watch comiendo memoria
+  // hasta que alguien lo note.
   window.addEventListener("beforeunload", function () {
     try { hpCall("closePreview"); } catch (e) { /* el panel ya se está yendo */ }
   });

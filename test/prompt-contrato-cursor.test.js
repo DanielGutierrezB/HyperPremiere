@@ -38,6 +38,9 @@ const saltarEnWindows = process.platform === 'win32';
 // El system prompt de HyperFrames, que es de lo que hablan estas mediciones (era
 // el único motor cuando se hicieron).
 const SYSTEM = require('../bridge/render').motor('hyperframes').systemPrompt();
+// El motor con el que se arma el pedido. Es entrada obligatoria: el contrato que
+// cierra el prompt es de un motor, y sin decir cuál no hay prompt que armar.
+const MOTOR_DEL_PROMPT = require('../bridge/render').motor('hyperframes');
 const USUARIO = '## Instrucción del editor\nAnimá el concepto "sesgo" en 8 segundos.';
 
 function tmpLog() {
@@ -106,8 +109,8 @@ test('cursor: por defecto NO se repite el contrato (se midió y no mejora)', asy
 
 test('cursor: prendido, el andamiaje es lo ÚLTIMO que lee el modelo', async function () {
   if (saltarEnWindows) return;
-  const r = await correrCursor({ config: { contractTail: true } });
-  ok(r.mensaje.trimEnd().endsWith(contractReminder().trimEnd()),
+  const r = await correrCursor({ config: { contractTail: true, motor: MOTOR_DEL_PROMPT } });
+  ok(r.mensaje.trimEnd().endsWith(contractReminder(MOTOR_DEL_PROMPT).trimEnd()),
     'el mensaje termina con el recordatorio del contrato');
   // Y las tres cosas que si faltan no se puede renderizar están ahí abajo.
   const cola = r.mensaje.slice(-1200);
@@ -148,7 +151,7 @@ test('cursor: el orden es sistema → pedido → imágenes → contrato', async 
   if (saltarEnWindows) return;
   // Un orden distinto es un cambio de comportamiento, no un detalle de formato:
   // el motivo de todo esto es DÓNDE cae cada cosa.
-  const r = await correrCursor({ config: { contractTail: true } });
+  const r = await correrCursor({ config: { contractTail: true, motor: MOTOR_DEL_PROMPT } });
   const pos = {
     sistema: r.mensaje.indexOf('# CÓMO SE COMPONE EN ESTE PROYECTO'),
     pedido: r.mensaje.indexOf('# EL PEDIDO'),
@@ -163,7 +166,7 @@ test('cursor: el orden es sistema → pedido → imágenes → contrato', async 
 test('cursor: sin system prompt no se inventa el bloque, y el contrato igual cierra', async function () {
   if (saltarEnWindows) return;
   // El recordatorio no depende del system prompt: es el piso que el render exige.
-  const r = await correrCursor({ sinSystem: true, config: { contractTail: true } });
+  const r = await correrCursor({ sinSystem: true, config: { contractTail: true, motor: MOTOR_DEL_PROMPT } });
   eq(r.mensaje.indexOf('# CÓMO SE COMPONE EN ESTE PROYECTO'), -1, 'no se inventa un bloque de sistema vacío');
   has(r.mensaje, '# ANTES DE RESPONDER', 'y el contrato está igual');
 });
@@ -171,7 +174,7 @@ test('cursor: sin system prompt no se inventa el bloque, y el contrato igual cie
 // ── El costo: que repetir salga barato ──────────────────────────────────
 
 test('el recordatorio es el andamiaje y nada más (no una copia del system prompt)', function () {
-  const rec = contractReminder();
+  const rec = contractReminder(MOTOR_DEL_PROMPT);
   // Repetir es pagar tokens de entrada en CADA llamada. Se repite lo que si
   // falta impide renderizar; lo de estilo no, porque saltearlo da composiciones
   // distintas, no composiciones rotas.
@@ -193,11 +196,11 @@ test('cursor: el interruptor cambia el recordatorio y NADA más', async function
   // Sin este interruptor no hay forma de comparar "con" contra "sin" en la
   // misma máquina, el mismo día y el mismo modelo — y sin esa comparación la
   // pregunta "¿sirve repetir el contrato?" se contesta con una corazonada.
-  const con = await correrCursor({ config: { contractTail: true } });
-  const sin = await correrCursor({ config: { contractTail: false } });
+  const con = await correrCursor({ config: { contractTail: true, motor: MOTOR_DEL_PROMPT } });
+  const sin = await correrCursor({ config: { contractTail: false, motor: MOTOR_DEL_PROMPT } });
   has(con.mensaje, '# ANTES DE RESPONDER', 'con el interruptor puesto, está');
   eq(sin.mensaje.indexOf('# ANTES DE RESPONDER'), -1, 'apagado, no está');
-  eq(con.mensaje.length - sin.mensaje.length, contractReminder().length,
+  eq(con.mensaje.length - sin.mensaje.length, contractReminder(MOTOR_DEL_PROMPT).length,
     'y la única diferencia entre los dos es exactamente el recordatorio');
   eq(sin.mensaje, con.mensaje.slice(0, sin.mensaje.length),
     'apagado, el mensaje es un prefijo exacto del prendido');

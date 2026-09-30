@@ -20,18 +20,21 @@ const fs = require('fs');
 const path = require('path');
 
 const { renderComposition } = require('./hyperframes');
-const { inspectComposition, PROBLEM } = require('../composition');
+const { inspectComposition, esComposicionHtml, PROBLEM } = require('../composition');
 const { registrar } = require('./motores');
+const lenguajes = require('./lenguajes');
 const { systemPrompt } = require('../prompt/system');
 
 // Qué decirle al modelo (y al editor) por cada cosa que no se pudo completar en
 // código. El módulo del contrato devuelve códigos justamente para que la
 // redacción viva del lado del motor, que es el que sabe cómo se llama cada
 // pieza de SU contrato.
+//
+// `NOT_HTML` no está en la tabla y no es un olvido: `revisar` solo se llama
+// sobre algo que `esCodigo` ya aprobó, y las dos preguntas usan la MISMA función
+// (`esComposicionHtml`), así que esa rama de `inspectComposition` es inalcanzable
+// por acá.
 const TEXTO = {
-  // Neutral a propósito: lo lee tanto la generación como el render de un HTML
-  // editado a mano, y ahí no hay ningún modelo a quien atribuirle nada.
-  [PROBLEM.NOT_HTML]: 'esto no es una composición HTML',
   [PROBLEM.NO_STAGE]: 'no encuentro el contenedor `<div id="stage">`',
   [PROBLEM.MANY_STAGES]: 'hay más de un elemento con `id="stage"` y no sé cuál es la composición',
   [PROBLEM.NO_REGISTRATION]: 'la timeline no queda registrada en `window.__timelines`, así que el motor no la encuentra',
@@ -42,14 +45,39 @@ const TEXTO = {
 module.exports = registrar({
   id: 'hyperframes',
   nombre: 'HyperFrames (HTML + GSAP)',
-  ext: '.html',
-  // Cómo lo resalta Prism en el editor del panel.
-  lenguaje: 'markup',
-  fence: 'html',
-  comoSeLlama: 'el HTML',
+  lenguaje: lenguajes.HTML,
 
-  comentario(texto) {
-    return '<!-- ' + texto + ' -->';
+  esCodigo: esComposicionHtml,
+
+  /**
+   * Por qué este motor no tiene vista previa. Es un dato y no una excusa: la
+   * timeline se registra PAUSADA para que el capturador la pueda posicionar
+   * cuadro por cuadro, así que abrir este HTML en un navegador muestra el primer
+   * cuadro y nada más.
+   *
+   * Vive acá porque es conocimiento de HyperFrames. Estaba escrito en
+   * `engine.js`, o sea que el orquestador sabía qué es `window.__timelines` — el
+   * tipo de cosa que el registro de motores existe para sacarle de encima.
+   */
+  motivoSinVistaPrevia:
+    'su contrato pide la timeline pausada para poder capturarla cuadro por cuadro, ' +
+    'así que abrirla en un navegador muestra el primer cuadro y nada más.\n' +
+    'Para ver cómo quedó, renderizala: es lo mismo que mostraría una vista previa.',
+
+  /**
+   * La duración que el HTML declara en `data-duration`, o 0.
+   *
+   * `composition.js` es el único lugar del código que sabe leerla, y la pestaña
+   * Corrections la necesita para los recursos viejos a los que les falta la
+   * ficha. Se pide con `durationSec: 0` justamente para que no inyecte la
+   * nuestra: lo que se quiere saber es qué dice el archivo, no qué querríamos.
+   */
+  duracionDeclarada(code) {
+    try {
+      return inspectComposition(String(code || ''), { durationSec: 0 }).duration || 0;
+    } catch (e) {
+      return 0;
+    }
   },
 
   systemPrompt() {
@@ -60,18 +88,27 @@ module.exports = registrar({
     return TEXTO[problema] || 'el andamiaje de la composición está incompleto';
   },
 
-  /** El contrato, dentro del prompt de usuario (reduce reintentos por HTML inválido). */
-  bloqueDeContrato(durationSec) {
-    const d = Number(durationSec) || 0;
-    return '\n## Duración objetivo\n' +
-      'La composición debe durar ' + d.toFixed(2) + ' s (declarala en data-duration del #stage y ' +
-      'que la timeline cubra exactamente ese rango).\n' +
-      '\n## Contrato obligatorio (verificá antes de responder)\n' +
-      '- El <div id="stage"> DEBE tener: data-composition-id, data-width="1920", data-height="1080", ' +
-      'data-duration (número > 0 = duración en segundos) y data-fps="30".\n' +
-      '- El script DEBE terminar con window.__timelines[COMP_ID] = tl; (COMP_ID = data-composition-id).\n' +
-      '- Sin esos tres (data-composition-id, data-duration > 0, __timelines) el render falla.\n' +
-      '\nDevolvé SOLO el HTML completo de la composición.';
+  /**
+   * El contrato, como DATOS. Los tres lugares donde se le dice al modelo
+   * —el checklist del pedido, el recordatorio final y el pedido de arreglo— se
+   * componen de esta lista (ver prompt/contrato.js). Antes eran tres bloques de
+   * prosa escritos a mano que repetían estas mismas reglas, y agregar una a uno
+   * sin agregarla a los otros no fallaba: dejaba a los proveedores sin system
+   * prompt con un contrato incompleto.
+   */
+  reglas: [
+    'El <div id="stage"> DEBE tener: data-composition-id, data-start="0", data-width="1920", ' +
+      'data-height="1080", data-duration (número > 0 = duración en segundos) y data-fps="30".',
+    'UN solo <div id="stage"> y UNA sola timeline GSAP, pausada, con tiempos absolutos.',
+    'El script DEBE TERMINAR registrándola con la MISMA clave que data-composition-id: ' +
+      "window.__timelines['comp'] = tl;",
+    'Sin esas tres cosas (data-composition-id, data-duration > 0 y __timelines) el render falla.',
+  ],
+
+  /** Cómo se le pide la duración: acá se DECLARA en el HTML. */
+  duracionEnElPedido(durationSec) {
+    return 'La composición debe durar ' + durationSec.toFixed(2) + ' s: declaralo en ' +
+      'data-duration del #stage y que la timeline cubra exactamente ese rango.';
   },
 
   bloqueDeAssets(infos) {
@@ -93,35 +130,6 @@ module.exports = registrar({
       '- La temática del fondo debe relacionarse con el OBJETIVO de la clase y el tema de este tramo del transcript (evocá el concepto, no lo hagas literal).\n' +
       '- CONTRASTE: lo que va al frente (texto/gráficos) debe leerse con claridad sobre el fondo. Asegurá suficiente diferencia de luminosidad; si hace falta, poné un velo/oscurecido detrás del texto.\n' +
       '- Paleta sobria y coherente; el fondo NO debe competir con la información del frente.';
-  },
-
-  recordatorioFinal() {
-    return '\n\n---\n\n' +
-      '# ANTES DE RESPONDER — el contrato que no se negocia\n\n' +
-      'Esto va último porque es lo único sin lo cual el render NO EXISTE. ' +
-      'Repasá los cuatro puntos sobre tu propio HTML antes de mandarlo:\n\n' +
-      '1. UN solo contenedor raíz, con TODOS estos atributos:\n' +
-      '   `<div id="stage" data-composition-id="comp" data-start="0" ' +
-      'data-width="1920" data-height="1080" data-duration="…" data-fps="30">`\n' +
-      '   donde `data-duration` es la duración objetivo que te pedí arriba, en segundos, número > 0.\n' +
-      '2. UNA sola timeline GSAP, pausada, con tiempos absolutos.\n' +
-      '3. El script TERMINA registrándola con la MISMA clave que `data-composition-id`:\n' +
-      "   `window.__timelines['comp'] = tl;`\n" +
-      '4. Devolvé SOLO el HTML, de `<!DOCTYPE html>` a `</html>`. Nada antes, nada después.\n\n' +
-      'Si falta cualquiera de los cuatro, la composición no se puede renderizar y el trabajo se pierde entero.';
-  },
-
-  promptDeArreglo(userPrompt, code, problema, durationSec) {
-    return userPrompt +
-      '\n\n## Arreglo de estructura (NO rediseñes)\n' +
-      'Generaste la composición de abajo, pero ' + this.textoDeProblema(problema) + '.\n' +
-      'Devolvé EL MISMO HTML —mismo diseño, mismo CSS, mismos tweens y tiempos— con SOLO el andamiaje corregido:\n' +
-      '- El `<div id="stage">` con data-composition-id, data-start="0", data-width="1920", data-height="1080", ' +
-      'data-duration="' + Number(durationSec).toFixed(2) + '" y data-fps="30".\n' +
-      '- UN solo `<div id="stage">` y UNA sola timeline, cerrando con `window.__timelines[COMP_ID] = tl;` ' +
-      '(COMP_ID igual a data-composition-id).\n' +
-      'No cambies nada más: sin esto el render falla, pero el diseño ya está aprobado.\n' +
-      '\n### Tu versión a corregir\n```html\n' + code + '\n```';
   },
 
   revisar(code, opts) {

@@ -11,6 +11,9 @@
 
 const { test, ok, eq, has } = require('./harness');
 const { buildUserPrompt } = require('../bridge/prompt/build-context');
+// El motor con el que se arma el pedido. Es entrada obligatoria: el contrato que
+// cierra el prompt es de un motor, y sin decir cuál no hay prompt que armar.
+const MOTOR_DEL_PROMPT = require('../bridge/render').motor('hyperframes');
 
 const CLASE = [
   { start: 5, end: 12, text: 'arrancamos con la introducción del curso' },
@@ -25,6 +28,7 @@ const FRAGMENTO = [CLASE[1], CLASE[2]];
 
 function refinar(extra) {
   return buildUserPrompt(Object.assign({
+    motor: MOTOR_DEL_PROMPT,
     objective: 'enseñar a leer un reporte de ventas',
     transcriptSegments: CLASE,
     marker: MARCADOR,

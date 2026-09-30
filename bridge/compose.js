@@ -18,7 +18,9 @@
 
 const { stripHtmlFence } = require('./providers');
 const { auditFailure } = require('./composition');
-const { PROBLEMA } = require('./render/motores');
+// El pedido de arreglo del andamiaje se compone de las reglas del motor, igual
+// que `auditFixPrompt` de acá abajo se compone de su `comoSeLlama` y su `fence`.
+const contrato = require('./prompt/contrato');
 
 // Lo que dijo el modelo, en una línea y corto, para que quepa en el log del
 // panel. Va entre comillas en el mensaje de error: es su explicación, no la
@@ -42,8 +44,8 @@ function auditFixPrompt(motor, userPrompt, code, falla) {
     'Generaste la composición de abajo y tu auditoría declaró: "' + falla + '".\n' +
     'Corregí EXACTAMENTE esa falla conservando todo lo que está bien (idea, estilo, timing). ' +
     'Aplicá el protocolo de layout (regiones que no se pisan, zona segura de 80px, presupuesto de texto). ' +
-    'Devolvé SOLO ' + motor.comoSeLlama + ' completo corregido, con su auditoría final en un comentario `AUDIT: …`.\n' +
-    '\n### Tu versión con la falla\n```' + motor.fence + '\n' + code + '\n```';
+    'Devolvé SOLO ' + motor.lenguaje.comoSeLlama + ' completo corregido, con su auditoría final en un comentario `AUDIT: …`.\n' +
+    '\n### Tu versión con la falla\n```' + motor.lenguaje.fence + '\n' + code + '\n```';
 }
 
 /**
@@ -116,7 +118,12 @@ async function composeAnimation(a) {
     // recurso o el conteo de tokens sale distinto, esta línea lo explica.
     if (gen.warning) report({ note: gen.warning, level: 'WARN' });
     addUsage(gen.usage);
-    const seen = motor.revisar(stripHtmlFence(gen.text), {
+    const code = stripHtmlFence(gen.text);
+    // Primero la pregunta barata —¿es código o es prosa?—, y si es prosa NO se
+    // revisa el contrato: revisar prosa da un diagnóstico sobre algo que no
+    // existe, y en Remotion cuesta una compilación entera.
+    if (!motor.esCodigo(code)) return { code: code, fixes: [], prosa: true };
+    const seen = motor.revisar(code, {
       durationSec: a.durationSec, markerSlug: a.markerSlug,
     });
     if (seen.fixes.length) {
@@ -129,6 +136,20 @@ async function composeAnimation(a) {
   function porQue(seen) {
     const base = motor.textoDeProblema(seen.problema);
     return seen.detalle ? base + ' (' + seen.detalle + ')' : base;
+  }
+
+  /**
+   * ¿Esta respuesta es mejor que la que tenemos? Son DOS motivos para
+   * descartarla y hay que preguntar por los dos: que no cumpla el contrato, y
+   * que no sea código.
+   *
+   * Lo segundo es fácil de olvidar y el precio está medido: una negativa no
+   * tiene `problema` —no le falta andamiaje, no hay nada que arreglar—, así que
+   * preguntando solo por el contrato pasaba por buena y REEMPLAZABA a un diseño
+   * que ya se había pagado. Es el caso del editor que perdió tres rondas.
+   */
+  function sirve(seen) {
+    return !seen.prosa && !seen.problema;
   }
 
   let best = await ask(a.userPrompt);
@@ -151,17 +172,17 @@ async function composeAnimation(a) {
   //     "the 'versión previa' block does not actually contain the prior HTML
   //     (it contains an earlier refusal message instead)". Una negativa no
   //     puede contaminar la cadena de versiones.
-  if (best.problema === PROBLEMA.NO_ES_CODIGO) {
+  if (best.prosa) {
     const vacia = !String(best.code || '').trim();
     throw Object.assign(new Error(
       (vacia
         ? 'El proveedor "' + a.config.provider + '" devolvió una respuesta vacía: no hay composición.\n'
-        : 'El modelo no compuso nada: contestó en prosa en vez de devolver ' + motor.comoSeLlama + '.\n' +
+        : 'El modelo no compuso nada: contestó en prosa en vez de devolver ' + motor.lenguaje.comoSeLlama + '.\n' +
           'Lo que dijo: «' + quoteReply(best.code) + '»\n') +
       'No lo guardo como versión: si lo guardara, la próxima corrección tomaría ' +
       'este texto como "la versión previa".\n' +
       'Qué hacer: dale "Reintentar". Si se repite, probá con otro modelo o con otro proveedor.'
-    ), { problem: best.problema, usage: usage, sinComposicion: true });
+    ), { usage: usage, sinComposicion: true });
   }
 
   // Reintento por estructura. Llegar acá ya es raro: el reparador cubre el id, la
@@ -169,8 +190,9 @@ async function composeAnimation(a) {
   if (best.problema) {
     report({ pct: 45, msg: 'Corrigiendo la estructura de la composición…' });
     report({ note: 'LLAMADA EXTRA al modelo por estructura: ' + porQue(best) + '.', level: 'WARN' });
-    const retry = await ask(motor.promptDeArreglo(a.userPrompt, best.code, best.problema, a.durationSec));
-    if (!retry.problema) best = retry;
+    const retry = await ask(
+      contrato.promptDeArreglo(motor, a.userPrompt, best.code, best.problema, a.durationSec));
+    if (sirve(retry)) best = retry;
     else report({ note: 'El reintento de estructura TAMPOCO cumplió: sigo con la versión original.', level: 'WARN' });
   }
 
@@ -180,7 +202,7 @@ async function composeAnimation(a) {
   if (falla) {
     report({ pct: 48, msg: 'Tu auditoría detectó una falla de diseño — corrigiéndola…' });
     const fixed = await ask(auditFixPrompt(motor, a.userPrompt, best.code, falla));
-    if (!fixed.problema) best = fixed;
+    if (sirve(fixed)) best = fixed;
     else report({ note: 'La corrección de auditoría no cumplía el contrato: me quedo con la versión anterior.', level: 'WARN' });
   }
 

@@ -32,6 +32,9 @@ const { test, ok, eq, has } = require('./harness');
 const engine = require('../bridge/engine.js');
 const motores = require('../bridge/render');
 const { buildUserPrompt } = require('../bridge/prompt/build-context');
+// El motor con el que se arma el pedido. Es entrada obligatoria: el contrato que
+// cierra el prompt es de un motor, y sin decir cuál no hay prompt que armar.
+const MOTOR_DEL_PROMPT = require('../bridge/render').motor('hyperframes');
 const CEP = path.join(__dirname, '..', 'cep', 'js');
 
 // ── Un proyecto de verdad en un tmpdir ───────────────────────────────
@@ -317,6 +320,7 @@ test('la cola, que lee por cualquier job, no repite el aviso del formato viejo',
 
 function pedido(extra) {
   return buildUserPrompt(Object.assign({
+    motor: MOTOR_DEL_PROMPT,
     objective: 'reconocer los tres componentes',
     transcriptSegments: [{ start: 0, end: 5, text: 'la clase' }],
     marker: { name: 'Marcador 1', start: 10, end: 16, duration: 6 },
@@ -1362,6 +1366,7 @@ test('el ajuste local le gana a la relectura del disco, que es el único punto d
 
   // Y lo que el modelo ve de verdad es el ajustado.
   const visto = buildUserPrompt(Object.assign({
+    motor: MOTOR_DEL_PROMPT,
     transcriptSegments: [], marker: { name: 'Marcador 1', start: 10, end: 16, duration: 6 },
     markerTranscript: [], stillsCount: 0,
   }, pl));
@@ -1407,6 +1412,7 @@ test('el ajuste pisa SOLO el nivel que se tocó', async function () {
   await dejarCorrer();
 
   const visto = buildUserPrompt(Object.assign({
+    motor: MOTOR_DEL_PROMPT,
     transcriptSegments: [], marker: { name: 'Marcador 1', start: 10, end: 16, duration: 6 },
     markerTranscript: [], stillsCount: 0,
   }, c.espia.preparados[0]));

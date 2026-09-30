@@ -306,7 +306,7 @@ test('generar sobre un proyecto donde no había nada escribe el HTML y la ficha'
   });
   eq(prepared.ok, true, 'la generación no llegó al final');
   eq(prepared.baseDir, path.join(p.dir, 'HyperPremiere', SLUG), 'escribió en otra carpeta');
-  ok(fs.existsSync(prepared.htmlPath), 'el HTML no quedó en el disco');
+  ok(fs.existsSync(prepared.codePath), 'la composición no quedó en el disco');
   ok(fs.existsSync(prepared.metaPath), 'la ficha de la versión no quedó en el disco');
   // Y lo que se acaba de escribir lo ve la lectura que ya no crea nada.
   eq(engine.listMarkerVersions({

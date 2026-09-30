@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 
 // Contrato de nombres versionados ("<slug> vN [modelo].ext"): vive en versions.js.
-const { formatBase, listVersions, metaName } = require('./versions');
+const { formatBase, listVersions, metaName, versionFile } = require('./versions');
 // Las referencias de los dos niveles generales (capturas, logos, PDFs) como
 // archivos al lado del .prproj: su I/O y su manifiesto viven en references.js.
 const referencias = require('./references');
@@ -382,6 +382,40 @@ const removeReference = referencias.makeRemove(referencesDirPath);
 const setReferenceUse = referencias.makeSetUse(referencesDirPath);
 
 /**
+ * TODO lo que se sabe de la composición de una versión: el archivo, su código,
+ * el motor que lo escribió y su ficha. `null` si esa versión no está.
+ *
+ * Es la primitiva, y existe porque la misma incantación de tres pasos —buscar
+ * el archivo por cada extensión conocida, traducir su nombre al de la ficha,
+ * resolver el motor desde ahí— estaba escrita SIETE veces, seis de ellas en
+ * `engine.js`. Que el orquestador importara `metaName` era la evidencia: ese
+ * import existía nada más para poder repetir el paso del medio.
+ *
+ * Se busca por extensión y no se arma el nombre porque la extensión la decidió
+ * el motor: quien pregunta por "la v2" no tiene por qué saber cuál fue.
+ *
+ * Devuelve `ficha` además del motor para que quien necesite el tramo, el fondo
+ * o el modelo no tenga que volver a leer el mismo archivo — que es lo que hacía
+ * `previewComposition`, resolviendo el archivo y releyendo su ficha dos líneas
+ * después.
+ */
+function composicionDeVersion(baseDir, markerSlug, version) {
+  for (const ext of motores.extensiones()) {
+    const file = versionFile(baseDir, markerSlug, version, ext);
+    if (!file) continue;
+    let code;
+    try {
+      code = fs.readFileSync(file, 'utf8');
+    } catch {
+      return null; // el archivo está en el listado pero no se puede leer
+    }
+    const ficha = readMeta(path.join(baseDir, metaName(path.basename(file)))) || {};
+    return { file, code, ficha, motor: motores.motorDeFicha(ficha) };
+  }
+  return null;
+}
+
+/**
  * La última versión de `markerSlug` anterior a `version` que sea UNA
  * COMPOSICIÓN DE VERDAD, con el motor que la escribió.
  *
@@ -406,17 +440,16 @@ function lastComposition(baseDir, markerSlug, version) {
     .filter((v) => v.version < Number(version))
     .reverse();
   for (const v of previas) {
-    let code;
-    try {
-      code = fs.readFileSync(path.join(baseDir, v.name), 'utf8');
-    } catch {
-      continue; // Archivo ilegible: seguimos con la versión anterior.
-    }
-    const motor = motores.motorDeFicha(readMeta(path.join(baseDir, metaName(v.name))));
+    const c = composicionDeVersion(baseDir, markerSlug, v.version);
+    if (!c) continue; // archivo ilegible: seguimos con la anterior
     // "No es una composición" lo contesta el motor que la escribió: es el único
-    // que sabe distinguir su propio código de una respuesta en prosa.
-    if (motor.revisar(code, {}).problema === motores.PROBLEMA.NO_ES_CODIGO) continue;
-    return { code, engine: motor.id, name: v.name, version: v.version };
+    // que sabe distinguir su propio código de una respuesta en prosa. Y se le
+    // pregunta con `esCodigo` y no con `revisar`: esto camina para atrás por
+    // TODAS las versiones previas, y revisar el contrato de cada una compilaba
+    // el TSX entero por versión (medido: 130 ms sobre seis) para contestar algo
+    // que se contesta mirando el principio del archivo.
+    if (!c.motor.esCodigo(c.code)) continue;
+    return { code: c.code, engine: c.motor.id, name: v.name, version: v.version };
   }
   return null;
 }
@@ -523,6 +556,7 @@ module.exports = {
   addReference,
   removeReference,
   setReferenceUse,
+  composicionDeVersion,
   lastComposition,
   saveStills,
   saveResources,

@@ -62,11 +62,13 @@ const vivos = require('../vivos');
 // máquina para él.
 const ARRANQUE_MS = 120 * 1000;
 
-// Se apaga solo si nadie lo mira por este rato. El panel avisa cuando se cierra
-// (ver `apagar`), pero no hay forma de que avise cuando lo MATAN: Premiere se
-// cierra de golpe, o se cae, y un webpack en watch quedaría comiendo memoria
-// hasta que alguien lo note. Media hora es más de lo que dura una revisión de
-// timing y menos de lo que tarda en molestar.
+// Se apaga solo si nadie lo mira por este rato.
+//
+// Es la ÚNICA red que cubre que Premiere se cierre de golpe: el `beforeunload`
+// del panel y la adopción de la caja de `vivos` cubren los dos el ⟳, que es otro
+// evento. Sin esto, un webpack en watch queda comiendo memoria hasta que alguien
+// lo note. Media hora es más de lo que dura una revisión de timing y menos de lo
+// que tarda en molestar.
 const INACTIVIDAD_MS = 30 * 60 * 1000;
 
 // La sesión cuelga de `process` y no de una variable de este módulo, y no es un
@@ -77,6 +79,15 @@ const INACTIVIDAD_MS = 30 * 60 * 1000;
 // vista previa levantaba un SEGUNDO. Es exactamente el problema que `vivos.js`
 // existe para resolver, con el mismo razonamiento que el micrófono del dictado:
 // "hay un solo Studio" tiene que valer por PROCESO, no por instancia de módulo.
+//
+// Lo que `adoptar` hace es BAJAR la sesión anterior, no reengancharse a ella, y
+// acá eso es más discutible que en el dictado: un dictado a medias después de un
+// ⟳ está muerto de todos modos, pero un Studio andando es un espectador pasivo
+// con una pestaña abierta, y bajarlo le deja al editor un "no se puede acceder a
+// este sitio" — justo el final que `sesionViva` evita en el otro camino.
+// Reengancharse pediría guardar el puerto en disco y verificarlo; queda anotado
+// y no hecho, para que el próximo que lea sepa que es una decisión y no un
+// olvido.
 const caja = vivos.adoptar('remotion-studio', {
   sesion: null,
   bajarTodo: function (porQue) { apagar(porQue); },

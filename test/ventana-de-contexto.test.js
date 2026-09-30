@@ -466,7 +466,7 @@ function armarPanel(cfg, extra) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'iconos.js', 'store.js', 'config-ui.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'motores.js', 'store.js', 'config-ui.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   ctx.HPConfigUI.init();
