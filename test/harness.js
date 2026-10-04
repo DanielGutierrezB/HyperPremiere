@@ -8,6 +8,44 @@
 //
 //   node test/run.js
 
+// LOS TESTS NO CORREN EN LA CASA DEL EDITOR.
+//
+// `~/.hyperpremiere/config.json` es la configuración del panel del editor que
+// está corriendo la suite, y los tests la tocaban por los dos lados:
+//
+//  - ESCRIBIENDO. Tres tests llamaban a `engine.setConfig` y le dejaban al
+//    editor un `apiKey: "sk-nueva"` y un modelo `"falso"`. No falla nada: pasa
+//    en verde y deja el panel generando con otra cosa.
+//  - LEYENDO, que es lo que apareció después y es peor. Desde que ⚙ elige el
+//    motor de animación, cinco tests que ni hablan de motores empezaron a
+//    fallar en cuanto el editor eligió Remotion: le mandaban al modelo de
+//    mentira un HTML de GSAP y el motor —Remotion, porque así decía la config—
+//    contestaba "esto no es un componente de React". Cinco fallas que no tenían
+//    nada que ver con lo que esos tests prueban, y ninguna reproducible en otra
+//    máquina.
+//
+// Los dos son el mismo problema: un test que mira la config del editor mide
+// distinto en cada máquina. Y los archivos que lo sufrieron ya se habían
+// esforzado en lo contrario —reemplazan los CINCO proveedores para no depender
+// de cuál diga la config— así que el arreglo no es parchear esos cinco tests,
+// es que la casa que ven los tests no sea la del editor.
+//
+// Va acá y no en `run.js` porque el corredor de mutaciones arma su propio guion
+// y no pasa por ahí; por `harness` pasan los dos. Y va al CARGAR el módulo,
+// antes de que se requiera un solo archivo de test, porque algunos leen cosas
+// al cargarse.
+//
+// Un test que necesite una casa propia se la sigue armando (varios lo hacen):
+// guardan HOME, lo cambian y lo restauran, y lo que restauran es esta.
+(function casaDeJuguete() {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const casa = fs.mkdtempSync(path.join(os.tmpdir(), 'hp-tests-home-'));
+  process.env.HOME = casa;
+  process.env.USERPROFILE = casa;
+})();
+
 const tests = [];
 let grupo = '';
 

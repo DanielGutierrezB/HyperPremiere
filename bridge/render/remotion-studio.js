@@ -49,10 +49,10 @@ const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 
 const instalacion = require('./remotion-instalar');
-const { killTree } = require('../exec');
+const { nodeBin } = require('./node-bin');
+const { killTree, startProcess } = require('../exec');
 const vivos = require('../vivos');
 
 // Cuánto se le da para empezar a servir antes de decir que no arrancó. Es
@@ -228,15 +228,18 @@ async function mostrar(o) {
   // remotion-instalar.js). Y `--no-open` porque quien abre la ventana es el
   // panel, con el navegador del editor: si lo abriera Studio, se abriría una
   // pestaña por cada vez que se levanta y ninguna cuando se reusa.
-  const hijo = spawn(process.execPath, [
+  //
+  // El node sale de node-bin.js y NO de `process.execPath`, que adentro de
+  // Premiere es un binario de Adobe. Y `startProcess` en vez de `spawn` pelado,
+  // porque deja al hijo como líder de grupo: Studio levanta un webpack en watch
+  // con sus propios workers, y `apagar()` los tiene que bajar a todos.
+  const hijo = startProcess(await nodeBin(), [
     bin, 'studio', path.join('src', 'index.ts'),
     '--props=' + archivoDeProps(st.dir),
     '--port', String(puerto),
     '--no-open',
   ], {
     cwd: st.dir,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
   });
 
   let cola = '';

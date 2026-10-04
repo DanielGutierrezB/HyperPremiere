@@ -32,15 +32,15 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
 
 const { registrar } = require('./motores');
 const lenguajes = require('./lenguajes');
 const { systemPrompt } = require('../prompt/system');
 const instalacion = require('./remotion-instalar');
 const studio = require('./remotion-studio');
+const { nodeBin } = require('./node-bin');
 const { permitido, PERMITIDOS } = require('../remotion-host/src/permitidos');
-const { killTree } = require('../exec');
+const { killTree, startProcess } = require('../exec');
 
 // Mismo watchdog que el otro motor: matamos el render solo si pasa este lapso
 // sin NINGUNA señal de vida, no si tarda.
@@ -247,9 +247,13 @@ module.exports = registrar({
     return { code: txt, fixes: [], problema: null };
   },
 
-  renderizar(o) {
+  async renderizar(o) {
     const st = instalacion.estado();
     if (!st.instalado) throw new Error('Remotion no está listo: ' + st.motivo);
+
+    // Con QUÉ node, que no es `process.execPath`: adentro de Premiere eso es un
+    // binario de Adobe y el render moría sin decir nada. Ver node-bin.js.
+    const bin = await nodeBin();
 
     const report = typeof o.onProgress === 'function' ? o.onProgress : function () {};
     const conFondo = o.format === 'mp4';
@@ -272,10 +276,11 @@ module.exports = registrar({
     fs.mkdirSync(path.dirname(o.outPath), { recursive: true });
 
     return new Promise((resolve, reject) => {
-      const hijo = spawn(process.execPath, [path.join(__dirname, 'remotion-worker.js'), pedidoPath], {
+      // `startProcess` y no `spawn` pelado: deja al hijo como líder de grupo,
+      // que es de lo que depende que `killTree` se lleve también al Chrome y a
+      // los workers de webpack que el render levanta (ver exec.js).
+      const hijo = startProcess(bin, [path.join(__dirname, 'remotion-worker.js'), pedidoPath], {
         cwd: st.dir,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: process.platform !== 'win32',
       });
 
       let listo = false;
@@ -331,8 +336,13 @@ module.exports = registrar({
         if (code === 0) {
           return reject(new Error('Remotion terminó OK pero no existe el archivo de salida: ' + o.outPath));
         }
+        // El "(sin salida)" de antes era un callejón sin salida: el worker avisa
+        // de todo lo suyo por stdout, así que un hijo MUDO significa que lo que
+        // se lanzó no era nuestro worker. Decir con qué binario se lo lanzó es
+        // lo único que convierte ese caso en algo seguible.
         reject(new Error('Remotion falló (código ' + code + ')\n' +
-          (errorDelHijo || ultimaSalida.slice(-800) || '(sin salida)')));
+          (errorDelHijo || ultimaSalida.slice(-800) ||
+            'El proceso no escribió nada, ni en stdout ni en stderr. Se lanzó con: ' + bin)));
       });
     });
   },

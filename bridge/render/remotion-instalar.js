@@ -54,6 +54,8 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
+const { nodeBin } = require('./node-bin');
+
 /** Dónde vive la instalación. Fuera del panel: sobrevive a actualizar el ZXP. */
 function dirDeInstalacion() {
   return path.join(os.homedir(), '.hyperpremiere', 'remotion');
@@ -210,7 +212,7 @@ function correr(bin, args, opts, onLinea) {
  * El progreso sale por stdout, un número por línea: es un proceso hijo de tres
  * líneas y armarle un protocolo sería más código que el que corre.
  */
-function bajarNavegador(dir, onPct) {
+async function bajarNavegador(dir, onPct) {
   const guion = [
     'const r = require("@remotion/renderer");',
     'r.ensureBrowser({ onBrowserDownload: () => ({ version: null,',
@@ -218,7 +220,9 @@ function bajarNavegador(dir, onPct) {
     '  .then(() => process.exit(0))',
     '  .catch((e) => { process.stderr.write(String((e && e.message) || e)); process.exit(1); });',
   ].join('\n');
-  return correr(process.execPath, ['-e', guion], { cwd: dir, shell: false }, (l) => {
+  // El node lo resuelve node-bin.js y NO sale de `process.execPath`: adentro de
+  // Premiere eso es un binario de Adobe (ver ese módulo).
+  return correr(await nodeBin(), ['-e', guion], { cwd: dir, shell: false }, (l) => {
     const pc = parseFloat(l);
     if (pc >= 0 && pc <= 1) onPct(pc);
   });

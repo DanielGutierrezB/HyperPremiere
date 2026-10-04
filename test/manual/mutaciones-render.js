@@ -3392,6 +3392,58 @@ const MUTACIONES = [
     a:  '    .filter(() => false);',
   },
 
+  // --- Con QUÉ node se lanzan los hijos de Remotion ---
+  //
+  // Estas cinco cubren un fallo que YA pasó en la máquina del editor, y son las
+  // que más merecen estar acá: el motor entero estaba verificado —tests,
+  // mutaciones y renders de verdad— y el primer render pedido desde Premiere
+  // murió con «Remotion falló (código 255) / (sin salida)». Todo lo verificado
+  // corría en una terminal, donde `process.execPath` ES un node; adentro de
+  // Premiere es un binario de Adobe.
+
+  {
+    // LA regresión. El hijo se lanza con un ejecutable que no es node: arranca,
+    // no entiende el script y se muere sin escribir un byte. No hay ninguna
+    // excepción que mirar, solo un código de salida.
+    nombre: 'el render se lanza con process.execPath, que en Premiere no es node',
+    archivo: 'bridge/render/motor-remotion.js',
+    de: "      const hijo = startProcess(bin, [path.join(__dirname, 'remotion-worker.js'), pedidoPath], {",
+    a:  "      const hijo = startProcess(process.execPath, [path.join(__dirname, 'remotion-worker.js'), pedidoPath], {",
+  },
+  {
+    // Sin el filtro por nombre, `execPath` vuelve a ser candidato en Premiere.
+    // Y el daño no es solo elegirlo: "probarlo" es ejecutarlo, y con el
+    // ejecutable de Premiere eso levanta una segunda instancia que se queda viva.
+    nombre: 'se prueba como node cualquier cosa que venga en execPath',
+    archivo: 'bridge/render/node-bin.js',
+    de: "  if (/^node(\\.exe)?$/i.test(path.basename(process.execPath || ''))) {",
+    a:  '  if (true) {',
+  },
+  {
+    // Un Node viejo pasa el filtro y el fallo aparece después, disfrazado de
+    // error de sintaxis adentro de una dependencia de Remotion.
+    nombre: 'se acepta un node más viejo del que Remotion soporta',
+    archivo: 'bridge/render/node-bin.js',
+    de: '    if (mayor < VERSION_MINIMA) {',
+    a:  '    if (mayor < 0) {',
+  },
+  {
+    // Sin caché, los cuatro carriles de render buscan cada uno lo suyo — y la
+    // búsqueda incluye preguntarle al shell de LOGIN, que es casi un segundo.
+    nombre: 'la búsqueda del node se repite en cada render',
+    archivo: 'bridge/render/node-bin.js',
+    de: '  if (!pendiente) {',
+    a:  '  if (true) {',
+  },
+  {
+    // La escotilla deja de servir: el editor que tiene su Node en una carpeta
+    // propia no tiene forma de señalarlo y el panel le dice que no hay ninguno.
+    nombre: 'se ignora la variable HYPERPREMIERE_NODE',
+    archivo: 'bridge/render/node-bin.js',
+    de: "  let hit = await probar(process.env.HYPERPREMIERE_NODE, 'HYPERPREMIERE_NODE');",
+    a:  "  let hit = await probar(null, 'HYPERPREMIERE_NODE');",
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3412,7 +3464,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
   'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
-  'motores-dos'];
+  'motores-dos', 'remotion-node-del-panel'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test
