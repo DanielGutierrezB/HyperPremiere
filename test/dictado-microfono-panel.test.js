@@ -101,6 +101,7 @@ function armar(opts) {
         const s = {
           nombre: el && el.id, value: '', onChange: null, opciones: [],
           setOptions: function (o, val) { this.opciones = o.slice(); this.value = val != null ? String(val) : ''; },
+          setDisabled: function (v) { this.deshabilitado = !!v; },
           elegir: function (v) { const cambio = v !== this.value; this.value = v; if (cambio && this.onChange) this.onChange(v); },
           etiquetas: function () { return this.opciones.map(function (o) { return o.label; }); },
           valores: function () { return this.opciones.map(function (o) { return o.value; }); },
@@ -140,8 +141,8 @@ function armar(opts) {
   // control está también en el encabezado): config-ui.js monta esa vista y se
   // queda con lo que es solo de ⚙, la prueba con medidor.
   const archivos = opts.sinMedidor
-    ? ['util.js', 'iconos.js', 'motores.js', 'mic-select.js', 'config-ui.js']
-    : ['util.js', 'iconos.js', 'motores.js', 'mic-medidor.js', 'mic-select.js', 'config-ui.js'];
+    ? ['util.js', 'iconos.js', 'motores.js', 'mic-select.js', 'claude-selector.js', 'config-ui.js']
+    : ['util.js', 'iconos.js', 'motores.js', 'mic-medidor.js', 'mic-select.js', 'claude-selector.js', 'config-ui.js'];
   archivos.forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });

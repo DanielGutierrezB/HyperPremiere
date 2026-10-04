@@ -1754,10 +1754,14 @@ const MUTACIONES = [
     a:  '      if (false) {\n        var b = cur.porProveedor[quien] ||',
   },
   {
-    nombre: 'las etiquetas no se rearman cuando el CLI dice con qué entra',
+    // Desde el selector de Claude por el CLI, los nombres de los modelos ya no
+    // llevan la ventana (tiene su propio desplegable, con lo medido). Lo que
+    // sigue dependiendo de con qué entra el CLI es el renglón de abajo mientras
+    // no hay medición: con API key va por la API y vale el 1M documentado.
+    nombre: 'el renglón de la ventana no se entera de con qué entra el CLI',
     archivo: 'cep/js/config-ui.js',
-    de: '        if (antes !== currentAuthMethod) populateModels("claude-cli", effectiveModel());',
-    a:  '        void antes;',
+    de: '        currentAuthMethod = (s.estado === "con-sesion") ? String(s.metodo || "") : "";',
+    a:  '        currentAuthMethod = "";',
   },
 
   // ── El refinador del dictado, apoyado en los proveedores de verdad ────
@@ -3444,6 +3448,157 @@ const MUTACIONES = [
     a:  "  let hit = await probar(null, 'HYPERPREMIERE_NODE');",
   },
 
+  // --- El selector de Claude por el CLI: lo que sale de medir ---
+  //
+  // El selector viejo era una lista escrita en el panel, y su forma de fallar
+  // fue la más callada posible: ofrecer Opus 5 como lo último con Opus 5.5
+  // publicado. Todo lo de abajo son variantes de ese mismo error —afirmar algo
+  // que no se midió, o medir mal— y casi ninguna rompe nada a la vista.
+
+  {
+    // LA regresión de la medición. Una versión retirada no da error: la
+    // contesta la actual. Contarla como disponible es decirle al editor que
+    // genera con Opus 4.1 mientras genera con Opus 5.5.
+    nombre: 'una versión retirada cuenta como disponible porque contestó',
+    archivo: 'bridge/claude-modelos.js',
+    de: '    if (p.version && idBase(c.id) !== idBase(p.version)) {',
+    a:  '    if (false) {',
+  },
+  {
+    // El Haiku que el CLI usa por dentro aparece en modelUsage, a veces
+    // primero. Tomar la primera clave decía "Haiku" para todo.
+    nombre: 'quién contestó se lee de la primera clave de modelUsage',
+    archivo: 'bridge/claude-modelos.js',
+    de: "  if (fam) elegida = claves.find((k) => k.indexOf('claude-' + fam) === 0) || '';",
+    a:  "  if (false) elegida = '';",
+  },
+  {
+    // A un modelo que ya trae 1M se le ofrece un "200k" que no tiene. Es la
+    // tabla por familia que este diseño reemplazó.
+    nombre: 'un modelo con 1M de serie ofrece elegir entre 200k y 1M',
+    archivo: 'bridge/claude-modelos.js',
+    de: '    if (plano.ventana >= UN_MILLON) {',
+    a:  '    if (false) {',
+  },
+  {
+    // Lo medido con un CLI se sigue mostrando con otro, y cada CLI trae su
+    // tabla de alias: el selector afirma una versión que ya no es.
+    nombre: 'lo medido sigue valiendo después de actualizar el CLI',
+    archivo: 'bridge/claude-modelos.js',
+    de: '  return medicion.cli !== String(cli);',
+    a:  '  return false;',
+  },
+  {
+    // Un corte de red se guarda como "ningún modelo disponible" y deshabilita
+    // el selector entero hasta el próximo Verificar.
+    nombre: 'una medición donde no contestó nadie se guarda igual',
+    archivo: 'bridge/claude-modelos.js',
+    de: '  return Object.keys(res).some((k) => res[k] && res[k].resuelto);',
+    a:  '  return true;',
+  },
+  {
+    // El [1m] se le pregunta a todos, también a los que ya traen 1M: la
+    // segunda tanda pasa de dos llamadas a once, del plan del editor.
+    nombre: 'el [1m] se mide también en los que ya traen 1M',
+    archivo: 'bridge/claude-modelos.js',
+    de: '    return !/\\[1m\\]$/.test(k) && r && !r.noDisponible && r.ventana > 0 && r.ventana < UN_MILLON;',
+    a:  '    return !/\\[1m\\]$/.test(k) && r && !r.noDisponible;',
+  },
+  {
+    // Once CLIs de más de 200 MB a la vez, en la máquina donde está Premiere.
+    nombre: 'la medición lanza todos los CLIs juntos',
+    archivo: 'bridge/claude-medir.js',
+    de: 'const EN_PARALELO = 4;',
+    a:  'const EN_PARALELO = 50;',
+  },
+  {
+    // Se mide con otra credencial que la de la generación: es medir otra
+    // cuenta, con otro plan y otros modelos.
+    nombre: 'la medición no usa la credencial con la que se genera',
+    archivo: 'bridge/claude-medir.js',
+    de: '    env: claudeSession.envParaClaude(cfg),',
+    a:  '    env: process.env,',
+  },
+  {
+    // Cada Verificar le deja al editor una docena de conversaciones de
+    // "Contesta solo: ok" en su historial de Claude Code.
+    nombre: 'cada llamada de la medición queda en el historial del editor',
+    archivo: 'bridge/claude-medir.js',
+    de: "  if (conExtras) args.push('--tools', '', '--no-session-persistence');",
+    a:  "  if (conExtras) args.push('--tools', '');",
+  },
+  {
+    // Verificar no actualiza nunca: los modelos nuevos no llegan, porque
+    // llegan con el CLI nuevo.
+    nombre: 'Verificar no actualiza un CLI atrasado',
+    archivo: 'bridge/engine.js',
+    de: '  if (cli && ultima.version && claudeModelos.compararVersiones(cli, ultima.version) < 0) {',
+    a:  '  if (false) {',
+  },
+  {
+    // Actualiza, pero mide anotando la versión de ANTES: lo medido queda
+    // vencido en el acto, y el selector vuelve a decir "Opus" a secas.
+    nombre: 'después de actualizar, lo medido se anota con la versión vieja',
+    archivo: 'bridge/engine.js',
+    de: '    instalado: { bin: inst.bin, version: cli },',
+    a:  '    instalado: inst,',
+  },
+  {
+    // "El de tu plan" viaja como `--model default`, que el CLI no conoce.
+    nombre: 'el modelo "default" se manda al CLI como si fuera uno',
+    archivo: 'bridge/providers/claude-cli.js',
+    de: "    if (model && model !== 'default') args.push('--model', model);",
+    a:  "    if (model) args.push('--model', model);",
+  },
+  {
+    // Sin nada guardado se arranca con una versión fija vieja, que es el
+    // problema entero: "claude-sonnet-5" era el último cuando se escribió.
+    nombre: 'el CLI arranca con un ID fijo en vez del alias',
+    archivo: 'bridge/engine.js',
+    de: "  if (provider === 'claude-cli') return 'sonnet';",
+    a:  "  if (provider === 'claude-cli') return 'claude-sonnet-5';",
+  },
+  {
+    // El editor eligió 1M en Opus 4.6, se pasa a Sonnet 4.6 —que también lo
+    // tiene— y se lo encuentra en 200k sin haber tocado la ventana.
+    nombre: 'cambiar de modelo pierde la ventana que se había elegido',
+    archivo: 'cep/js/claude-selector.js',
+    de: '    var quiere = sel.ventana;',
+    a:  '    var quiere = "serie";',
+  },
+  {
+    // La elegida se deshabilita por no estar disponible: el desplegable pasa a
+    // mostrar otra y el editor no sabe qué tiene puesto.
+    nombre: 'el modelo elegido se deshabilita si el plan ya no lo tiene',
+    archivo: 'cep/js/claude-selector.js',
+    de: '          deshabilitada: !!o.noDisponible && o.valor !== sel.valor,',
+    a:  '          deshabilitada: !!o.noDisponible,',
+  },
+  {
+    // Si medir falla, se vuelve a intentar en cada recarga de ⚙: doce
+    // llamadas del plan por cada vez, para fallar por lo mismo.
+    nombre: 'la medición automática se repite en cada recarga',
+    archivo: 'cep/js/claude-selector.js',
+    de: '    if (!cat || !cat.instalado || !cat.vencida || !cat.cli || yaMedido[cat.cli]) return null;',
+    a:  '    if (!cat || !cat.instalado || !cat.vencida || !cat.cli) return null;',
+  },
+  {
+    // Mide sin sesión: cada llamada falla por lo mismo, y el editor gasta la
+    // espera en enterarse de que le falta iniciar sesión.
+    nombre: 'la medición automática corre sin sesión',
+    archivo: 'cep/js/config-ui.js',
+    de: '        if (s.estado === "con-sesion") HPClaudeSelector.haySesion();',
+    a:  '        HPClaudeSelector.haySesion();',
+  },
+  {
+    // El renglón de abajo vuelve a decir "al menos 200k" con la ventana ya
+    // medida: el dato que el editor usa para saber cuánto material le entra.
+    nombre: 'la ventana medida no llega al renglón de contexto',
+    archivo: 'cep/js/util.js',
+    de: '    if (provider === "claude-cli" && isFinite(medido) && medido > 0) {',
+    a:  '    if (false) {',
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3464,7 +3619,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
   'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
-  'motores-dos', 'remotion-node-del-panel'];
+  'motores-dos', 'remotion-node-del-panel', 'claude-modelos', 'claude-medir', 'selector-claude'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test

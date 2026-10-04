@@ -36,6 +36,10 @@ const claudeLogin = require('./claude-login');
 const claudeDoctor = require('./claude-doctor');
 // Si el CLI puede autenticarse acá y ahora: lo que mira el cartel de ⚙.
 const claudeSession = require('./claude-session');
+// Qué modelos, ventanas y niveles ofrece el CLI de Claude, y la medición que lo
+// sabe (ver claude-modelos.js, la mitad que decide, y claude-medir.js).
+const claudeModelos = require('./claude-modelos');
+const claudeMedir = require('./claude-medir');
 // Lo mismo para Cursor, que hasta la 1.5.0 no tenía nada de esto: un editor que
 // elegía Cursor y fallaba veía el error crudo del proceso y ningún camino.
 const cursorSession = require('./cursor-session');
@@ -185,7 +189,11 @@ const DEFAULT_PROVIDER = 'claude-cli';
 
 // Modelo por defecto por proveedor. Vacío = el editor lo define (API compat / Ollama).
 function defaultModelFor(provider) {
-  if (provider === 'claude-cli' || provider === 'claude-api') return 'claude-sonnet-5';
+  // Por el CLI, el ALIAS y no un ID: "claude-sonnet-5" era el último Sonnet
+  // cuando se escribió y hoy es una versión anterior fija. El alias avanza solo
+  // con el CLI (ver claude-modelos.js). La API no entiende alias: ahí va el ID.
+  if (provider === 'claude-cli') return 'sonnet';
+  if (provider === 'claude-api') return 'claude-sonnet-5';
   // En Cursor el nivel de pensamiento va DENTRO del ID del modelo.
   if (provider === 'cursor-cli') return 'claude-sonnet-5-thinking-high';
   return '';
@@ -205,7 +213,11 @@ function usesEffortFlag(provider) {
 // calidad: con "adaptive thinking" el modelo decide cuánto razonar y esto es el
 // techo. En el CLI va como `--effort`; en la API como `output_config.effort`.
 // `budget_tokens` (el mecanismo viejo) da 400 en Opus 4.7+.
-const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+//
+// 'default' no es un nivel: es "no lo mandes y que decida el modelo". Tiene
+// nombre propio porque el vacío ya significaba otra cosa —"nunca se eligió",
+// que se resuelve a 'high'— y los dos tienen que poder guardarse distinto.
+const EFFORT_LEVELS = ['default', 'low', 'medium', 'high', 'xhigh', 'max'];
 const DEFAULT_EFFORT = 'high'; // el default de Anthropic
 
 function normalizeEffort(value) {
@@ -1677,6 +1689,130 @@ async function claudeSessionStatus() {
   return providerSalud.aplicarA('claude-cli', await claudeSession.estadoDeSesion(cfg));
 }
 
+// ── El selector de modelos de Claude por el CLI ──────────────────────
+
+/**
+ * La config plana de "Claude (CLI)" aunque el activo sea otro proveedor. El
+ * selector siempre pregunta por ESE slot: medir con la credencial de otro
+ * proveedor sería medir otra cuenta.
+ */
+function configDeClaudeCli() {
+  const cfg = loadConfig();
+  if (cfg.provider === 'claude-cli') return cfg;
+  const slot = (cfg.perProvider && cfg.perProvider['claude-cli']) || {};
+  return Object.assign({}, cfg, {
+    provider: 'claude-cli',
+    model: (slot.model && String(slot.model).trim()) ? slot.model : defaultModelFor('claude-cli'),
+    apiKey: slot.apiKey || '',
+    baseUrl: slot.baseUrl || '',
+  });
+}
+
+/**
+ * Todo lo que necesita ⚙ para dibujar el selector (ver claude-modelos.catalogo).
+ * No llama a ningún modelo: lee el CLI instalado (`--version` y su menú) y lo
+ * último que se midió. Con `{ model?, effort? }` ubica ESA elección en vez de la
+ * guardada: el panel le pasa la que tiene en pantalla.
+ */
+async function catalogoClaude(body) {
+  const cfg = configDeClaudeCli();
+  const inst = await claudeMedir.instalado();
+  const cat = claudeModelos.catalogo({
+    menu: inst.bin ? claudeMedir.menu(inst.bin) : [],
+    medicion: claudeMedir.leerMedicion(),
+    cli: inst.version,
+    modelo: (body && body.model) || cfg.model,
+    esfuerzo: (body && body.effort) || cfg.effort,
+  });
+  return Object.assign({ ok: true, instalado: Boolean(inst.bin) }, cat);
+}
+
+/**
+ * Mide qué contesta cada modelo y devuelve el catálogo con lo medido. Es la que
+ * corre sola al abrir ⚙ cuando el CLI cambió de versión desde la última vez.
+ * El progreso va por `prog({ msg })`.
+ */
+async function medirModelosClaude(body, prog) {
+  const avisar = typeof prog === 'function' ? prog : function () {};
+  const r = await claudeMedir.medir(configDeClaudeCli(), {
+    alAvanzar: (n, total) => avisar({ msg: 'Comprobando qué versiones ofrece tu plan… ' + n + '/' + total }),
+  });
+  const cat = await catalogoClaude(body);
+  if (!r.ok) cat.estado = 'No pude comprobar las versiones: ' + r.error;
+  else avisar({ note: 'Modelos de Claude medidos con Claude Code ' + r.cli + ': ' + resumenDeMedicion(r.medicion) });
+  return Object.assign(cat, { medida: r.ok });
+}
+
+/** Una línea para el ⬇ Log: "opus → Opus 5.5 (1M) · claude-opus-4-1 ✗ …". */
+function resumenDeMedicion(med) {
+  const res = (med && med.resultados) || {};
+  return Object.keys(res).map((k) => {
+    const r = res[k];
+    if (!r.resuelto) return k + ' ✗ ' + r.noDisponible;
+    return k + ' → ' + (claudeModelos.etiquetaDeVersion(r.resuelto) || r.resuelto) +
+      (r.ventana ? ' (' + claudeModelos.fmtVentana(r.ventana) + ')' : '');
+  }).join(' · ');
+}
+
+/**
+ * "Verificar": que el CLI esté al día y que lo elegido conteste.
+ *
+ * Los pasos, en orden, y por qué ese orden:
+ *   1. Versión instalada y última de su canal, en paralelo.
+ *   2. Si está atrasado, `claude update` — sin preguntar, como en Editor Pro:
+ *      los modelos nuevos llegan con el CLI nuevo y no hay otra forma de que
+ *      aparezcan. Actualiza también el Claude Code de la terminal, y se dice.
+ *   3. La medición de todos los modelos (ver claude-medir.medir).
+ *   4. Una llamada con la combinación ELEGIDA —modelo, ventana y pensamiento—,
+ *      que es la que de verdad va a usar la generación.
+ *
+ * Si un paso falla se anota y se sigue: sin red no se pueden comparar versiones,
+ * pero sí comprobar que la sesión contesta.
+ */
+async function verificarClaude(body, prog) {
+  const avisar = typeof prog === 'function' ? prog : function () {};
+  const cfg = configDeClaudeCli();
+  const notas = [];
+
+  avisar({ msg: 'Comprobando la versión de Claude Code…' });
+  const [inst, ultima] = await Promise.all([claudeMedir.instalado(), claudeMedir.ultimaDelCanal()]);
+  if (!inst.bin) {
+    return { ok: false, error: inst.error || 'No encontré el CLI de Claude en esta máquina.', notas: notas, catalogo: await catalogoClaude(body) };
+  }
+  if (ultima.error) notas.push('no pude consultar la última versión (' + ultima.error + ')');
+
+  let cli = inst.version;
+  let actualizado = false;
+  if (cli && ultima.version && claudeModelos.compararVersiones(cli, ultima.version) < 0) {
+    const desde = cli;
+    const paso = 'Actualizando Claude Code ' + desde + ' → ' + ultima.version + '…';
+    // Se dice al empezar, no al primer segundo: un update que tarda menos que
+    // eso pasaba sin que el editor se enterara de que su CLI cambió.
+    avisar({ msg: paso });
+    const r = await claudeMedir.actualizar(inst.bin, (s) => avisar({ msg: paso + ' ' + s + ' s' }));
+    if (r.error) notas.push(r.error);
+    else if (r.despues === desde) notas.push('Claude Code dice que ' + desde + ' es la última de su canal (' + ultima.canal + ')');
+    else { cli = r.despues; actualizado = true; }
+    avisar({ note: actualizado ? 'Claude Code actualizado: ' + desde + ' → ' + cli : 'No se actualizó Claude Code: ' + notas[notas.length - 1], level: actualizado ? 'INFO' : 'WARN' });
+  }
+
+  const m = await claudeMedir.medir(cfg, {
+    otraVez: true,
+    instalado: { bin: inst.bin, version: cli },
+    alAvanzar: (n, total) => avisar({ msg: 'Comprobando qué versiones responden… ' + n + '/' + total }),
+  });
+  if (!m.ok) notas.push('no pude comprobar las versiones (' + m.error + ')');
+  else avisar({ note: 'Modelos de Claude medidos con Claude Code ' + m.cli + ': ' + resumenDeMedicion(m.medicion) });
+
+  avisar({ msg: 'Probando el modelo elegido…' });
+  const s = await claudeMedir.sondear(inst.bin, cfg.model, cfg, { esfuerzo: cfg.effort });
+  const cat = await catalogoClaude(body);
+  if (!m.ok) cat.estado = 'No pude comprobar las versiones: ' + m.error;
+  const base = { cli: cli, actualizado: actualizado, ultima: ultima.version, notas: notas, catalogo: cat };
+  if (!s.contesto) return Object.assign({ ok: false, error: 'Claude no contestó con lo elegido: ' + s.error }, base);
+  return Object.assign({ ok: true, resumen: claudeModelos.resumen(cat) }, base);
+}
+
 // Los dos de arriba, para Cursor. Mismo contrato y mismos tres estados, porque
 // del lado del panel el cartel es el mismo y no tiene por qué saber con cuál de
 // los dos proveedores está hablando (ver cursor-session.js).
@@ -2770,6 +2906,9 @@ module.exports = {
   loginClaudeCancel,
   claudeCliStatus,
   claudeSessionStatus,
+  catalogoClaude,
+  medirModelosClaude,
+  verificarClaude,
   cursorCliStatus,
   cursorSessionStatus,
   getVersion,

@@ -57,7 +57,13 @@ function temasDisponibles() {
 }
 
 /** cep/index.html + <base> + los dos scripts de la maqueta (+ el tema). */
-function armar(basePath, datosSrc, dobleSrc, temaHref) {
+// El catálogo de Claude por el CLI se arma con el módulo REAL del motor, que no
+// tiene un solo `require`: se lo carga en la página como está, con un `module`
+// prestado solo mientras corre. Que la maqueta tuviera su propia copia de esa
+// lógica sería tener dos catálogos, y las capturas mostrarían el que no es.
+const CLAUDE_MODELOS = path.join(__dirname, "..", "..", "..", "bridge", "claude-modelos.js");
+
+function armar(basePath, datosSrc, dobleSrc, temaHref, puroSrc) {
   let html = fs.readFileSync(indexReal, "utf8");
   if (html.indexOf("<head>") === -1) {
     throw new Error("cep/index.html cambió de forma: no encuentro <head>.");
@@ -88,6 +94,9 @@ function armar(basePath, datosSrc, dobleSrc, temaHref) {
   return html.replace(marca,
     "<!-- MAQUETA (test/manual/panel-demo): no existe en el panel real ni en el ZXP -->\n" +
     "  <script>window.HP_VERSION_REAL = " + JSON.stringify(String(real.version || "")) + ";</script>\n" +
+    "  <script>window.module = { exports: {} };</script>\n" +
+    '  <script src="' + puroSrc + '"></script>\n' +
+    "  <script>window.HPClaudeModelosDemo = window.module.exports; delete window.module;</script>\n" +
     '  <script src="' + datosSrc + '"></script>\n' +
     '  <script src="' + dobleSrc + '"></script>\n' +
     "  " + marca);
@@ -100,7 +109,9 @@ fs.mkdirSync(salidaDir, { recursive: true });
 fs.writeFileSync(salida, armar(
   fileUrl(cepDir) + "/",
   fileUrl(path.join(__dirname, "datos.js")),
-  fileUrl(path.join(__dirname, "doble.js"))
+  fileUrl(path.join(__dirname, "doble.js")),
+  "",
+  fileUrl(CLAUDE_MODELOS)
 ), "utf8");
 
 // ── Servidor (http://) ────────────────────────────────────────────────
@@ -129,7 +140,7 @@ const server = http.createServer(function (req, res) {
       ? "/temas/" + tema + "/tema.css"
       : "";
     let html;
-    try { html = armar("/cep/", "/demo/datos.js", "/demo/doble.js", temaHref); }
+    try { html = armar("/cep/", "/demo/datos.js", "/demo/doble.js", temaHref, "/puro/claude-modelos.js"); }
     catch (e) { res.writeHead(500); res.end(String(e.message)); return; }
     res.writeHead(200, { "Content-Type": TIPOS[".html"], "Cache-Control": "no-store" });
     res.end(html);
@@ -138,6 +149,8 @@ const server = http.createServer(function (req, res) {
   if (ruta.indexOf("/demo/") === 0) {
     return servirArchivo(res, path.join(__dirname, ruta.slice("/demo/".length)));
   }
+  // Un solo archivo del motor, por nombre: la maqueta no sirve `bridge/`.
+  if (ruta === "/puro/claude-modelos.js") return servirArchivo(res, CLAUDE_MODELOS);
   if (ruta.indexOf("/temas/") === 0) {
     const abs = path.normalize(path.join(temasDir, ruta.slice("/temas/".length)));
     if (abs.indexOf(temasDir) !== 0) { res.writeHead(403); res.end("nope"); return; }
@@ -168,6 +181,7 @@ server.listen(puerto, "127.0.0.1", function () {
   console.log("  " + url + "?e=refs-conflicto   ídem pero el proyecto ya tiene otras: el panel pregunta en vez de pisar");
   console.log("  " + url + "?e=sin-medir        todavía no se generó con ningún proveedor (⚙ lo dice)");
   console.log("  " + url + "?e=api-key          el CLI de Claude entra con API key, así que ⚙ sí promete el 1M");
+  console.log("  " + url + "?e=claude-sin-medir  CLI de Claude recién actualizado: ⚙ mide solo qué versión hay detrás de cada modelo");
   console.log("  " + url + "?e=cursor           Cursor elegido y con sesión");
   console.log("  " + url + "?e=cursor-sin-sesion  Cursor elegido, CLI instalado y sin login (el caso del editor)");
   console.log("  " + url + "?e=cursor-sin-cli   Cursor elegido y sin el binario (spawn cursor-agent ENOENT)");

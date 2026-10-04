@@ -49,6 +49,11 @@
   var cfgProviderSel = null;
   var cfgModelSel = null;
   var cfgEffortSel = null;
+  // Solo con Claude por el CLI (ver HPClaudeSelector): la ventana de contexto y
+  // los renglones que explican lo elegido.
+  var cfgWindowSel = null;
+  var claudeAbout = null;
+  var effortHint = null;
   var cfgModelCustom, cfgApiKey, cfgBaseUrl, btnSaveConfig, configStatus, cfgSummary;
   var btnLoginClaude, loginStatus, modelsHint, cfgContext;
   // Los de Cursor son otros nodos, no los mismos: los dos proveedores pueden
@@ -58,7 +63,12 @@
   // Nivel de pensamiento (esfuerzo) de Claude: es la palanca de CALIDAD, no de
   // velocidad nada más. Diseñar una animación es razonamiento, así que subirlo
   // mejora el diseño a costa de tiempo y tokens. "high" es el default del modelo.
+  //
+  // "default" no manda ningún nivel y deja decidir al modelo. Cursor no lo
+  // ofrece —su nivel viene dentro del ID y siempre hay uno—, y lo filtra solo
+  // porque ninguna familia suya tiene esa variante (ver populateEfforts).
   var EFFORT_LEVELS = [
+    { v: "default", t: "Predeterminado — que decida el modelo" },
     { v: "low", t: "Bajo — el más rápido y barato (diseños simples)" },
     { v: "medium", t: "Medio — equilibrio" },
     { v: "high", t: "Alto — recomendado (default)" },
@@ -66,10 +76,15 @@
     { v: "max", t: "Máximo — la mejor calidad posible, el más lento y caro" }
   ];
 
-  // Respaldo de modelos Claude si no se puede consultar a Anthropic (sin red o
-  // sin credenciales). La lista REAL la trae listClaudeModels() del motor, así
-  // que un modelo nuevo aparece solo, sin tocar código. Haiku queda afuera a
-  // propósito (rápido pero no da buenos diseños).
+  // Respaldo de modelos de la API de Claude si no se puede consultar a Anthropic
+  // (sin red o sin credenciales). La lista REAL la trae listClaudeModels() del
+  // motor, así que un modelo nuevo aparece solo, sin tocar código. Haiku queda
+  // afuera a propósito (rápido pero no da buenos diseños).
+  //
+  // Es SOLO de la API. Por el CLI esta lista era la que el editor veía cuando
+  // la API no contestaba —Opus 5 como lo último con Opus 5.5 publicado—, y
+  // desde la 1.8.0 el CLI tiene su selector, que sale del CLI instalado
+  // (HPClaudeSelector).
   var CLAUDE_MODELS = [
     { v: "claude-opus-5", t: "Claude Opus 5" },
     { v: "claude-sonnet-5", t: "Claude Sonnet 5" },
@@ -93,7 +108,6 @@
     { v: "auto", t: "Auto (que elija Cursor)", family: "auto", effort: "" }
   ];
   var MODELS = {
-    "claude-cli": CLAUDE_MODELS,
     "claude-api": CLAUDE_MODELS,
     "cursor-cli": CURSOR_MODELS,
     "openai-compat": [
@@ -275,6 +289,13 @@
 
   // Rellena el desplegable de modelos según el proveedor y marca el activo.
   function populateModels(provider, selected) {
+    if (provider === "claude-cli") {
+      // Por el CLI, el catálogo lo arma el motor con lo que dice el CLI
+      // instalado y lo medido con la cuenta: acá no hay lista que mantener.
+      HPClaudeSelector.cargar(selected, cfgEffortSel ? cfgEffortSel.value : "high")
+        .then(function () { updateSummary(); updateContextNote(); });
+      return;
+    }
     if (provider === "cursor-cli") {
       cursorGroups = buildCursorGroups(MODELS["cursor-cli"]);
       var pick = cursorPick(selected);
@@ -287,6 +308,9 @@
       populateEfforts(pick && pick.effort ? pick.effort : (cfgEffortSel ? cfgEffortSel.value : "high"));
       return;
     }
+    // Los niveles con sus nombres largos: si se venía del CLI de Claude, el
+    // desplegable tiene los del selector de ese proveedor.
+    populateEfforts(cfgEffortSel ? cfgEffortSel.value : "high");
     var list = MODELS[provider] || CLAUDE_MODELS;
     var matched = false;
     for (var i = 0; i < list.length; i++) if (list[i].v === selected) matched = true;
@@ -308,6 +332,7 @@
   // En Cursor el desplegable tiene la FAMILIA, así que el ID se arma con el
   // nivel de pensamiento elegido (ver cursorIdFor).
   function effectiveModel() {
+    if (cfgProviderSel.value === "claude-cli") return HPClaudeSelector.modelo();
     if (cfgModelSel.value === "__custom__") return (cfgModelCustom.value || "").trim();
     if (String(cfgModelSel.value || "").indexOf(FAM) === 0) {
       return cursorIdFor(currentCursorGroup(), cfgEffortSel ? cfgEffortSel.value : "");
@@ -344,7 +369,10 @@
     var e = catalogEntry(id);
     return HPUtil.ventanaDeContexto({
       provider: p, model: id, nombre: e ? e.t : "",
-      autenticacion: currentAuthMethod, reportado: e ? e.ventana : 0
+      autenticacion: currentAuthMethod, reportado: e ? e.ventana : 0,
+      // Por el CLI, lo que contestó el propio CLI al medir con esta cuenta. Le
+      // gana a todo lo demás: es el único dato que no es una tabla.
+      medido: p === "claude-cli" ? HPClaudeSelector.ventanaMedida() : 0
     });
   }
 
@@ -404,7 +432,15 @@
     // (--effort) y en Cursor está dentro del ID del modelo, pero eso es asunto
     // nuestro (ver cursorGroups). El editor ve el mismo control.
     showRow("row-effort", isClaude || isCursor);
-    if (modelsHint) modelsHint.setAttribute("data-hidden", (isClaude || isCursor) ? "false" : "true");
+    // Con el CLI de Claude, lo que el renglón de la lista decía ("N modelos de
+    // tu cuenta", "lista de respaldo") lo cuentan los renglones de abajo, con
+    // qué versión se comprobó; y la pista fija del pensamiento, el renglón de
+    // ese nivel. Mostrar las dos cosas era decir lo mismo dos veces.
+    var porCli = (p === "claude-cli");
+    showRow("row-window", porCli);
+    if (claudeAbout) claudeAbout.setAttribute("data-hidden", porCli ? "false" : "true");
+    if (effortHint) effortHint.setAttribute("data-hidden", porCli ? "true" : "false");
+    if (modelsHint) modelsHint.setAttribute("data-hidden", ((isClaude || isCursor) && !porCli) ? "false" : "true");
     // CUÁL de las dos cosas se espera en ese campo. Con Cursor hay que decirlo:
     // el CLI nombra dos variables (CURSOR_API_KEY y CURSOR_AUTH_TOKEN) y no son
     // dos formas de pasar lo mismo — el token de `login` el CLI lo GUARDA en el
@@ -471,7 +507,10 @@
       var tieneEsfuerzo = (p === "claude-cli" || p === "claude-api" || p === "cursor-cli");
       var effortTxt = (tieneEsfuerzo && cfgEffortSel && cfgEffortSel.value)
         ? " · pensamiento " + cfgEffortSel.value : "";
-      cfgSummary.textContent = "✓ " + (PROVIDER_LABEL[p] || p) + " · " + modelLabel(model) + effortTxt;
+      // Por el CLI el selector ya sabe decirlo entero —qué versión contesta, la
+      // ventana y el nivel con su nombre—, así que se lo pide a él.
+      cfgSummary.textContent = "✓ " + (PROVIDER_LABEL[p] || p) + " · " +
+        (p === "claude-cli" ? HPClaudeSelector.resumen() : modelLabel(model) + effortTxt);
       cfgSummary.className = "cfg-summary is-ok";
     } else {
       cfgSummary.textContent = "⚠ " + warn;
@@ -556,12 +595,10 @@
         var list = r.models.map(function (m) {
           return { v: m.id, t: m.name || m.id, ventana: Number(m.maxInputTokens) || 0 };
         });
-        // Los dos proveedores Claude comparten catálogo: hay que reasignar los dos.
-        MODELS["claude-cli"] = list;
         MODELS["claude-api"] = list;
         if (modelsHint) modelsHint.textContent = list.length + " modelos de tu cuenta" + (r.cached ? "" : " · al día");
         var p = cfgProviderSel.value;
-        if (p === "claude-cli" || p === "claude-api") {
+        if (p === "claude-api") {
           populateModels(p, selected || effectiveModel());
           applyProviderUI();
           updateSummary();
@@ -653,7 +690,8 @@
     applyProviderUI();
     updateSummary();
     if (cfgProviderSel.value === "ollama") refreshOllamaModels(cfg.model);
-    if (cfgProviderSel.value === "claude-cli" || cfgProviderSel.value === "claude-api") refreshClaudeModels(cfg.model);
+    // Solo la API: por el CLI la lista sale del CLI instalado (ver populateModels).
+    if (cfgProviderSel.value === "claude-api") refreshClaudeModels(cfg.model);
     if (cfgProviderSel.value === "cursor-cli") refreshCursorModels(cfg.model);
     if (cfgProviderSel.value === "claude-cli") refreshClaudeSession();
     if (cfgProviderSel.value === "cursor-cli") refreshCursorSession();
@@ -697,13 +735,14 @@
     hpCall("claudeSessionStatus")
       .then(function (s) {
         if (!s || cfgProviderSel.value !== "claude-cli") return;
-        // Con qué credencial entra decide qué ventana se puede prometer, así
-        // que las etiquetas del desplegable se rearman cuando cambia: hasta que
-        // llega esta respuesta, el panel no sabe y muestra el piso.
-        var antes = currentAuthMethod;
+        // Con qué credencial entra decide qué ventana se puede prometer MIENTRAS
+        // no hay medición (con API key, el CLI va por la API): el renglón de
+        // abajo se rehace con esto. Medida, manda la medida.
         currentAuthMethod = (s.estado === "con-sesion") ? String(s.metodo || "") : "";
         aplicarSesion(s, { marca: "Claude", linea: loginStatus });
-        if (antes !== currentAuthMethod) populateModels("claude-cli", effectiveModel());
+        // Con sesión, el selector puede medir solo si lo medido es de otro CLI.
+        // Sin sesión no: cada llamada fallaría por lo mismo.
+        if (s.estado === "con-sesion") HPClaudeSelector.haySesion();
         updateSummary();
         updateContextNote();
       })
@@ -796,6 +835,9 @@
     cfgProviderSel = HPWidgets.select(document.getElementById("cfg-provider"));
     cfgModelSel = HPWidgets.select(document.getElementById("cfg-model"));
     cfgEffortSel = HPWidgets.select(document.getElementById("cfg-effort"));
+    cfgWindowSel = HPWidgets.select(document.getElementById("cfg-window"));
+    claudeAbout = document.getElementById("cfg-claude-about");
+    effortHint = document.getElementById("effort-hint");
     modelsHint = document.getElementById("models-hint");
     cfgContext = document.getElementById("cfg-context");
     cfgModelCustom = document.getElementById("cfg-model-custom");
@@ -850,7 +892,18 @@
         .then(function (cfg) { applyConfigToUI(cfg); configStatus.textContent = "✓ Guardado"; if (updateSummary()) verifyProvider(); })
         .catch(function (e) { configStatus.textContent = "Error: " + ((e && e.message) || ""); });
     };
-    cfgModelSel.onChange = function () {
+    // Con el CLI de Claude, elegir modelo o ventana lo resuelve el selector (que
+    // sabe qué `--model` sale de cada celda) y él llama a guardar.
+    HPClaudeSelector.montar({
+      modelo: cfgModelSel, ventana: cfgWindowSel, esfuerzo: cfgEffortSel,
+      acerca: claudeAbout, estado: loginStatus,
+      verificar: document.getElementById("btn-claude-verify"),
+      alCambiar: function () { applyProviderUI(); autoSave(); }
+    });
+    cfgWindowSel.onChange = function (v) { HPClaudeSelector.alElegirVentana(v); };
+
+    cfgModelSel.onChange = function (v) {
+      if (cfgProviderSel.value === "claude-cli") { HPClaudeSelector.alElegirModelo(v); return; }
       // En Cursor, cambiar de familia puede cambiar los niveles disponibles
       // (no todas ofrecen los mismos), así que el desplegable de al lado se
       // rearma antes de guardar: lo que se guarda es el ID que sale de los dos.
@@ -866,7 +919,10 @@
       cfgEffortSel.setOptions(EFFORT_LEVELS.map(function (o) {
         return { value: o.v, label: o.t };
       }), "high");
-      cfgEffortSel.onChange = function () { autoSave(); };
+      cfgEffortSel.onChange = function (v) {
+        if (cfgProviderSel.value === "claude-cli") HPClaudeSelector.alElegirEsfuerzo(v);
+        autoSave();
+      };
     }
     if (cfgModelCustom) cfgModelCustom.addEventListener("input", debounce(function () { updateSummary(); }, DEBOUNCE_MS));
     if (cfgApiKey) cfgApiKey.addEventListener("input", function () { updateSummary(); });

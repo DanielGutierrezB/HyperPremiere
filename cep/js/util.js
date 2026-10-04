@@ -334,21 +334,26 @@
    *     tampoco.
    *   - Por la API de Claude entrás a la ventana documentada, que para las
    *     familias de arriba es 1M sin ningún beta.
-   *   - Por el CLI de Claude DEPENDE DE LA CREDENCIAL. Con una API key el CLI
-   *     va por la API y vale lo mismo. Con la sesión de claude.ai o un token de
-   *     suscripción, nadie nos dice qué ventana efectiva te toca: ni el CLI
-   *     (`claude auth status` contesta con qué te autenticás, no cuánto te
-   *     entra) ni la lista de modelos. Ahí se muestra el piso —200k, lo único
-   *     seguro— marcado como piso, y NO se promete el 1M. Prometerlo es el
-   *     error caro: el editor arma una generación de medio millón de tokens
-   *     contra una ventana que no sabemos que tenga.
+   *   - Por el CLI de Claude, lo que se MIDIÓ (`medido`): cada respuesta del CLI
+   *     trae en `modelUsage` el `contextWindow` del modelo que contestó, con esta
+   *     cuenta y por esta puerta. Durante mucho tiempo esta función dijo que por
+   *     suscripción "nadie nos dice qué ventana te toca"; el CLI sí lo dice, solo
+   *     que en la respuesta de una llamada, no en `auth status`. Lo mide
+   *     «Verificar» (ver bridge/claude-medir.js).
+   *   - Sin medir, depende de la credencial. Con una API key el CLI va por la
+   *     API y vale la tabla. Con la sesión de claude.ai o un token de
+   *     suscripción se muestra el piso —200k, lo único seguro— marcado como
+   *     piso, y NO se promete el 1M. Prometerlo es el error caro: el editor arma
+   *     una generación de medio millón de tokens contra una ventana que no
+   *     sabemos que tenga.
    *
    * @param {{provider:string, model:string, nombre?:string,
-   *          autenticacion?:string, reportado?:number}} q
+   *          autenticacion?:string, reportado?:number, medido?:number}} q
    *   `nombre` es el nombre para mostrar que devolvió el proveedor (de ahí sale
    *   el 1M de Cursor); `autenticacion` es el `authMethod` que contestó el CLI
    *   de Claude ('api_key' | 'claude.ai' | 'oauth_token' | '' si no se sabe);
-   *   `reportado` es el `max_input_tokens` de la API cuando viene.
+   *   `reportado` es el `max_input_tokens` de la API cuando viene; `medido`,
+   *   el `contextWindow` que contestó el CLI de Claude al medir (0 si no se midió).
    * @returns {null | {tokens:number, texto:string, piso:boolean, largo:number}}
    *   `largo` es la ventana que ese modelo tiene por su mejor puerta. Cuando
    *   `piso` es true, es la que NO se está prometiendo, y el renglón la nombra
@@ -364,6 +369,16 @@
       return { tokens: 1000000, texto: "1M", piso: false, largo: 1000000 };
     }
     if (provider !== "claude-cli" && provider !== "claude-api") return null;
+
+    // Lo MEDIDO: el `contextWindow` que contestó el propio CLI con esta cuenta
+    // para este modelo (ver bridge/claude-medir.js). Es la respuesta a la
+    // pregunta que el resto de esta función no podía contestar —qué ventana te
+    // toca por suscripción—, así que cuando está, manda sobre todo lo de abajo.
+    var medido = Number(q.medido);
+    if (provider === "claude-cli" && isFinite(medido) && medido > 0) {
+      var m = Math.round(medido);
+      return { tokens: m, texto: fmtVentana(m), piso: false, largo: m, medido: true };
+    }
 
     // Los IDs actuales de Claude son sin fecha, pero los viejos traen el
     // snapshot pegado (claude-haiku-4-5-20251001) y es la misma familia.
@@ -429,12 +444,19 @@
     var quien = String(q.proveedor || "este proveedor");
     var partes = [];
 
+    var porCli = (String(q.provider || "") === "claude-cli");
     if (!v) {
-      partes.push("Ventana de contexto: no la tengo anotada para este modelo.");
+      // Por el CLI hay cómo saberlo: lo mide «Verificar». Decir "no la tengo
+      // anotada" ahí era mandar a buscar una tabla que ya no es la fuente.
+      partes.push(porCli
+        ? "Ventana de contexto: sin medir todavía — «Verificar» la mide con tu cuenta."
+        : "Ventana de contexto: no la tengo anotada para este modelo.");
     } else if (v.piso) {
       partes.push("Ventana de contexto: al menos " + fmtVentana(v.tokens) +
-        " — por suscripción nadie dice cuál te toca de verdad, así que no te prometo los " +
-        fmtVentana(v.largo) + ".");
+        " — sin medirla, no te prometo los " + fmtVentana(v.largo) +
+        (porCli ? " («Verificar» la mide con tu cuenta)." : "."));
+    } else if (v.medido) {
+      partes.push("Ventana de contexto: " + v.texto + ", medida con tu cuenta.");
     } else {
       partes.push("Ventana de contexto: " + v.texto + ".");
     }

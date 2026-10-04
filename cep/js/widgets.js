@@ -274,7 +274,12 @@
     function markSelected() {
       var kids = menu.children;
       for (var i = 0; i < kids.length; i++) {
-        kids[i].className = "hps-option" + (kids[i].getAttribute("data-value") === value ? " is-sel" : "");
+        var v = kids[i].getAttribute("data-value");
+        // Los rótulos de grupo no son opciones: no llevan valor ni se marcan.
+        if (v === null) continue;
+        kids[i].className = "hps-option" +
+          (kids[i].getAttribute("data-off") === "1" ? " is-disabled" : "") +
+          (v === value ? " is-sel" : "");
       }
     }
     function close() { menu.hidden = true; root.classList.remove("is-open"); if (_openSelect && _openSelect.root === root) _openSelect = null; }
@@ -290,18 +295,42 @@
 
     trigger.addEventListener("click", toggle);
 
+    /**
+     * Las opciones pueden traer, además de value/label/corto:
+     *   - `grupo`: el rótulo bajo el que van. Se dibuja una vez, cuando cambia
+     *     respecto de la anterior, y no se puede elegir (el selector de Claude
+     *     agrupa por familia: Fable, Opus, Sonnet, Haiku).
+     *   - `deshabilitada` + `ayuda`: se ve pero no se elige, y el porqué va en
+     *     el tooltip. Mostrarla en vez de esconderla es la mitad del dato: un
+     *     modelo que tu plan no tiene sigue existiendo.
+     */
     api.setOptions = function (list, selected) {
       opts = (list || []).map(function (o) {
-        return { value: String(o.value), label: String(o.label), corto: o.corto == null ? "" : String(o.corto) };
+        return {
+          value: String(o.value), label: String(o.label), corto: o.corto == null ? "" : String(o.corto),
+          grupo: o.grupo == null ? "" : String(o.grupo), deshabilitada: !!o.deshabilitada,
+          ayuda: o.ayuda == null ? "" : String(o.ayuda)
+        };
       });
       menu.innerHTML = "";
+      var grupoActual = "";
       opts.forEach(function (o) {
+        if (o.grupo && o.grupo !== grupoActual) {
+          var rotulo = document.createElement("div");
+          rotulo.className = "hps-group";
+          rotulo.textContent = o.grupo;
+          menu.appendChild(rotulo);
+        }
+        grupoActual = o.grupo;
         var el = document.createElement("div");
         el.className = "hps-option";
         el.setAttribute("data-value", o.value);
+        if (o.deshabilitada) el.setAttribute("data-off", "1");
+        if (o.ayuda) el.setAttribute("title", o.ayuda);
         el.textContent = o.label;
         el.addEventListener("click", function (e) {
           e.stopPropagation();
+          if (o.deshabilitada) return;
           var changed = (o.value !== value);
           value = o.value;
           label.textContent = o.corto || o.label;
@@ -319,6 +348,16 @@
       get: function () { return value; },
       set: function (v) { value = (v == null ? null : String(v)); label.textContent = labelFor(value); markSelected(); }
     });
+    /**
+     * Visible pero sin abrir. Es para el caso de una sola opción posible —la
+     * ventana de un modelo que ya trae 1M de serie—: esconder el control haría
+     * desaparecer el dato, y dejarlo abrir sería ofrecer una elección que no hay.
+     */
+    api.setDisabled = function (off) {
+      trigger.disabled = !!off;
+      root.classList.toggle("is-disabled", !!off);
+      if (off) close();
+    };
     return api;
   }
 

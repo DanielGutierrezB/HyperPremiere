@@ -31,6 +31,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { test, ok, eq, has } = require('./harness');
+const CM = require('../bridge/claude-modelos');
 
 const CEP = path.join(__dirname, '..', 'cep', 'js');
 
@@ -439,6 +440,7 @@ function armarPanel(cfg, extra) {
             const hit = this.opciones.filter(function (o) { return o.value === self.value; })[0];
             return hit ? hit.label : '';
           },
+          setDisabled: function (v) { this.deshabilitado = !!v; },
         };
         selects[s.nombre] = s;
         return s;
@@ -449,6 +451,13 @@ function armarPanel(cfg, extra) {
         if (metodo === 'setConfig') return Promise.resolve(cfg);
         if (metodo === 'getConfig') return Promise.resolve(cfg);
         if (metodo === 'listClaudeModels') return Promise.resolve({ ok: true, models: extra.claudeModels || MODELOS_CLAUDE });
+        // El catálogo de verdad, SIN medir: es el caso que estos tests fijan.
+        if (metodo === 'catalogoClaude') {
+          return Promise.resolve(Object.assign({ ok: true, instalado: true }, CM.catalogo({
+            menu: [], medicion: null, cli: '2.1.288',
+            modelo: (body && body.model) || cfg.model, esfuerzo: cfg.effort,
+          })));
+        }
         if (metodo === 'listCursorModels') return Promise.resolve({ ok: true, models: MODELOS_CURSOR });
         if (metodo === 'claudeSessionStatus') {
           return Promise.resolve(extra.sesion || { estado: 'con-sesion', metodo: 'claude.ai', resumen: '✓', detalle: '' });
@@ -466,7 +475,7 @@ function armarPanel(cfg, extra) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'iconos.js', 'motores.js', 'store.js', 'config-ui.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'motores.js', 'store.js', 'claude-selector.js', 'config-ui.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   ctx.HPConfigUI.init();
@@ -489,31 +498,35 @@ test('el desplegable de Claude muestra la ventana al lado del nombre', async fun
   has(etiquetas, 'Claude Sonnet 4.5 · 200k', 'y el que tiene menos también lo dice');
 });
 
-test('por suscripción, el desplegable NO ofrece el 1M', async function () {
+// Por el CLI, la ventana se MIDE con la cuenta (ver selector-claude.test.js:
+// medida, el renglón la dice). Lo que estos tres fijan es lo que queda cuando
+// todavía NO se midió, que es la regla de siempre: no prometer lo que no se sabe.
+
+test('por suscripción y sin medir, no se promete el 1M', async function () {
   // La mutación que más caro sale es justo ésta al revés.
   const p = armarPanel({ provider: 'claude-cli', model: 'claude-sonnet-5', effort: 'high', hasSession: true },
     { sesion: { estado: 'con-sesion', metodo: 'claude.ai', resumen: '✓', detalle: '' } });
   await asentar();
   const etiquetas = p.modelo().etiquetas().join(' | ');
-  has(etiquetas, 'Claude Sonnet 5 · 200k+');
-  eq(etiquetas.indexOf('1M'), -1, 'ni en el Sonnet ni en el Opus: ' + etiquetas);
+  eq(etiquetas.indexOf('1M'), -1, 'ningún nombre de modelo promete una ventana: ' + etiquetas);
   has(p.renglon(), 'no te prometo los 1M');
+  has(p.renglon(), '«Verificar» la mide con tu cuenta', 'y dice cómo saberlo');
 });
 
-test('con API key en el CLI, el mismo Sonnet sí muestra 1M', async function () {
+test('con API key en el CLI y sin medir, el mismo Sonnet sí dice 1M', async function () {
+  // Con API key el CLI va por la API, y ahí la ventana es la documentada.
   const p = armarPanel({ provider: 'claude-cli', model: 'claude-sonnet-5', effort: 'high', hasSession: true },
     { sesion: { estado: 'con-sesion', metodo: 'api_key', resumen: '✓', detalle: '' } });
   await asentar();
-  has(p.modelo().etiquetas().join(' | '), 'Claude Sonnet 5 · 1M',
-    'la etiqueta se rearma cuando el CLI contesta con qué credencial entra');
   has(p.renglon(), 'Ventana de contexto: 1M');
 });
 
-test('si no se pudo averiguar la sesión, el desplegable se queda en el piso', async function () {
+test('si no se pudo averiguar la sesión, el renglón se queda en el piso', async function () {
   const p = armarPanel({ provider: 'claude-cli', model: 'claude-sonnet-5', effort: 'high' },
     { sesion: { estado: 'no-se-sabe', metodo: '', resumen: 'no pude comprobarlo', detalle: '' } });
   await asentar();
   eq(p.modelo().etiquetas().join(' | ').indexOf('1M'), -1);
+  has(p.renglon(), 'al menos 200k');
 });
 
 test('en Cursor el 1M ya venía en el nombre y no se repite', async function () {

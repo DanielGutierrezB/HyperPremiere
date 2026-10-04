@@ -2106,6 +2106,89 @@ sobre `--betas`) pero es sobre los headers beta en general, y para esta generaci
 modelos el 1M **ya no es un beta**. Lo que de verdad no se puede saber es la otra cosa: qué
 ventana da Claude Code con una suscripción. La conclusión no cambia; el motivo sí.
 
+Y una segunda corrección, más grande: **sí se puede saber**. Cada respuesta del CLI trae en
+`modelUsage` el `contextWindow` del modelo que contestó, con esta cuenta y por esta puerta;
+no estaba en `claude auth status`, que es donde se miraba. Desde la 1.8.0, con el CLI de
+Claude la ventana **se mide** (ver la sección que sigue) y el renglón dice la medida. El piso
+`200k+` queda para lo que todavía no se midió. Y los nombres del desplegable del CLI ya no
+llevan la ventana pegada: tiene su propio selector.
+
+## Los modelos de Claude salen del CLI, no de una lista
+
+Una captura de ⚙ con el CLI de Claude: **Claude Opus 5 · Claude Sonnet 5 · Claude Fable 5 ·
+Claude Opus 4.8**, y abajo *"lista de respaldo — error de red: getaddrinfo ENOTFOUND
+api.anthropic.com"*. Con **Opus 5.5** ya publicado. La lista real se le pedía a la API de
+Anthropic, y cuando no contestaba quedaba una escrita en el panel que había sido "lo último"
+el día que se escribió.
+
+No era un descuido de quien la escribió, y ninguna lista lo arregla: **cada versión del CLI
+trae fija su tabla de alias**. Con Claude Code 2.1.201, `opus` contesta Opus 4.8; con la
+2.1.288, Opus 5.5. "El último Opus" es el último *que conoce ese CLI*, y el modelo nuevo
+solo llega con el CLI nuevo. Editor Pro ya había resuelto esto, y el selector de acá es el
+suyo traído al panel: **todo sale del CLI instalado y de medir con tu cuenta**.
+
+**Tres decisiones por separado, como en Editor Pro:**
+
+- **Modelo**, agrupado por familia (Fable, Opus, Sonnet, Haiku). Arriba de cada una, el
+  **último** —su alias, `opus`, que avanza solo cuando se actualiza el CLI— con la versión
+  que hay detrás: *Opus 5.5 · último*. Abajo, las **versiones anteriores** que ofrece el
+  menú `/model` del CLI instalado, que **viene escrito adentro del binario**: se lee de
+  ahí (por trozos de 8 MB; son 219 MB y tarda 90 ms) y no de una lista del panel. Una
+  versión anterior es **fija**: *Opus 4.8* sigue siendo Opus 4.8 aunque el CLI se actualice.
+  Lo que tu plan no tiene **se ve, deshabilitado, con el motivo** en el tooltip. También
+  está *Predeterminado de tu plan* (no se manda `--model`) y **Haiku**, que antes se
+  escondía: el pedido fue ver todos los modelos, y su renglón dice que diseñando rinde menos.
+- **Ventana de contexto**, con el `--model` exacto que se manda (`claude-opus-4-6[1m]`).
+- **Nivel de pensamiento**: *Predeterminado* (no se manda `--effort`) y los cinco de
+  `--effort`. Debajo de los tres, un renglón por cosa: qué es lo elegido, qué ventana trae,
+  qué hace ese nivel, y **con qué versión de Claude Code se comprobó**.
+
+**Qué hay detrás de cada alias se mide, no se escribe.** Una llamada mínima por modelo
+(`Contesta solo: ok`, `--effort low`, sin herramientas y sin guardar la sesión — si no,
+cada Verificar te dejaba una docena de conversaciones en el historial de Claude Code), de
+**cuatro en cuatro** (cada una levanta un CLI de 200 y pico de MB), con **la misma
+credencial con la que se genera**. De la respuesta se lee `modelUsage`: quién contestó y
+con qué ventana. Lo que contestó la medición de verdad, con Claude Code 2.1.288:
+
+| Pedido | Contestó | Ventana |
+| --- | --- | --- |
+| `fable` · `opus` · `sonnet` | Fable 5.1 · Opus 5.5 · Sonnet 5.5 | 1M de serie |
+| `haiku` | Haiku 4.5 | 200k; con `[1m]`, *"not yet available for this subscription"* |
+| Opus 5 · 4.8 · 4.7, Sonnet 5 | esas mismas | 1M de serie |
+| Opus 4.6 · Sonnet 4.6 | esas mismas | 200k; con `[1m]`, 1M |
+| `claude-opus-4-1` | **Opus 5.5** | — |
+
+Dos cosas de esa tabla cambiaron el diseño:
+
+- **Una versión retirada no da error: la contesta la actual.** Pedir Opus 4.1 lo contestó
+  Opus 5.5 sin quejarse. Responder no alcanza para contar como disponible: tiene que haber
+  contestado *esa* versión. Si no, queda *(no disponible)* con quién contesta en su lugar.
+- **Los modelos actuales ya vienen con 1M.** Editor Pro elige la ventana con una tabla por
+  familia (Opus: 200K o 1M); con la medición, `opus` contesta 1M **sin** el `[1m]`. Acá la
+  ventana también se mide: a un modelo con 1M de serie no se le ofrece un "200k" que no
+  tiene (el desplegable se ve, quieto), y el `[1m]` se le pregunta solo a los que
+  contestaron con menos —dos o tres llamadas, no once—. Elegir la ventana extendida solo
+  cambia algo en Opus 4.6 y Sonnet 4.6, y ahí se avisa que puede gastar créditos extra.
+
+**Lo medido vale para la versión del CLI con que se midió** (`~/.hyperpremiere/claude-
+modelos.json`). Sin medida, el selector dice **"Opus · último"** a secas y la ventana "La de
+serie": nunca un número que nadie midió, que era exactamente el error. Una medición donde no
+contestó nadie no se guarda (es la sesión o la red, no los modelos).
+
+**Cuándo se mide:** solo, la primera vez que ⚙ ve una versión nueva del CLI y hay sesión
+(~15 s, catorce llamadas mínimas); si falla, no se reintenta en cada recarga. Y con
+**Verificar**, el botón nuevo al lado de Diagnóstico, que hace lo de Editor Pro en orden:
+versión instalada y última de su canal en npm (el que tenga Claude Code en
+`autoUpdatesChannel`); si está atrasado, **`claude update` sin preguntar** —también te
+actualiza el Claude Code de la terminal, y lo dice—; la medición; y una llamada con **lo
+elegido** (modelo, ventana y nivel), que es lo que va a usar la generación.
+
+Lo que cambia en tu config: **nada, hasta que toques algo**. Un ID guardado de antes abre
+como lo que es hoy, una versión fija — en esta máquina, `claude-opus-5` abre como *"Fijado en
+Opus 5"*, no como el último Opus —. Sin nada guardado, el CLI arranca con el alias `sonnet`
+en vez de `claude-sonnet-5`. La API de Claude no entiende alias, así que ahí todo sigue como
+estaba (la lista de la cuenta, `/v1/models`).
+
 ## El estilo del curso, el de la clase, y el del marcador
 
 Dos editores, el mismo `.prproj`, animaciones distintas. Diagnosticando por qué al

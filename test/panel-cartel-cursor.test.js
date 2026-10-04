@@ -46,6 +46,7 @@ function armar(respuestas) {
         return {
           value: '', onChange: null,
           setOptions: function (opts, val) { this.value = val || (opts[0] && opts[0].value) || ''; },
+          setDisabled: function (v) { this.deshabilitado = !!v; },
         };
       },
     },
@@ -67,7 +68,7 @@ function armar(respuestas) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'iconos.js', 'motores.js', 'config-ui.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'motores.js', 'claude-selector.js', 'config-ui.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   ctx.HPConfigUI.init();

@@ -250,6 +250,12 @@
 
         <label class="field-label">Modelo</label>
         <div id="cfg-model" class="hp-select"></div>
+        <!-- Solo con Claude por el CLI: cada modelo trae las ventanas que se le
+             midieron, y cuando hay una sola se ve pero no se toca. -->
+        <div id="row-window" class="cfg-row" data-hidden="true">
+          <label class="field-label">Ventana de contexto</label>
+          <div id="cfg-window" class="hp-select"></div>
+        </div>
         <span id="models-hint" class="muted"></span>
         <!-- Cuánto le entra a este modelo y cuánto le mete de verdad una
              generación en esta máquina. Lo arma HPUtil.lineaDeContexto. -->
@@ -259,8 +265,12 @@
         <div id="row-effort" class="cfg-row">
           <label class="field-label">Nivel de pensamiento</label>
           <div id="cfg-effort" class="hp-select"></div>
-          <span class="muted">cuánto razona antes de diseñar · más = mejor diseño, más lento y más tokens</span>
+          <span id="effort-hint" class="muted">cuánto razona antes de diseñar · más = mejor diseño, más lento y más tokens</span>
         </div>
+        <!-- Lo que hay detrás de lo elegido con Claude por el CLI: qué versión
+             contesta, qué ventana trae, qué hace ese nivel y con qué versión de
+             Claude Code se comprobó. Lo pinta HPClaudeSelector. -->
+        <div id="cfg-claude-about" class="muted" data-hidden="true"></div>
 
         <div id="row-model-custom" class="cfg-row" data-hidden="true">
           <label class="field-label" for="cfg-model-custom">ID del modelo</label>
@@ -271,6 +281,7 @@
           <div class="config-actions">
             <button id="btn-login-claude" type="button" title="Abre el navegador de Claude para autorizar. Autorizás, copiás el código que te muestra la página y lo pegás acá.">Iniciar sesión en Claude</button>
             <button id="btn-login-doctor" type="button" title="Dice si esta máquina tiene el CLI de Claude, en qué ruta y qué versión. Sirve para mandar una captura cuando algo falla.">Diagnóstico</button>
+            <button id="btn-claude-verify" type="button" title="Actualiza Claude Code si hay una versión nueva (también el de tu terminal), comprueba qué versión contesta cada modelo y prueba lo que elegiste. Gasta una llamada mínima por modelo.">Verificar</button>
             <span id="login-status" class="muted"></span>
           </div>
           <!-- Fase 2: se muestra cuando ya se abrió el navegador. -->
@@ -456,6 +467,7 @@
   <script src="js/general-view.js"></script>
   <script src="js/mic-medidor.js"></script>
   <script src="js/mic-select.js"></script>
+  <script src="js/claude-selector.js"></script>
   <script src="js/config-ui.js"></script>
   <script src="js/main.js"></script>
 </body>

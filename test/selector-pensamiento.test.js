@@ -81,6 +81,7 @@ function armar(cfg, extra) {
           /** Las etiquetas que ve el editor, en orden. */
           etiquetas: function () { return this.opciones.map(function (o) { return o.label; }); },
           valores: function () { return this.opciones.map(function (o) { return o.value; }); },
+          setDisabled: function (v) { this.deshabilitado = !!v; },
         };
         selects[s.nombre] = s;
         return s;
@@ -109,7 +110,7 @@ function armar(cfg, extra) {
   ctx.window = ctx;
   ctx.global = ctx;
   vm.createContext(ctx);
-  ['util.js', 'iconos.js', 'motores.js', 'config-ui.js'].forEach(function (f) {
+  ['util.js', 'iconos.js', 'motores.js', 'claude-selector.js', 'config-ui.js'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(CEP, f), 'utf8'), ctx, { filename: f });
   });
   ctx.HPConfigUI.init();
@@ -272,14 +273,17 @@ test('un proveedor sin niveles no inventa uno para el log', async function () {
   eq(p.filaPensamiento(), 'true', 'y la fila no se muestra');
 });
 
-// ── Claude no se toca ─────────────────────────────────────────────────
+// ── En Claude el nivel es un flag aparte ──────────────────────────────
+//
+// Por el CLI, el selector entero es otro desde que se trajo el de Editor Pro
+// (ver selector-claude.test.js). Lo que vale para los dos Claude es esto.
 
-test('en Claude siguen estando los cinco niveles y el ID pelado', async function () {
-  const p = armar({ provider: 'claude-cli', model: 'claude-sonnet-5', effort: 'high', hasSession: true });
+test('en la API de Claude están todos los niveles y el ID va pelado', async function () {
+  const p = armar({ provider: 'claude-api', model: 'claude-sonnet-5', effort: 'high' });
   await asentar();
   eq(p.filaPensamiento(), 'false');
-  eq(p.pensamiento().valores().join(','), 'low,medium,high,xhigh,max',
-    'el esfuerzo de Claude es un flag aparte: están todos');
+  eq(p.pensamiento().valores().join(','), 'default,low,medium,high,xhigh,max',
+    'el esfuerzo de Claude es un flag aparte: están todos, y el que no manda ninguno');
   p.pensamiento().elegir('max');
   await asentar();
   const ultimo = p.guardados[p.guardados.length - 1];

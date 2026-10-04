@@ -355,11 +355,14 @@ async function complete({ systemPrompt, userPrompt, images, model, config, onAct
       ? ['-p', '--output-format', 'stream-json', '--verbose']
       : ['-p', '--output-format', 'json'];
     if (streaming && partial) args.push('--include-partial-messages');
-    if (model) args.push('--model', model);
+    // "default" no es un modelo ni un nivel: es lo que el selector de ⚙ guarda
+    // cuando el editor elige "el de tu plan" o "que decida el modelo", y se
+    // traduce a NO mandar el flag (ver claude-modelos.js).
+    if (model && model !== 'default') args.push('--model', model);
     // Nivel de pensamiento. Diseñar una animación es trabajo de razonamiento, así
     // que es la palanca de calidad. Un valor desconocido el CLI solo lo advierte
     // y sigue con el default, no rompe la generación.
-    if (cfg.effort) args.push('--effort', String(cfg.effort));
+    if (cfg.effort && cfg.effort !== 'default') args.push('--effort', String(cfg.effort));
     // Solo leer, y leer sin preguntar (ver TOOLS). Los dos flags son
     // variádicos como --add-dir, así que cada uno lleva UN nombre y lo que
     // sigue es siempre otro flag.

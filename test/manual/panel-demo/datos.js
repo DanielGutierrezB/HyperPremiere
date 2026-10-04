@@ -609,6 +609,37 @@
       { id: "claude-opus-4-8", name: "Claude Opus 4.8", maxInputTokens: 1000000 },
       { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", maxInputTokens: 200000 }
     ],
+    // El selector de Claude por el CLI: el menú /model que trae el binario de
+    // Claude Code 2.1.288 y lo que contestó cada modelo al medirlo con una
+    // cuenta de verdad (octubre de 2026). El catálogo lo arma el módulo REAL
+    // (bridge/claude-modelos.js, que abrir.js le sirve a la página): acá solo
+    // están los datos que en el panel salen del CLI.
+    cliClaude: "2.1.288",
+    menuClaude: [
+      { familia: "sonnet", id: "claude-sonnet-4-6", etiqueta: "Sonnet 4.6", legacy: true },
+      { familia: "sonnet", id: "claude-sonnet-5", etiqueta: "Sonnet 5", legacy: false },
+      { familia: "opus", id: "claude-opus-4-1", etiqueta: "Opus 4.1", legacy: true },
+      { familia: "opus", id: "claude-opus-4-6", etiqueta: "Opus 4.6", legacy: true },
+      { familia: "opus", id: "claude-opus-4-7", etiqueta: "Opus 4.7", legacy: true },
+      { familia: "opus", id: "claude-opus-4-8", etiqueta: "Opus 4.8", legacy: true },
+      { familia: "opus", id: "claude-opus-5", etiqueta: "Opus 5", legacy: false }
+    ],
+    medicionClaude: {
+      fable: ["claude-fable-5-1", 1000000],
+      opus: ["claude-opus-5-5", 1000000],
+      sonnet: ["claude-sonnet-5-5", 1000000],
+      haiku: ["claude-haiku-4-5-20251001", 200000],
+      "claude-sonnet-5": ["claude-sonnet-5", 1000000],
+      "claude-sonnet-4-6": ["claude-sonnet-4-6", 200000],
+      "claude-opus-4-1": ["claude-opus-5-5", 1000000],
+      "claude-opus-4-6": ["claude-opus-4-6", 200000],
+      "claude-opus-4-7": ["claude-opus-4-7", 1000000],
+      "claude-opus-4-8": ["claude-opus-4-8", 1000000],
+      "claude-opus-5": ["claude-opus-5", 1000000],
+      "haiku[1m]": "API Error: 400 The long context beta is not yet available for this subscription.",
+      "claude-sonnet-4-6[1m]": ["claude-sonnet-4-6[1m]", 1000000],
+      "claude-opus-4-6[1m]": ["claude-opus-4-6[1m]", 1000000]
+    },
     sesionClaude: {
       estado: "con-sesion",
       // `metodo` es el authMethod que contesta `claude auth status`, y no es
@@ -616,12 +647,12 @@
       // "claude.ai" (suscripción) no puede, y el selector muestra el piso.
       metodo: "claude.ai",
       resumen: "✓ Sesión de Claude activa · entrás con tu cuenta de claude.ai",
-      detalle: "claude 2.1.201 · /Users/dani/.local/bin/claude · authMethod: claude.ai"
+      detalle: "claude 2.1.288 · /Users/dani/.local/bin/claude · authMethod: claude.ai"
     },
     diagnosticoClaude:
       "CLI de Claude en esta máquina\n" +
       "· Ejecutable: /Users/dani/.local/bin/claude (encontrado en el PATH)\n" +
-      "· Versión: 2.1.201\n" +
+      "· Versión: 2.1.288\n" +
       "· Sistema: darwin arm64 · macOS 26.1\n" +
       "· Sesión: claude.ai (login interactivo, sin token en el panel)\n" +
       "· Se buscó además en: /opt/homebrew/bin, /usr/local/bin, ~/.claude/local, ~/.npm-global/bin\n" +

@@ -1276,6 +1276,24 @@ input:hover,
 }
 .hps-option:hover { background: var(--layer-hover); color: var(--text-primary); }
 .hps-option.is-sel { color: var(--accent); background: var(--accent-14); }
+/* Se ve pero no se elige (un modelo que el plan no tiene): el motivo va en el
+   tooltip, así que el cursor dice "acá hay algo para leer", no "clic". */
+.hps-option.is-disabled,
+.hps-option.is-disabled:hover { color: var(--text-muted); background: none; cursor: help; }
+.hps-option.is-disabled.is-sel { color: var(--accent); }
+/* El rótulo de un grupo (Fable, Opus…): texto chico, no clicable. */
+.hps-group {
+  padding: var(--sp-2) var(--sp-3) 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: default;
+}
+.hps-group:first-child { padding-top: 2px; }
+.hp-select.is-disabled .hps-trigger { cursor: default; color: var(--text-secondary); }
+.hp-select.is-disabled .hps-arrow { visibility: hidden; }
 .hps-menu::-webkit-scrollbar { width: 8px; }
 .hps-menu::-webkit-scrollbar-thumb { background-color: var(--border-field); border-radius: 4px; }
 
@@ -3235,6 +3253,23 @@ input:hover,
 #baseurl-hint { white-space: normal; line-height: 1.4; }
 /* Son dos o tres frases: sin esto, .muted las corta en la primera línea. */
 #cfg-context { white-space: normal; line-height: 1.45; }
+/* Lo que hay detrás del modelo, la ventana y el pensamiento elegidos con
+   Claude por el CLI, un renglón por cosa (los arma HPClaudeSelector). Se leen
+   enteros: con el nowrap de .muted quedaba solo el primero. */
+#cfg-claude-about {
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+#cfg-claude-about[data-hidden="true"] { display: none; }
+/* Sin estas dos, el `data-hidden` que les pone config-ui.js no escondía nada:
+   el renglón de la lista seguía ahí con Ollama, y con el CLI de Claude repetía
+   lo que ya dicen los renglones del selector. */
+#models-hint[data-hidden="true"],
+#effort-hint[data-hidden="true"] { display: none; }
 
 /* El semáforo del configurador, al lado del título de ⚙. */
 .cfg-summary { margin-left: var(--sp-2); letter-spacing: 0; text-transform: none; }

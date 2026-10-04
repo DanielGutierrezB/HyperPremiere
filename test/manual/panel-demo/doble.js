@@ -576,6 +576,28 @@
   function luego(valor, ms) {
     return new Promise(function (res) { setTimeout(function () { res(valor); }, ms || 60); });
   }
+
+  // ── El selector de Claude por el CLI ──────────────────────────────────
+  // Con ?e=claude-sin-medir arranca como un CLI recién actualizado: nada medido
+  // todavía, y ⚙ mide solo en cuanto el chequeo de sesión dice que hay.
+  function medicionDeLaMaqueta() {
+    var crudos = {};
+    Object.keys(D.medicionClaude).forEach(function (k) {
+      var v = D.medicionClaude[k];
+      crudos[k] = (typeof v === "string")
+        ? { contesto: null, error: v }
+        : { contesto: { id: v[0], ventana: v[1], salida: 64000 }, error: "" };
+    });
+    return window.HPClaudeModelosDemo.registrarMedicion(D.cliClaude, crudos, "2026-10-03T12:00:00.000Z");
+  }
+  var medicionClaude = esc("claude-sin-medir") ? null : medicionDeLaMaqueta();
+  function catalogoDeClaude(body) {
+    var c = window.HPClaudeModelosDemo.catalogo({
+      menu: D.menuClaude, medicion: medicionClaude, cli: D.cliClaude,
+      modelo: (body && body.model) || D.config.model, esfuerzo: (body && body.effort) || D.config.effort
+    });
+    return Object.assign({ ok: true, instalado: true }, c);
+  }
   /** Corre una secuencia de [ms, {pct,msg,act}] llamando a prog, y resuelve. */
   function correrEtapas(prog, etapas, resultado) {
     return etapas.reduce(function (cadena, paso) {
@@ -900,6 +922,33 @@
     },
     testProvider: function () { return luego(ok({ detail: "claude-sonnet-5 contestó en 0,9 s" })); },
     listClaudeModels: function () { return luego(ok({ models: D.modelosClaude, cached: false })); },
+    // El selector de Claude por el CLI, con el módulo de VERDAD: lo que se ve
+    // acá es exactamente lo que arma el motor con esta medición.
+    catalogoClaude: function (body) { return luego(catalogoDeClaude(body)); },
+    medirModelosClaude: function (body, prog) {
+      var total = Object.keys(D.medicionClaude).length;
+      var etapas = [];
+      // 400 ms por modelo: la medición de verdad tardó 15,6 s para catorce, y
+      // así la toma «sin-medir» cae a mitad de camino, que es lo que se mira.
+      for (var i = 1; i <= total; i++) etapas.push({ ms: 400, msg: "Comprobando qué versiones ofrece tu plan… " + i + "/" + total });
+      return correrEtapas(prog, etapas, function () {
+        medicionClaude = medicionDeLaMaqueta();
+        return Object.assign(catalogoDeClaude(body), { medida: true });
+      });
+    },
+    verificarClaude: function (body, prog) {
+      return correrEtapas(prog, [
+        { ms: 300, msg: "Comprobando la versión de Claude Code…" },
+        { ms: 500, msg: "Comprobando qué versiones responden… 6/14" },
+        { ms: 500, msg: "Comprobando qué versiones responden… 14/14" },
+        { ms: 400, msg: "Probando el modelo elegido…" }
+      ], function () {
+        medicionClaude = medicionDeLaMaqueta();
+        var c = catalogoDeClaude(body);
+        return ok({ cli: D.cliClaude, actualizado: false, ultima: D.cliClaude, notas: [],
+          resumen: window.HPClaudeModelosDemo.resumen(c), catalogo: c });
+      });
+    },
     listCursorModels: function () {
       return luego(ok({
         models: [
