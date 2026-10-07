@@ -526,6 +526,35 @@
     fixBtn.title = "Rediseña YA sobre esa versión y devuelve el clip a " + formatTime(m.start) +
       " de “" + destino + "”, con la misma duración, en una pista nueva y en amarillo.";
 
+    // «Abrir Remotion», el mismo de la ficha del marcador (ver
+    // cep/js/abrir-remotion.js), si la última versión es de Remotion: corregir
+    // a mano en Studio es otra forma de corregir. Las versiones están en la
+    // carpeta de ORIGEN y, si no hay clip que reemplazar, el render va a la
+    // secuencia abierta, en el mismo segundo: lo mismo que hace una corrección.
+    var studioBtn = null;
+    if (m.engine === "remotion") {
+      studioBtn = document.createElement("button");
+      studioBtn.type = "button"; studioBtn.className = "qbtn";
+      studioBtn.textContent = "Abrir Remotion";
+      HPIconos.enBoton(studioBtn, "abrirAfuera");
+      studioBtn.title = "Abre la última versión en Remotion Studio, en el navegador, y su archivo .tsx en tu " +
+        "editor. El botón Render de Studio reemplaza el clip en Premiere (cada render queda como una versión nueva).";
+      studioBtn.addEventListener("click", function () {
+        HPAbrirRemotion.abrirUltima({
+          projectPath: deps.context().projectPath,
+          sequenceName: origen.sequenceName,
+          colocarEn: destino,
+          markerSlug: m.slug,
+          marker: { name: m.markerName, start: m.start, duration: m.duration },
+          boton: studioBtn,
+          decir: function (texto, esError) {
+            state.className = "corr-state" + (esError ? " is-error" : "");
+            state.textContent = texto;
+          }
+        });
+      });
+    }
+
     // El HTML de la versión, cargado del disco. Antes esto era una caja vacía
     // pidiendo que pegaras un HTML, lo cual no tenía sentido: la pestaña acaba de
     // encontrar todas las versiones y sabe leerlas. Sirve para mirar qué tiene el
@@ -571,8 +600,10 @@
       avanzado: [{ el: htmlBox }],
       // Sin nada a la izquierda: en una corrección no hay acción destructiva —lo
       // que descarta trabajo hecho es «Regenerar desde cero», y eso vive en la
-      // ronda de la Cola y en la ficha del marcador, no acá—.
-      acciones: { izquierda: [], derecha: [stageBtn, fixBtn] },
+      // ronda de la Cola y en la ficha del marcador, no acá—. «Abrir Remotion»
+      // (null si el recurso no es de Remotion) va lejos de Regenerar, como en la
+      // ficha.
+      acciones: { izquierda: [], derecha: [studioBtn, stageBtn, fixBtn] },
       pie: [state]
     });
     cuerpo.appendChild(ficha.el);

@@ -4,10 +4,12 @@
  *
  * ── El circuito ──────────────────────────────────────────────────────
  *
- * El panel abre Studio con un marcador («Abrir Remotion» en su ficha, o «Vista
- * previa» en el editor de código). Cada render que el editor haga desde la
- * interfaz de Studio vuelve al motor, que lo guarda como VERSIÓN NUEVA de ese
- * marcador (ver guardarRenderDeStudio en bridge/versiones.js) y avisa acá. Lo
+ * El panel abre Studio con un marcador («Abrir Remotion» en su ficha, en un
+ * trabajo terminado de la Cola o en una fila de Corrections —ver
+ * cep/js/abrir-remotion.js—, o «Vista previa» en el editor de código). Cada
+ * render que el editor haga desde la interfaz de Studio vuelve al motor, que lo
+ * guarda como VERSIÓN NUEVA de ese marcador (ver guardarRenderDeStudio en
+ * bridge/versiones.js) y avisa acá. Lo
  * que queda hacer es lo único que el motor no puede, porque solo el panel habla
  * con Premiere: reemplazar el archivo del clip que ya estaba puesto.
  *
@@ -53,13 +55,19 @@
       .catch(function () { return false; });
   }
 
-  /** Lo que no se pudo reemplazar entra como una generación, en su segundo. */
+  /**
+   * Lo que no se pudo reemplazar entra como una generación, en su segundo.
+   *
+   * En la secuencia de `colocarEn`, que no siempre es la de la carpeta de sus
+   * versiones: una corrección de una clase que volvió re-cortada guarda las
+   * versiones en el corte de origen y coloca en el que está abierto.
+   */
   function colocar(aviso) {
     var m = aviso.marker || {};
     return tieneAudio(aviso.archivo).then(function (hasAudio) {
       return new Promise(function (resolve) {
-        HPHost.placeClip(aviso.archivo, aviso.sequenceName, Number(m.start) || 0, Number(m.duration) || 0,
-          -1, hasAudio, resolve);
+        HPHost.placeClip(aviso.archivo, aviso.colocarEn || aviso.sequenceName, Number(m.start) || 0,
+          Number(m.duration) || 0, -1, hasAudio, resolve);
       });
     }).then(function (r) {
       r = String(r || "");
@@ -106,12 +114,18 @@
   }
 
   /**
-   * Empieza a escuchar los renders de Studio, si no se estaba escuchando ya.
-   * `opciones.alTerminar(resultado)` se llama con cada render aplicado:
-   * `{ ok, aviso, texto, como }`.
+   * Quién se entera de cada render aplicado: `opciones.alTerminar(resultado)`,
+   * con `{ ok, aviso, texto, como }`. Lo deja puesto main.js al arrancar, porque
+   * a Studio se lo abre desde tres listas y lo que hay que pintar después es lo
+   * mismo.
    */
-  function escuchar(opciones) {
+  function configurar(opciones) {
     if (opciones && typeof opciones.alTerminar === "function") alTerminar = opciones.alTerminar;
+  }
+
+  /** Empieza a escuchar los renders de Studio, si no se estaba escuchando ya. */
+  function escuchar(opciones) {
+    configurar(opciones);
     if (escuchando) return;
     escuchando = true;
     HPEngine.callProg("escucharRendersDeStudio", {}, function (p) {
@@ -122,6 +136,7 @@
   }
 
   global.HPStudioRenders = {
+    configurar: configurar,
     escuchar: escuchar,
     // Para los tests: aplicar un aviso sin pasar por el motor.
     _aplicar: aplicar,

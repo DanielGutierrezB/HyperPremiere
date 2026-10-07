@@ -544,6 +544,9 @@
         markerStart: d.start,
         markerDuration: d.duracion,
         version: d.version,
+        // Con ?e=remotion lo terminado es de Remotion: es lo que hace aparecer
+        // «Abrir Remotion» en el cuerpo del trabajo.
+        engine: D.config.renderEngine === "remotion" ? "remotion" : "",
         usage: d.uso,
         correction: !!d.correccion,
         storeSeqName: d.secuenciaOrigen || "",
@@ -1201,11 +1204,13 @@
           failed: false
         },
         markers: (C.recursos || []).map(function (r) {
+          // Con ?e=remotion los recursos son de Remotion, y la fila ofrece abrirlos en Studio.
+          var engine = D.config.renderEngine === "remotion" ? "remotion" : "hyperframes";
           return {
             slug: r.slug, markerName: r.nombre, markerGuid: "",
             start: r.start, duration: r.duration, timeSource: r.fuenteTramo,
-            latestVersion: r.ultima, model: r.modelo,
-            versions: r.versiones.map(function (v) { return { version: v, model: r.modelo }; }),
+            latestVersion: r.ultima, model: r.modelo, engine: engine,
+            versions: r.versiones.map(function (v) { return { version: v, model: r.modelo, engine: engine }; }),
             instruction: r.encargo, background: !!r.conFondo,
             // Con qué contexto se generó, si su ficha lo guardó. `null` = no se
             // puede saber, y la fila tiene que decirlo.

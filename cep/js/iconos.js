@@ -132,6 +132,13 @@
       '<path d="M8.2 8.6h7.6M8.2 11.6h4.8"/>',
     // Y editar el HTML a mano es código.
     codigo: '<path d="M9.4 8.4L5 12l4.4 3.6"/><path d="M14.6 8.4L19 12l-4.4 3.6"/>',
+    // «Abrir Remotion» abre Studio en el navegador y el archivo en el editor de
+    // código: las dos cosas pasan AFUERA del panel, y eso es la caja con la
+    // flecha que se va por la esquina. No es `reenviar`, cuya flecha sale por
+    // arriba de una bandeja: una imagen que viaja en el pedido.
+    abrirAfuera:
+      '<path d="M13.6 4h6.4v6.4"/><path d="M20 4l-8.4 8.4"/>' +
+      '<path d="M18 13.8v4.6a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18.4V7.6A1.6 1.6 0 0 1 5.6 6h4.6"/>',
     // Limpiar versiones viejas BORRA ARCHIVOS del disco, y eso es un cesto. Va
     // en los dos botones que lo hacen —uno por recurso y otro por secuencia—
     // porque es la misma acción con otro alcance, igual que `generar` y

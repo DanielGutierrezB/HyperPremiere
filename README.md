@@ -592,6 +592,18 @@ fila de acciones, al lado de *Enviar a la cola*. Abre dos cosas:
   en Windows el sistema pregunta con qué abrirlo. **Es el archivo que corre Studio**: lo que
   guardás se ve al momento, sin recargar la pestaña (medido: medio segundo).
 
+**El mismo botón está en las otras dos listas**, desde la 1.9.2: en la **Cola**, en el cuerpo
+de un trabajo terminado de Remotion, al lado de *Editar código*; y en **Corrections**, en el
+pie de una fila de Remotion, al lado de *Enviar a la cola*. Es el mismo módulo
+(`cep/js/abrir-remotion.js`), así que hace exactamente lo mismo, con dos cosas que importan:
+
+- **Abre la última versión del marcador**, preguntada al disco al apretar, y no la que la
+  lista tenía anotada. Un trabajo de la Cola recuerda la versión que hizo él, y un render de
+  Studio posterior ya es una más nueva: abrir la vieja mandaría tus cambios a `respaldos/`.
+- **Una corrección de una clase que volvió re-cortada** abre las versiones de la carpeta donde
+  nació el recurso y, si no hay clip que reemplazar, coloca el render en la secuencia abierta,
+  en el mismo segundo. Es lo mismo que hace una corrección.
+
 Hasta la 1.8.0 la única puerta a Studio estaba plegada adentro de *Avanzado → Editar código
 manualmente*. En la 1.9.0 el botón ya estaba, pero Studio mostraba la animación desde un texto
 metido en sus props: no había archivo que abrir, y lo que se abría —el envoltorio del

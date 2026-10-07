@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-// «Abrir Remotion» en la ficha de un marcador hecho con Remotion.
+// «Abrir Remotion» en las tres listas: la ficha de un marcador hecho con
+// Remotion, un trabajo terminado de la Cola y una fila de Corrections.
 //
 //   node test/manual/panel-demo/abrir.js --no-open &
 //   node test/manual/panel-demo/capturar-studio.js
 //
 // Deja los PNG en `capturas-1.9.0/` con prefijo `studio-`. Lo que se viene a
-// mirar es lo que un test no contesta: que el botón esté A LA VISTA en la fila
-// de acciones —el problema era que vivía plegado adentro de "Avanzado"—, que a
-// 320 px la fila no se rompa, y que el renglón de estado diga qué va a pasar
-// con el Render de Studio.
+// mirar es lo que un test no contesta: que el botón esté A LA VISTA —el
+// problema era que vivía plegado adentro de "Avanzado"—, que a 320 px la fila
+// donde va no se rompa, y que el renglón de estado diga qué va a pasar con el
+// Render de Studio.
 //
 // Si la página tira un error de JS, esto FALLA en vez de sacar una foto de un
 // panel roto.
@@ -33,29 +34,52 @@ const TOMAS = [
   { n: 'ficha', escenario: '?e=remotion', que: 'la ficha de un marcador de Remotion: «Abrir Remotion» en la fila de acciones' },
   { n: 'abierto', escenario: '?e=remotion', abrir: true, que: 'después de apretarlo: qué va a pasar con el Render de Studio' },
   { n: 'hyperframes', escenario: '', que: 'un marcador de HyperFrames: el botón no aparece' },
+  {
+    n: 'cola', escenario: '?e=remotion', lista: 'tab-queue', abrir: true,
+    que: 'un trabajo terminado de la Cola: «Abrir Remotion» al lado de Editar código, y lo que dice al apretarlo',
+  },
+  {
+    n: 'corrections', escenario: '?e=remotion', lista: 'tab-corrections', abrir: true,
+    que: 'una fila de Corrections: «Abrir Remotion» en el pie, y lo que dice al apretarlo',
+  },
+  { n: 'corrections-hyperframes', escenario: '', lista: 'tab-corrections', que: 'una fila de HyperFrames: no aparece' },
 ];
 
 /** Corre dentro de la página. */
 const GUION = async function (g) {
   const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
-  const fichas = [].slice.call(document.querySelectorAll('details.marker-card'));
-  const suya = fichas.filter((d) => (d.textContent || '').indexOf(g.ficha) !== -1)[0];
-  if (!suya) throw new Error('no encontré la ficha de ' + g.ficha);
-  fichas.forEach((d) => { d.open = false; });
-  suya.open = true;
-  await esperar(900);
-  const boton = [].slice.call(suya.querySelectorAll('button'))
-    .filter((b) => (b.textContent || '').trim() === 'Abrir Remotion')[0];
-  const visible = !!boton && boton.style.display !== 'none';
-  if (g.abrir) {
-    if (!visible) throw new Error('la ficha no muestra «Abrir Remotion»');
-    boton.click();
+  const botonEn = (raiz) => [].slice.call(raiz.querySelectorAll('button'))
+    .filter((b) => (b.textContent || '').trim() === 'Abrir Remotion' && b.style.display !== 'none')[0] || null;
+  let suya;
+  if (g.lista) {
+    document.getElementById(g.lista).click();
+    await esperar(1500);
+    // El primero que se puede abrir: en la Cola, un trabajo terminado; en
+    // Corrections, una fila con su tramo.
+    suya = document.querySelector(g.lista === 'tab-queue' ? 'details.queue-job' : 'details.corr-row');
+    if (!suya) throw new Error('la lista no tiene nada que abrir');
+    suya.open = true;
+    await esperar(900);
+    // La Cola se redibuja al abrir una tarjeta: hay que volver a buscarla.
+    if (g.lista === 'tab-queue') suya = document.querySelector('details.queue-job[open]') || suya;
+  } else {
+    const fichas = [].slice.call(document.querySelectorAll('details.marker-card'));
+    suya = fichas.filter((d) => (d.textContent || '').indexOf(g.ficha) !== -1)[0];
+    if (!suya) throw new Error('no encontré la ficha de ' + g.ficha);
+    fichas.forEach((d) => { d.open = false; });
+    suya.open = true;
     await esperar(900);
   }
-  const pie = suya.querySelector('.hp-acciones') || suya;
-  pie.scrollIntoView({ block: 'center' });
+  const boton = botonEn(suya);
+  if (g.abrir) {
+    if (!boton) throw new Error('no se ve «Abrir Remotion»');
+    boton.click();
+    await esperar(1200);
+  }
+  const donde = (g.lista === 'tab-queue' ? suya.querySelector('.qj-detalle') : suya.querySelector('.hp-acciones')) || suya;
+  donde.scrollIntoView({ block: 'center' });
   await esperar(300);
-  return visible;
+  return !!boton;
 };
 
 (async function () {
@@ -75,7 +99,7 @@ const GUION = async function (g) {
       await page.setViewport({ width: w, height: ALTO, deviceScaleFactor: 2 });
       await page.goto(BASE + t.escenario, { waitUntil: 'networkidle2' });
       await new Promise((r) => setTimeout(r, 5000));
-      const visible = await page.evaluate(GUION, { ficha: FICHA, abrir: !!t.abrir });
+      const visible = await page.evaluate(GUION, { ficha: FICHA, abrir: !!t.abrir, lista: t.lista || '' });
       const f = path.join(SALIDA, 'studio-' + t.n + '-' + w + '.png');
       await page.screenshot({ path: f });
       console.log('· ' + path.basename(f) + '  ' + t.que + '  [botón ' + (visible ? 'visible' : 'oculto') + ']');

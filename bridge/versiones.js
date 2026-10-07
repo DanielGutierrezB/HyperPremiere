@@ -252,6 +252,10 @@ async function previewComposition(body) {
           duration: durationSec,
         },
         background: conFondo, code: code,
+        // Dónde va el clip si no hay ninguno que reemplazar, cuando no es la
+        // secuencia de la carpeta: una corrección de una clase re-cortada
+        // guarda las versiones en el corte de origen y coloca en el abierto.
+        colocarEn: String(body.colocarEn || ''),
       },
       assetsDir: path.join(baseDir, '_assets', markerSlug),
       alTerminar: guardarRenderDeStudio,
@@ -320,6 +324,7 @@ function guardarRenderDeStudio(r) {
   });
   return {
     projectPath: destino.projectPath, sequenceName: destino.sequenceName,
+    colocarEn: destino.colocarEn || destino.sequenceName,
     markerSlug: markerSlug, version: version, desde: destino.version || 0,
     etiqueta: markerSlug + ' v' + version,
     archivo: outPaths.mov, anteriores: anteriores,

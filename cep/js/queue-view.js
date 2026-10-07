@@ -320,6 +320,35 @@
   }
 
   /**
+   * «Abrir Remotion» de un trabajo terminado: el mismo de la ficha del marcador
+   * (ver cep/js/abrir-remotion.js), con el marcador sacado del trabajo.
+   *
+   * Abre la ÚLTIMA versión del marcador y no la que hizo este trabajo: un
+   * render de Studio posterior ya es una versión nueva, y la que está en la
+   * secuencia es ésa.
+   */
+  function botonRemotion(job) {
+    var b = iconBtn("Abrir Remotion",
+      "Abre la última versión de este marcador en Remotion Studio, en el navegador, y su archivo .tsx en tu " +
+      "editor. El botón Render de Studio reemplaza el clip en Premiere (cada render queda como una versión nueva).",
+      function () {
+        HPAbrirRemotion.abrirUltima({
+          projectPath: job.projectPath,
+          // Las versiones están en la carpeta de la secuencia donde NACIÓ el
+          // recurso, y el clip va a la del trabajo: en una corrección de otro
+          // corte no son la misma (igual que en «Limpiar previas»).
+          sequenceName: job.storeSeqName || job.seqName,
+          colocarEn: job.seqName,
+          markerSlug: job.markerKey,
+          marker: { start: job.markerStart, duration: job.markerDuration },
+          boton: b,
+          decir: function (texto, esError) { deps.setOutput(texto, !!esError); }
+        });
+      }, "abrirAfuera");
+    return b;
+  }
+
+  /**
    * "🧹 Limpiar previas" de un job terminado: borra las versiones ANTERIORES de
    * ESE recurso y deja la que el editor acaba de aprobar. Es el momento real de
    * fin de clase — quedaste conforme con la v5 y las cuatro anteriores son
@@ -882,6 +911,7 @@
       if (puedeAbrir) {
         mas.appendChild(iconBtn("Editar código", "Editar el código de este marcador y renderizarlo de nuevo (en la pestaña Marcadores)",
           (function (job) { return function () { deps.goToJobMarker(job, true); }; })(j), "codigo"));
+        if (j.engine === "remotion") mas.appendChild(botonRemotion(j));
       }
       // Limpiar las versiones previas de ESTE recurso, cuando el editor ya
       // quedó conforme. No se ofrece en una v1 (no hay nada anterior); si no

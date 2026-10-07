@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { test, ok, eq, has } = require('./harness');
+const { test, ok, eq, deepEq, has } = require('./harness');
 
 const CEP = path.join(__dirname, '..', 'cep', 'js');
 
@@ -113,6 +113,8 @@ function montarPestana(opts) {
     // Los redibujados que se le pidieron al encabezado, que tiene los mismos dos
     // campos: si el del curso cambió, no puede seguir mostrando el viejo.
     encabezadoRefrescado: 0,
+    // Lo que se pidió abrir en Remotion Studio desde una fila.
+    enStudio: [],
   };
 
   // El estado del panel es POR SECUENCIA: el mismo marcador tiene un objetivo y
@@ -167,6 +169,9 @@ function montarPestana(opts) {
     },
     // El encabezado tiene los mismos dos campos que la fila deja editar.
     HPGeneralView: { refresh: function () { espia.encabezadoRefrescado++; } },
+    HPAbrirRemotion: {
+      abrirUltima: function (o) { espia.enStudio.push(o); return Promise.resolve({ ok: true }); },
+    },
     HPHost: {
       openSequenceAndSeek: function (seq, segundos, cb) {
         espia.saltos.push({ seq: seq, segundos: segundos });
@@ -1256,6 +1261,50 @@ function cargarCruzada(extra, opts) {
     ],
   } }));
 }
+
+// ── «Abrir Remotion», también desde una fila ─────────────────────────
+// El pedido: «En la parte de Correcciones como en la cola, al abrir un marcador
+// que haya sido con Remotion, también deberá dejarme abrir desde ahí el
+// remotion». Es el mismo botón de la ficha del marcador (cep/js/abrir-remotion.js):
+// lo que se prueba acá es con qué marcador lo llama la fila.
+
+function botonRemotion(fila) {
+  return fila.porTag('button').filter(function (b) { return b.textContent === 'Abrir Remotion'; })[0] || null;
+}
+
+test('un recurso de Remotion se abre en Studio desde su fila, con el tramo de su ficha', async function () {
+  const { p, fila } = await cargarFila(recurso({ engine: 'remotion' }));
+  const boton = botonRemotion(fila);
+  ok(boton, 'la fila de un recurso de Remotion lo ofrece');
+  boton.click();
+  eq(p.espia.enStudio.length, 1);
+  const o = p.espia.enStudio[0];
+  eq(o.projectPath, '/p/Clases.prproj');
+  eq(o.sequenceName, 'Clase 14');
+  eq(o.markerSlug, 'Marcador 3');
+  deepEq(o.marker, { name: 'Gráfico de barras', start: 128.5, duration: 7 },
+    'si no hay clip que reemplazar, el render entra en el segundo de la ficha, como una corrección');
+  ok(o.version === undefined, 'y sin versión: la que abre se pregunta al disco al apretar');
+  // Lo que pasa se dice en el renglón de la fila, con su color.
+  o.decir('Remotion abierto', false);
+  eq(lineaDeEstado(fila).textContent, 'Remotion abierto');
+  o.decir('no se pudo', true);
+  lineaDeEstado(fila, 'is-error');
+});
+
+test('un recurso de HyperFrames no lo ofrece: no tiene Studio', async function () {
+  eq(botonRemotion((await cargarFila(recurso({ engine: 'hyperframes' }))).fila), null);
+  eq(botonRemotion((await cargarFila(recurso())).fila), null, 'una ficha sin motor es de HyperFrames');
+});
+
+test('leyendo de otro corte, Studio abre las versiones del de origen y coloca en el abierto', async function () {
+  // Lo mismo que hace una corrección: los archivos están donde nació el
+  // recurso, y el clip va a la secuencia que el editor está mirando.
+  const { p, fila } = await cargarCruzada({ engine: 'remotion' });
+  botonRemotion(fila).click();
+  eq(p.espia.enStudio[0].sequenceName, 'Clase 14 v1');
+  eq(p.espia.enStudio[0].colocarEn, 'Clase 14');
+});
 
 test('leyendo de otro corte, se avisa de dónde salió y a dónde va', async function () {
   const { p } = await cargarCruzada();

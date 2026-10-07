@@ -499,3 +499,27 @@ test('los renders se aplican de a uno: el segundo encuentra el clip ya cambiado'
   await esperar(40);
   eq(p.llamadas.filter((l) => l.que === 'relink').length, 2);
 });
+
+test('abierto desde una corrección de otro corte, se coloca en el abierto', async function () {
+  // Las versiones están en el corte de origen (`sequenceName`), y una
+  // corrección coloca en el que el editor está mirando: lo mismo para el render
+  // de Studio, si no hay clip que reemplazar.
+  const p = panel({ relink: ['nada'] });
+  p.api.escuchar({});
+  p.avisar(Object.assign({}, AVISO, { colocarEn: 'Clase 3_02' }));
+  await esperar(40);
+  eq(p.llamadas.filter((l) => l.que === 'place')[0].seq, 'Clase 3_02');
+});
+
+test('quién pinta el resultado queda configurado sin suscribirse', async function () {
+  // Lo deja puesto main.js al arrancar: a Studio se lo abre desde tres listas, y
+  // la que abre solo pide `escuchar()`.
+  const p = panel({ relink: ['ok|1|a'] });
+  const resultados = [];
+  p.api.configurar({ alTerminar: function (r) { resultados.push(r); } });
+  eq(p.llamadas.filter((l) => l.que === 'escuchar').length, 0, 'configurar no se suscribe a nada');
+  p.api.escuchar();
+  p.avisar(AVISO);
+  await esperar(40);
+  eq(resultados.length, 1, 'el render se cuenta a quien quedó configurado');
+});

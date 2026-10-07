@@ -3851,6 +3851,84 @@ const MUTACIONES = [
     a:  '    "strict": true,',
   },
 
+  // --- «Abrir Remotion» también desde la Cola y Corrections ---
+
+  {
+    nombre: 'un trabajo de Remotion terminado no ofrece abrirse en Studio desde la Cola',
+    archivo: 'cep/js/queue-view.js',
+    de: '        if (j.engine === "remotion") mas.appendChild(botonRemotion(j));',
+    a:  '        if (false) mas.appendChild(botonRemotion(j));',
+  },
+  {
+    // Una corrección de otro corte busca sus versiones en la carpeta del corte
+    // abierto, donde no están: Studio dice que no hay nada que abrir.
+    nombre: 'desde la Cola, una corrección de otro corte se abre en la carpeta equivocada',
+    archivo: 'cep/js/queue-view.js',
+    de: '          sequenceName: job.storeSeqName || job.seqName,\n          colocarEn: job.seqName,',
+    a:  '          sequenceName: job.seqName,\n          colocarEn: job.seqName,',
+  },
+  {
+    // Un recurso de HyperFrames ofrece abrir un Studio que no tiene.
+    nombre: 'Corrections ofrece Abrir Remotion en un recurso de HyperFrames',
+    archivo: 'cep/js/corrections.js',
+    de: '    if (m.engine === "remotion") {',
+    a:  '    if (true) {',
+  },
+  {
+    // El render de Studio, sin clip que reemplazar, entra en el corte viejo.
+    nombre: 'desde Corrections, el render de Studio se coloca en el corte de origen',
+    archivo: 'cep/js/corrections.js',
+    de: '          colocarEn: destino,',
+    a:  '          colocarEn: origen.sequenceName,',
+  },
+  {
+    // Se abre una versión de HyperFrames en Studio, que no la sabe mostrar.
+    nombre: 'Abrir Remotion abre la última versión aunque sea de otro motor',
+    archivo: 'cep/js/abrir-remotion.js',
+    de: '      return (ult && ult.engine === "remotion") ? ult.version : 0;',
+    a:  '      return ult ? ult.version : 0;',
+  },
+  {
+    // Un `name: undefined` pisa el nombre de la ficha de la versión.
+    nombre: 'el tramo que manda Abrir Remotion lleva el nombre aunque no se sepa',
+    archivo: 'cep/js/abrir-remotion.js',
+    de: '    if (m.name) out.name = m.name;',
+    a:  '    out.name = m.name;',
+  },
+  {
+    // Studio abre, pero su Render no encuentra a nadie que reemplace el clip.
+    nombre: 'Abrir Remotion no deja escuchando los renders de Studio',
+    archivo: 'cep/js/abrir-remotion.js',
+    de: '      HPStudioRenders.escuchar();',
+    a:  '      void 0;',
+  },
+  {
+    nombre: 'el botón Abrir Remotion no abre el archivo en el editor de código',
+    archivo: 'cep/js/abrir-remotion.js',
+    de: '        colocarEn: o.colocarEn, abrirArchivo: true, boton: o.boton, decir: o.decir',
+    a:  '        colocarEn: o.colocarEn, abrirArchivo: false, boton: o.boton, decir: o.decir',
+  },
+  {
+    nombre: 'el render de Studio sin clip que reemplazar ignora dónde colocar',
+    archivo: 'cep/js/studio-renders.js',
+    de: '        HPHost.placeClip(aviso.archivo, aviso.colocarEn || aviso.sequenceName, Number(m.start) || 0,',
+    a:  '        HPHost.placeClip(aviso.archivo, aviso.sequenceName, Number(m.start) || 0,',
+  },
+  {
+    nombre: 'la versión de Studio no devuelve dónde colocar',
+    archivo: 'bridge/versiones.js',
+    de: '    colocarEn: destino.colocarEn || destino.sequenceName,',
+    a:  '    colocarEn: destino.sequenceName,',
+  },
+  {
+    // Nadie pinta el resultado de un render de Studio abierto desde la Cola o
+    // Corrections: el clip cambia y el panel no lo dice.
+    nombre: 'main.js no deja configurado quién pinta los renders de Studio',
+    archivo: 'cep/js/main.js',
+    de: '  HPStudioRenders.configurar({ alTerminar: alRenderDeStudio });',
+    a:  '  void 0;',
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3872,7 +3950,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
   'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
   'motores-dos', 'remotion-node-del-panel', 'claude-modelos', 'claude-medir', 'selector-claude',
-  'studio-a-premiere', 'studio-archivo'];
+  'studio-a-premiere', 'studio-archivo', 'abrir-remotion-panel'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test

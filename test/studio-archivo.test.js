@@ -372,6 +372,31 @@ test('«Abrir Remotion» abre el archivo en el editor; la vista previa del edito
   });
 });
 
+test('abierto desde una corrección de otro corte, el render sabe en qué secuencia colocar', async function () {
+  // Las versiones están en el corte de origen y el clip va al abierto, como en
+  // una corrección. Sin otro corte, la secuencia de la carpeta.
+  await conAbrirDeMentira(async function () {
+    const pedidos = motorDeJuguete();
+    const p = proyectoCon('export default () => null;');
+    await versiones.previewComposition(Object.assign({ colocarEn: 'Clase 3_02' }, p));
+    eq(pedidos[0].destino.colocarEn, 'Clase 3_02');
+    await versiones.previewComposition(p);
+    eq(pedidos[1].destino.colocarEn, '');
+  });
+  const raiz = carpeta();
+  const projectPath = path.join(raiz, 'Curso.prproj');
+  fs.writeFileSync(projectPath, 'x');
+  const video = path.join(carpeta(), 'marcador.mov');
+  fs.writeFileSync(video, 'un video');
+  const destino = {
+    projectPath: projectPath, sequenceName: 'Clase 3', markerSlug: 'Marcador 1', version: 1,
+    marker: { name: 'Marcador 1', start: 12, duration: 4 }, code: 'x',
+  };
+  eq(versiones.guardarRenderDeStudio({ archivo: video, destino: Object.assign({ colocarEn: 'Clase 3_02' }, destino) }).colocarEn,
+    'Clase 3_02');
+  eq(versiones.guardarRenderDeStudio({ archivo: video, destino: destino }).colocarEn, 'Clase 3');
+});
+
 test('el código del editor del panel solo gana si de verdad lo cambiaron', async function () {
   // El editor del panel manda lo que tiene siempre, aunque sea la versión tal
   // cual se abrió. Si contara como pedido explícito, mirarla desde ahí le

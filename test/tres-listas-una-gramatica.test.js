@@ -33,7 +33,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { test, ok, eq, has } = require('./harness');
+const { test, ok, eq, deepEq, has } = require('./harness');
 
 const RAIZ = path.join(__dirname, '..');
 const CEP = path.join(RAIZ, 'cep', 'js');
@@ -181,14 +181,16 @@ function elemento(tag) {
   return el;
 }
 
-/** Dibuja la Cola con `jobs` y devuelve el panel. */
+/** Dibuja la Cola con `jobs` y devuelve el panel, y lo que se pidió abrir en Studio. */
 function dibujarCola(jobs) {
   const nodos = {
     'queue-panel': elemento('div'),
     'view-queue': elemento('div'),
     'tab-queue-count': elemento('span'),
   };
+  const abiertos = [];
   const ctx = {
+    HPAbrirRemotion: { abrirUltima: function (o) { abiertos.push(o); return Promise.resolve({ ok: true }); } },
     console: console, Date: Date, Math: Math, JSON: JSON, String: String, Number: Number,
     Object: Object, Array: Array, isNaN: isNaN, parseInt: parseInt, Set: Set,
     Promise: Promise, setTimeout: setTimeout, clearTimeout: clearTimeout,
@@ -254,7 +256,7 @@ function dibujarCola(jobs) {
     sequenceContext: function () { return null; },
   });
   ctx.HPQueueView.render(jobs);
-  return { ctx: ctx, panel: nodos['queue-panel'] };
+  return { ctx: ctx, panel: nodos['queue-panel'], abiertos: abiertos };
 }
 
 function job(extra) {
@@ -580,6 +582,42 @@ test('el PROGRESO se lee con la fila plegada; el DETALLE del terminado, no', fun
   eq(corriendo.panel.buscar('qj-detalle'), null, 'y no se le arma cuerpo de detalle');
 });
 
+test('un trabajo de Remotion terminado se abre en Studio desde la Cola, como desde su ficha', function () {
+  // El pedido: «En la parte de Correcciones como en la cola, al abrir un marcador
+  // que haya sido con Remotion, también deberá dejarme abrir desde ahí el
+  // remotion». Va en el cuerpo, al lado de «Editar código»: es de mirar el
+  // recurso de cerca, no de barrer la lista.
+  const d = dibujarCola([
+    job({ id: 'r', status: 'done', version: 2, engine: 'remotion', msg: '✓ Listo y colocado (v2)' }),
+    job({ id: 'h', status: 'done', version: 2, engine: 'hyperframes', markerKey: 'Marcador 2', msg: '✓ Listo y colocado (v2)' }),
+  ]);
+  const filas = d.panel.buscarTodos('queue-job');
+  eq(filas[0].buscar('hp-sumario').texto().indexOf('Abrir Remotion'), -1, 'no en el encabezado');
+  const boton = filas[0].buscar('qj-detalle').porTexto('Abrir Remotion');
+  ok(boton, 'en el cuerpo del terminado');
+  eq(filas[1].texto().indexOf('Abrir Remotion'), -1, 'HyperFrames no tiene Studio');
+  boton.click();
+  eq(d.abiertos.length, 1);
+  eq(d.abiertos[0].projectPath, '/p/Clases.prproj');
+  eq(d.abiertos[0].markerSlug, 'Marcador 1');
+  eq(d.abiertos[0].sequenceName, 'Clase 23');
+  deepEq(d.abiertos[0].marker, { start: 12.4, duration: 6.5 },
+    'con el tramo del trabajo: si no hay clip que reemplazar, el render entra ahí');
+  ok(d.abiertos[0].version === undefined, 'y sin versión: la que abre se pregunta al disco al apretar');
+});
+
+test('una corrección de otro corte se abre desde la carpeta donde nació', function () {
+  // Igual que «Limpiar previas»: las versiones están en el corte de origen, y el
+  // clip va al que el trabajo coloca.
+  const d = dibujarCola([job({
+    status: 'done', version: 4, engine: 'remotion', correction: true,
+    storeSeqName: 'Clase 23', seqName: 'Clase 23_02', msg: '✓ Listo y colocado (v4)',
+  })]);
+  d.panel.buscar('qj-detalle').porTexto('Abrir Remotion').click();
+  eq(d.abiertos[0].sequenceName, 'Clase 23', 'las versiones, en el corte de origen');
+  eq(d.abiertos[0].colocarEn, 'Clase 23_02', 'y el clip, si hay que colocarlo, en el abierto');
+});
+
 test('lo que se aprieta con la fila plegada está en el encabezado', function () {
   // Es la diferencia honesta con la ficha de un marcador, que tiene sus acciones
   // en el pie: reintentar el que falló, colocar el que no entró y reordenar los
@@ -680,7 +718,7 @@ test('la ronda de la Cola y la fila de Corrections son el mismo cuerpo con otras
   // deja de encontrar su `acciones`.
   has(MAIN, 'acciones: { izquierda: [regenBtn], derecha: [studioBtn, queueBtn, genBtn] }');
   has(COLA, 'acciones: { izquierda: [fresh], derecha: [go] }');
-  has(CORR, 'acciones: { izquierda: [], derecha: [stageBtn, fixBtn] }');
+  has(CORR, 'acciones: { izquierda: [], derecha: [studioBtn, stageBtn, fixBtn] }');
   // Y el parámetro del pedido —sobre qué versión se rediseña— va en la BARRA DE
   // CONTROLES, que es donde la ficha de un marcador pone su «Con fondo»: no es una
   // acción. En el pie quedaba debajo de los dos botones que lo usan, porque el pie
