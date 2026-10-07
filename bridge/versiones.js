@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 
 const motores = require('./render');
+const abrir = require('./abrir-archivo');
 const {
   slugify, ensureOutputDir, outputDirPath, paths, readMeta,
   writeVersionMeta, mergeVersionMeta, composicionDeVersion,
@@ -156,13 +157,18 @@ function readMarkerHtml(body) {
  * mirada, y otros ocho si el timing no cerraba—. Lo que se abre es un
  * reproductor con timeline: se scrubea, se pone en loop, se marca un tramo.
  *
- * NO renderiza, NO llama al modelo y NO escribe una versión. El botón que hace
- * entrar un clip a la secuencia sigue siendo el de siempre.
+ * Abrirla NO renderiza, NO llama al modelo y NO escribe una versión. Lo que sí
+ * puede escribir una es el botón Render de Studio, después (ver
+ * `guardarRenderDeStudio`).
  *
  * Si `code` viene en el cuerpo, se mira ESO y no lo que hay en disco: es lo que
  * convierte al editor de código y a la ventana de vista previa en un par
  * —editás, apretás vista previa, y lo que estaba en pantalla cambia— sin tener
  * que guardar una versión por cada mirada.
+ *
+ * Con `abrirArchivo`, además, el archivo que muestra la vista previa —en
+ * Remotion, el `.tsx` del marcador— se abre con el editor del sistema: es lo
+ * que hace «Abrir Remotion» de la ficha.
  *
  * No todos los motores pueden: HyperFrames pide su timeline PAUSADA para que el
  * capturador la posicione cuadro por cuadro, así que abrir ese HTML muestra el
@@ -193,8 +199,14 @@ async function previewComposition(body) {
       };
     }
 
-    const code = String(body.code || '').trim() || (enDisco ? enDisco.code : '');
+    const delEditor = String(body.code || '').trim();
+    const code = delEditor || (enDisco ? enDisco.code : '');
     if (!code) return { ok: false, error: 'no encontré la versión ' + (version || '') + ' para previsualizar' };
+    // El editor del panel manda lo que tiene SIEMPRE, aunque sea la versión tal
+    // cual la abrió. Solo cuenta como pedido explícito si es otra cosa: si no,
+    // mirar la versión desde el editor del panel le pisaría al archivo de Studio
+    // los cambios que el editor le hizo en su editor (ver remotion-editables.js).
+    const explicito = !!delEditor && !(enDisco && delEditor === String(enDisco.code || '').trim());
 
     // La duración: la del marcador si el panel la manda (es la verdad de
     // Premiere), y si no la que anotó la ficha de esa versión. Sin ninguna de
@@ -224,6 +236,7 @@ async function previewComposition(body) {
     const marker = Object.assign({}, ficha.marker || {}, body.marker || {});
     const r = await motor.vistaPrevia({
       code: code,
+      explicito: explicito,
       durationSec: durationSec,
       format: conFondo ? 'mp4' : 'mov',
       etiqueta: etiqueta,
@@ -243,7 +256,10 @@ async function previewComposition(body) {
       assetsDir: path.join(baseDir, '_assets', markerSlug),
       alTerminar: guardarRenderDeStudio,
     });
-    return Object.assign({ ok: true, engine: motor.id }, r);
+    // No poder abrir el archivo no deshace lo demás: Studio ya está abierto, y
+    // el panel dice dónde está el archivo para abrirlo a mano.
+    const editor = body.abrirArchivo && r && r.archivo ? await abrir.abrirArchivo(r.archivo) : null;
+    return Object.assign({ ok: true, engine: motor.id }, r, { editor: editor });
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
@@ -256,14 +272,17 @@ async function previewComposition(body) {
  * Versión nueva y no pisar la anterior, por tres motivos: en Windows Premiere
  * tiene abierto el archivo del clip y no deja reescribirlo; la versión de antes
  * sigue en disco por si el render nuevo salió peor; y la versión nueva guarda
- * el código que Studio renderizó —si vino del editor, el editado—, así que la
- * próxima corrección parte de lo que de verdad está en la secuencia.
+ * el código que Studio renderizó —lo que tenía el archivo del marcador cuando
+ * arrancó el render, con lo que el editor le haya cambiado—, así que la próxima
+ * corrección parte de lo que de verdad está en la secuencia.
  *
  * Devuelve lo que el panel necesita para reemplazar el clip en Premiere: el
  * archivo nuevo y los de las versiones anteriores, de la más nueva a la más
  * vieja (reemplaza la más nueva que encuentre puesta).
  *
- * @param {{archivo:string, destino:object}} r — lo que manda remotion-studio.js
+ * @param {{archivo:string, destino:object, codigo?:string}} r — lo que manda
+ *   remotion-studio.js. Sin `codigo` (no se pudo leer el archivo), el que se
+ *   mostró al abrir.
  */
 function guardarRenderDeStudio(r) {
   const archivo = r && r.archivo;
@@ -286,7 +305,8 @@ function guardarRenderDeStudio(r) {
   const motor = motores.motor('remotion');
   const outPaths = paths(baseDir, markerSlug, version, 'studio', ext, motor.lenguaje.ext);
   fs.copyFileSync(archivo, outPaths.mov);
-  fs.writeFileSync(outPaths.code, String(destino.code || ''), 'utf8');
+  const codigo = r && typeof r.codigo === 'string' ? r.codigo : String(destino.code || '');
+  fs.writeFileSync(outPaths.code, codigo, 'utf8');
   writeVersionMeta(outPaths.meta, {
     sequenceName: destino.sequenceName, markerSlug: markerSlug, marker: destino.marker,
     version: version, model: 'studio', provider: 'remotion-studio', mode: 'studio-render',

@@ -566,11 +566,11 @@ segundos por mirada, y otros ocho si el timing no cerraba—.
 
 Manda lo que hay **en el editor** cuando hay algo, y no la versión guardada. Eso es lo que
 convierte editar y mirar en un ciclo: se toca el código, se aprieta Vista previa, y **la
-ventana que ya está abierta cambia sola**. Está medido: Remotion Studio vigila el archivo
-por el que le pasamos la composición y recarga en caliente, así que hay **un solo proceso**
-por sesión del panel y cambiar de marcador es reescribir ese archivo. La sesión cuelga de
-`process` y no de una variable de módulo, por lo mismo que el micrófono del dictado (ver
-`bridge/vivos.js`): con el ⟳ del panel, "hay un solo Studio" tiene que valer por proceso.
+ventana que ya está abierta cambia sola**. Está medido: Remotion Studio vigila sus archivos y
+recarga en caliente, así que hay **un solo proceso** por sesión del panel, y cambiar de
+marcador es reescribir dos archivos chicos —cuál `.tsx` se muestra y las props—. La sesión
+cuelga de `process` y no de una variable de módulo, por lo mismo que el micrófono del dictado
+(ver `bridge/vivos.js`): con el ⟳ del panel, "hay un solo Studio" tiene que valer por proceso.
 
 **Y lo que se renderiza ahí entra a Premiere.** Studio trae su propio botón **Render**,
 abajo a la derecha de su ventana. Hasta la 1.8.0 ese botón dejaba un archivo suelto que no
@@ -581,13 +581,39 @@ pensado para overlay saliendo **opaco, con el alfa aplastado contra negro y sin 
 error**—, así que el proyecto huésped lleva un `remotion.config.ts` que lo deja en ProRes 4444
 con alfa, igual que el render del panel.
 
-### «Abrir Remotion»: el Render de Studio reemplaza el clip
+### «Abrir Remotion»: tu archivo, en vivo, y el Render reemplaza el clip
 
 La ficha de un marcador cuya última versión es de Remotion muestra **Abrir Remotion** en la
-fila de acciones, al lado de *Enviar a la cola*. Abre Studio con esa versión —lo mismo que
-*Vista previa* desde el editor—. Hasta la 1.8.0 esa era la única puerta, y estaba plegada
-adentro de *Avanzado → Editar código manualmente*: generabas con Remotion y no veías cómo
-abrirlo.
+fila de acciones, al lado de *Enviar a la cola*. Abre dos cosas:
+
+- **Studio**, en el navegador, reproduciendo la animación.
+- **El archivo `.tsx` de la animación, en tu editor de código**: el que tu sistema use para
+  los `.tsx` (Cursor, VS Code…). Si no hay ninguno, en macOS se abre con el editor de texto, y
+  en Windows el sistema pregunta con qué abrirlo. **Es el archivo que corre Studio**: lo que
+  guardás se ve al momento, sin recargar la pestaña (medido: medio segundo).
+
+Hasta la 1.8.0 la única puerta a Studio estaba plegada adentro de *Avanzado → Editar código
+manualmente*. En la 1.9.0 el botón ya estaba, pero Studio mostraba la animación desde un texto
+metido en sus props: no había archivo que abrir, y lo que se abría —el envoltorio del
+proyecto— no era la animación. El pedido fue explícito: *"debería ser el archivo de remotion
+como tal, así lo edito como quiera hacerlo"*. Desde la 1.9.1 es así.
+
+El archivo vive en `~/.hyperpremiere/remotion/marcadores/<secuencia> - <código>/<marcador>.tsx`
+(el código de seis caracteres separa la "Clase 3" de un curso de la de otro). Está adentro del
+proyecto de Remotion y no al lado de las versiones por dos motivos: ahí encuentra sus imports
+(`@remotion/transitions`, las fuentes) y tu editor encuentra los tipos. El `tsconfig` del
+proyecto lo incluye y no es estricto: sin tipos de React instalados, el modo estricto marcaba
+**16 errores** de JSX en un archivo que compila bien, y así marca **0** (medido con `tsc`).
+
+**Tus cambios no se pierden.** El archivo es uno por marcador y lo escriben dos —el panel,
+con el código de una versión, y vos—, así que el panel anota de qué versión salió y qué fue lo
+último que escribió:
+
+- volver a abrir el marcador, con la misma versión, **lo deja como lo dejaste**;
+- si hay una versión más nueva (lo refinaste desde el panel, por ejemplo), lo que tenías sin
+  renderizar se guarda primero en `respaldos/`, al lado, y el panel te dice el nombre;
+- el *Vista previa* del editor del panel manda su código solo si lo cambiaste **ahí**; si es la
+  versión tal cual, respeta tu archivo.
 
 Lo que se renderiza con el **Render** de Studio entra solo a Premiere:
 
@@ -600,17 +626,19 @@ Lo que se renderiza con el **Render** de Studio entra solo a Premiere:
   generación, en el segundo del marcador.
 - **No pisa el archivo anterior**, por tres motivos: la versión de antes queda por si la nueva
   salió peor, en Windows Premiere tiene el `.mov` abierto y no se deja reescribir, y el código
-  guardado es siempre el del video que está en la secuencia —si venía del editor, el editado—.
+  guardado es siempre el del video que está en la secuencia: lo que tenía tu archivo **cuando
+  arrancó el render**, aunque lo sigas editando mientras renderiza.
 
 Cómo sabe de qué marcador es cada render, aunque en el medio se haya abierto otro: las props
 que el panel le pasa a Studio llevan un `destino`, y Studio guarda en cada trabajo de render
 las props con que arrancó. El panel escucha la cola por `/events` —el mismo canal que usa la
 interfaz de Studio para enterarse— y cada trabajo terminado se guarda **una sola vez**. Está
-medido con la interfaz de verdad: `node test/manual/studio-render.js` hace clic en Render con
-un Chrome headless, y el marcador verde salió verde y el azul, abierto después en la misma
-pestaña, azul, cada uno como versión nueva de su marcador. El reemplazo en Premiere usa
-`changeMediaPath` y está probado contra un Premiere de mentira (`studio-a-premiere.test.js`),
-no con Premiere automatizado.
+medido con la interfaz de verdad: `node test/manual/studio-render.js` edita el archivo del
+primer marcador (el fondo de verde a amarillo), mira que Studio cambie solo, hace clic en
+Render con un Chrome headless, y el video sale amarillo y con ese código guardado; después el
+azul, abierto en la misma pestaña, sale azul. El reemplazo en Premiere usa `changeMediaPath`
+y está probado contra un Premiere de mentira (`studio-a-premiere.test.js`), no con Premiere
+automatizado.
 
 Los bordes:
 
@@ -623,6 +651,15 @@ Los bordes:
   que es lo que se pidió—. Un WebM o un GIF no entran, y el aviso dice por qué.
 - **Lo que no abrió el panel no va a Premiere**: un render de otra composición, o con props
   escritas a mano, no tiene a qué marcador ir. Las fotos sueltas (*Render still*) tampoco.
+- **Studio muestra un marcador a la vez**: el último que abriste. Podés editar el archivo de
+  otro mientras tanto, y al abrirlo se ve con tus cambios. No era gratis: webpack solo vigila
+  el archivo que está mostrando y lee con una caché, así que al volver mostraba lo de antes
+  (medido: el archivo decía violeta y Studio, amarillo). El `remotion.config.ts` del proyecto
+  le vacía esa caché para `marcadores/` en cada recompilación.
+- **Los imports**: en Studio el archivo puede importar cualquier paquete que tenga instalado
+  el proyecto de Remotion, pero el render del panel tiene la lista cerrada. Una versión hecha
+  en Studio que importe otra cosa entra igual a Premiere; re-renderizarla desde el panel falla
+  diciendo qué import sobra.
 
 ### Las imágenes incrustadas, que Remotion no mostraba
 
@@ -3272,10 +3309,12 @@ que "anda" con dos llamadas por marcador cuesta el doble y no falla nunca), tama
 callado de los dos motores — un `.mov` sin canal alfa se abre, se ve bien solo, y en
 Premiere tapa el video con un rectángulo negro. No puntúa el diseño: deja los `.mov` y el
 código de cada corrida para mirarlos. Y `node test/manual/studio-render.js` levanta Remotion
-Studio de verdad con dos marcadores, hace clic en su botón **Render** con un Chrome headless y
-mira lo que vuelve al panel: la versión `[studio]` de cada uno, su ficha, qué clip reemplazaría
-y el píxel del centro del video —el rojo de la imagen incrustada, que es lo que prueba que
-Studio también la encuentra—.
+Studio de verdad con dos marcadores, **edita el archivo** de uno y mira que Studio cambie
+solo, hace clic en su botón **Render** con un Chrome headless y mira lo que vuelve al panel:
+la versión `[studio]` de cada uno, su ficha, el código guardado (el editado), qué clip
+reemplazaría y los píxeles del video —el rojo de la imagen incrustada en el centro y el color
+editado en el borde—. Al final edita uno sin renderizar, abre el otro y vuelve: lo editado
+tiene que seguir en el archivo y verse en Studio.
 
 Y `node test/manual/mutaciones-render.js` mete a propósito cada regresión que estos tests
 dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando rompés el código no

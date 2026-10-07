@@ -69,14 +69,15 @@
 //   estado()   → { instalado: boolean, motivo: string }  (¿se puede usar acá?)
 //   instalar(onProgress) → Promise<{ ok, mensaje }>      (opcional)
 //
-//   vistaPrevia({ code, durationSec, format, etiqueta, destino?, assetsDir?, alTerminar? })
-//       (OPCIONAL) → Promise<{ ok, url, arrancado }>. Reproducir la composición
-//       en vivo, sin renderizar. Es opcional porque no todo motor puede:
-//       HyperFrames pide su timeline PAUSADA para capturarla cuadro por cuadro,
-//       así que abrir ese HTML muestra el primer cuadro y nada más. Quien la
-//       ofrezca pregunta si existe en vez de suponerlo. Con `destino` y
-//       `alTerminar`, lo que se renderice DESDE la vista previa vuelve como
-//       versión de ese marcador (ver remotion-studio.js).
+//   vistaPrevia({ code, explicito?, durationSec, format, etiqueta, destino?, assetsDir?, alTerminar? })
+//       (OPCIONAL) → Promise<{ ok, url, arrancado, archivo? }>. Reproducir la
+//       composición en vivo, sin renderizar. Es opcional porque no todo motor
+//       puede: HyperFrames pide su timeline PAUSADA para capturarla cuadro por
+//       cuadro, así que abrir ese HTML muestra el primer cuadro y nada más.
+//       Quien la ofrezca pregunta si existe en vez de suponerlo. `archivo` es
+//       el que se muestra, si el motor lo muestra desde un archivo editable.
+//       Con `destino` y `alTerminar`, lo que se renderice DESDE la vista previa
+//       vuelve como versión de ese marcador (ver remotion-studio.js).
 //   escucharVistaPrevia(fn)  → Promise<{ ok, terminado }>: `fn(aviso)` por cada
 //       render hecho desde la vista previa, hasta que se cierre.
 //   cerrarVistaPrevia()      → { ok, andaba }

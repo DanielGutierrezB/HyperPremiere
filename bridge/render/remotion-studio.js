@@ -12,20 +12,24 @@
 // Al principio Studio era solo para mirar, y el botón que hacía entrar un clip
 // a la secuencia era únicamente el del panel. El editor lo pidió al revés: que
 // el Render de la interfaz de Studio reemplace en Premiere el clip de ese
-// marcador, cada vez. Ahora es así, y descansa en tres cosas:
+// marcador, cada vez. Ahora es así, y descansa en cuatro cosas:
 //
-//   1. Cada vez que el panel abre un marcador, las props que lee Studio llevan
-//      un `destino`: un identificador que acá se asocia con el marcador, la
-//      versión y el código que se mostró. Studio guarda en cada trabajo de
-//      render las props con que arrancó, así que cada render dice SOLO a qué
-//      marcador pertenece, aunque en el medio se haya abierto otro. Medido con
-//      la interfaz real (test/manual/studio-render.js): verde con el marcador
-//      verde, azul después de abrir el azul, sin recargar la pestaña.
-//   2. El panel se suscribe a `/events`, el mismo canal por el que la interfaz
-//      de Studio se entera de su cola de renders. Cuando un trabajo pasa a
-//      `done`, el archivo que dejó se guarda como una versión nueva del
-//      marcador —con su código y su ficha— UNA sola vez, y se avisa.
-//   3. Quien recibe el aviso (el panel, ver cep/js/studio-renders.js) reemplaza
+//   1. Lo que Studio muestra es un ARCHIVO: el `.tsx` del marcador, que el
+//      editor abre y edita como quiera (ver remotion-editables.js). Lo que
+//      guarda se ve al momento.
+//   2. Cada vez que el panel abre un marcador, las props que lee Studio llevan
+//      un `destino`: un identificador que acá se asocia con el marcador y su
+//      archivo. Studio guarda en cada trabajo de render las props con que
+//      arrancó, así que cada render dice SOLO a qué marcador pertenece, aunque
+//      en el medio se haya abierto otro. Medido con la interfaz real
+//      (test/manual/studio-render.js): verde con el marcador verde, azul
+//      después de abrir el azul, sin recargar la pestaña.
+//   3. El panel se suscribe a `/events`, el mismo canal por el que la interfaz
+//      de Studio se entera de su cola de renders. Cuando un trabajo arranca se
+//      lee el archivo —lo que se renderiza es lo que había en ese momento, no
+//      lo que el editor escriba después—, y cuando pasa a `done` el video se
+//      guarda como versión nueva del marcador con ESE código, UNA sola vez.
+//   4. Quien recibe el aviso (el panel, ver cep/js/studio-renders.js) reemplaza
 //      en Premiere el archivo del clip que ya estaba puesto.
 //
 // Los ajustes de ese render salen de `remotion.config.ts`: ProRes 4444 con
@@ -35,10 +39,10 @@
 //
 // ── Por qué UN proceso y no uno por vista previa ─────────────────────
 //
-// Studio VIGILA el archivo de `--props` y recarga en caliente. Así que hay un
-// solo proceso por sesión del panel, y cambiar de marcador —o volver a mirar el
-// mismo después de editarlo— es REESCRIBIR ESE ARCHIVO: la ventana que el
-// editor ya tiene abierta se actualiza sola.
+// Studio VIGILA sus archivos y recarga en caliente. Así que hay un solo
+// proceso por sesión del panel, y cambiar de marcador es reescribir dos
+// archivos chicos —cuál `.tsx` se muestra (`marcadores/abierto.ts`) y las
+// `--props`—: la ventana que el editor ya tiene abierta se actualiza sola.
 //
 // Lo que eso obliga es una regla: no se cambia de marcador mientras Studio
 // está renderizando otro. Las imágenes que una composición incrusta viven en
@@ -61,6 +65,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const instalacion = require('./remotion-instalar');
+const editables = require('./remotion-editables');
 const { copiarImagenes } = require('./remotion-imagenes');
 const { nodeBin } = require('./node-bin');
 const { killTree, startProcess } = require('../exec');
@@ -201,8 +206,10 @@ function viva() {
 function sesionNueva(datos) {
   return Object.assign({
     idle: null,
-    // id → destino: qué marcador, versión y código mostró el panel con esas props.
+    // id → destino: qué marcador y qué archivo mostró el panel con esas props.
     destinos: {},
+    // Trabajo → el código de su archivo cuando arrancó a renderizar.
+    codigos: {},
     // Quién guarda un render terminado (versiones.js); lo trae cada `mostrar`.
     alTerminar: null,
     // UN solo oyente (ver `escuchar`), y lo que llegó sin oyente.
@@ -265,6 +272,9 @@ function alCambiarLaCola(s, cola) {
     if (!t || t.type !== 'video' || !t.id) continue;
     if (t.status === 'idle' || t.status === 'running') {
       s.enCurso[t.id] = destinoDelTrabajo(t);
+      // Al ARRANCAR, y no al terminar: el editor puede seguir escribiendo
+      // mientras renderiza, y la versión tiene que guardar el código del video.
+      if (t.status === 'running' && !(t.id in s.codigos)) s.codigos[t.id] = codigoDelDestino(s, s.enCurso[t.id]);
       continue;
     }
     delete s.enCurso[t.id];
@@ -274,6 +284,12 @@ function alCambiarLaCola(s, cola) {
     }
   }
   return terminados;
+}
+
+/** Lo que tiene ahora el archivo del marcador de ese destino, o null. */
+function codigoDelDestino(s, idDestino) {
+  const d = s.destinos[idDestino];
+  return d && d.archivo ? editables.leer(d.archivo) : null;
 }
 
 function avisar(s, aviso) {
@@ -288,7 +304,11 @@ function avisar(s, aviso) {
 /** Guarda un render terminado de Studio y avisa. De a uno (ver `cadena`). */
 function procesar(s, trabajo) {
   s.cadena = s.cadena.then(async () => {
-    const destino = s.destinos[destinoDelTrabajo(trabajo)];
+    const idDestino = destinoDelTrabajo(trabajo);
+    const destino = s.destinos[idDestino];
+    // Si no se lo vio arrancar (terminó entre dos avisos), lo que haya ahora.
+    const codigo = trabajo.id in s.codigos ? s.codigos[trabajo.id] : codigoDelDestino(s, idDestino);
+    delete s.codigos[trabajo.id];
     if (trabajo.status === 'failed') {
       avisar(s, {
         ok: false, etiqueta: destino ? destino.etiqueta : '',
@@ -312,7 +332,13 @@ function procesar(s, trabajo) {
         archivo: path.resolve(s.dir, trabajo.outName),
         destino: destino,
         trabajo: { id: trabajo.id, outName: trabajo.outName, codec: trabajo.codec },
+        codigo: codigo,
       });
+      // Lo que tenía el archivo ya es una versión: si el editor lo vuelve a
+      // abrir, no hay nada sin renderizar que respaldar.
+      if (destino.archivo && typeof codigo === 'string' && r && r.version) {
+        editables.alGuardarVersion(s.dir, destino.archivo, r.version, codigo);
+      }
       avisar(s, Object.assign({ ok: true }, r));
     } catch (e) {
       avisar(s, { ok: false, etiqueta: destino.etiqueta, error: (e && e.message) || String(e) });
@@ -369,24 +395,28 @@ function mismoMarcador(a, b) {
 // ─── Lo que llama el motor ───────────────────────────────────────────
 
 /**
- * Abre (o reusa) Studio mostrando esta composición.
+ * Abre (o reusa) Studio mostrando el archivo de un marcador.
  *
- * `{ codigoJs, conFondo, duracionEnCuadros, etiqueta, destino?, assetsDir?,
- * alTerminar? }`. Con `destino` —el marcador, la versión y el código fuente que
- * se muestran— un render hecho en Studio sabe a qué clip va; `alTerminar` es
- * quien lo guarda como versión.
+ * `{ destino, codigo, explicito?, conFondo, duracionEnCuadros, etiqueta,
+ * assetsDir?, alTerminar? }`. `destino` es el marcador y la versión que se
+ * abren; `codigo`, el de esa versión, que va a su archivo salvo que el editor
+ * tenga ahí cambios sin renderizar (ver remotion-editables.js; `explicito` =
+ * lo mandó el editor del panel y gana). Un render hecho en Studio sabe por el
+ * destino a qué clip va, y `alTerminar` es quien lo guarda como versión.
  *
- * Devuelve `{ ok, url, arrancado, etiqueta }`: `arrancado` dice si hubo que
- * levantarlo, que es lo que el panel necesita para decirle al editor si va a
- * esperar.
+ * Devuelve `{ ok, url, arrancado, etiqueta, archivo, accion, respaldo, base }`:
+ * `arrancado` dice si hubo que levantarlo, que es lo que el panel necesita para
+ * decirle al editor si va a esperar, y el resto qué archivo se muestra y qué
+ * pasó con lo que tenía (`accion` y `respaldo` de `editables.preparar`).
  */
 async function mostrar(o) {
   const st = instalacion.estado();
   if (!st.instalado) throw new Error('Remotion no está listo: ' + st.motivo);
+  if (!o.destino) throw new Error('Para abrir Studio hace falta saber qué marcador se abre.');
   instalacion.sincronizarHuesped(st.dir);
 
   const sigue = viva() ? caja.sesion : null;
-  if (sigue && o.destino) {
+  if (sigue) {
     const otro = otroRenderizando(sigue, o.destino);
     if (otro) {
       throw new Error('Studio está renderizando «' + otro.etiqueta + '». Esperá a que termine antes de abrir ' +
@@ -394,9 +424,14 @@ async function mostrar(o) {
     }
   }
 
-  const id = o.destino ? crypto.randomBytes(8).toString('hex') : '';
+  const editable = editables.preparar(st.dir, {
+    projectPath: o.destino.projectPath, sequenceName: o.destino.sequenceName,
+    markerSlug: o.destino.markerSlug, version: o.destino.version,
+    codigo: o.codigo, explicito: !!o.explicito,
+  });
+  const destino = Object.assign({}, o.destino, { archivo: editable.archivo });
+  const id = crypto.randomBytes(8).toString('hex');
   const props = {
-    codigoJs: o.codigoJs,
     conFondo: !!o.conFondo,
     duracionEnCuadros: o.duracionEnCuadros,
     destino: id,
@@ -405,25 +440,29 @@ async function mostrar(o) {
   // de levantar Studio, además, porque es lo que crea `public/`: sin esa carpeta
   // al arrancar, Studio no la sirve.
   copiarImagenes(o.assetsDir, st.dir);
+  editables.apuntar(st.dir, editable.archivo);
+  const delArchivo = {
+    archivo: editable.archivo, accion: editable.accion, respaldo: editable.respaldo, base: editable.base,
+  };
 
-  // Ya andaba: con reescribir el archivo alcanza. Studio lo vigila y la pestaña
-  // abierta se actualiza sola.
+  // Ya andaba: con reescribir los archivos alcanza. Studio los vigila y la
+  // pestaña abierta se actualiza sola.
   if (sigue) {
-    if (id) sigue.destinos[id] = o.destino;
+    sigue.destinos[id] = destino;
     if (typeof o.alTerminar === 'function') sigue.alTerminar = o.alTerminar;
     escribirProps(st.dir, props);
     sigue.etiqueta = o.etiqueta || '';
     armarInactividad();
-    return { ok: true, url: sigue.url, arrancado: false, etiqueta: sigue.etiqueta };
+    return Object.assign({ ok: true, url: sigue.url, arrancado: false, etiqueta: sigue.etiqueta }, delArchivo);
   }
 
   // Había una sesión pero el proceso ya no está (se cayó, o alguien lo mató por
   // afuera). Se limpia antes de levantar otra, o quedarían dos webpacks.
   apagar('el proceso anterior ya no estaba');
 
-  // El archivo se escribe ANTES de arrancar: Studio lo lee al levantar, y si no
-  // estuviera, la primera pantalla sería un error de props en vez de la
-  // composición.
+  // Las props se escriben ANTES de arrancar, como `marcadores/abierto.ts`:
+  // Studio las lee al levantar, y sin ellas la primera pantalla sería un error
+  // en vez de la composición.
   escribirProps(st.dir, props);
 
   const puerto = await puertoLibre();
@@ -440,8 +479,11 @@ async function mostrar(o) {
   // Premiere es un binario de Adobe. Y `startProcess` en vez de `spawn` pelado,
   // porque deja al hijo como líder de grupo: Studio levanta un webpack en watch
   // con sus propios workers, y `apagar()` los tiene que bajar a todos.
+  //
+  // La entrada es `studio.ts` y no la del render del panel: la que muestra el
+  // archivo del marcador en vez de evaluar un texto (ver RaizStudio.tsx).
   const hijo = startProcess(await nodeBin(), [
-    bin, 'studio', path.join('src', 'index.ts'),
+    bin, 'studio', path.join('src', 'studio.ts'),
     '--props=' + archivoDeProps(st.dir),
     '--port', String(puerto),
     '--no-open',
@@ -462,7 +504,7 @@ async function mostrar(o) {
     etiqueta: o.etiqueta || '',
     alTerminar: typeof o.alTerminar === 'function' ? o.alTerminar : null,
   });
-  if (id) s.destinos[id] = o.destino;
+  s.destinos[id] = destino;
   caja.sesion = s;
   // Que se muera solo no puede dejar la sesión anotada como viva: la próxima
   // vista previa reusaría un puerto que no contesta.
@@ -476,7 +518,7 @@ async function mostrar(o) {
   }
   conectarEventos(s);
   armarInactividad();
-  return { ok: true, url: s.url, arrancado: true, etiqueta: s.etiqueta };
+  return Object.assign({ ok: true, url: s.url, arrancado: true, etiqueta: s.etiqueta }, delArchivo);
 }
 
 /**

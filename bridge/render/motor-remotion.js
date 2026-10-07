@@ -358,9 +358,11 @@ module.exports = registrar({
    * capturarla cuadro por cuadro, así que abrir ese HTML muestra el primer
    * cuadro y nada más—. Quien la ofrece en el panel pregunta si existe.
    *
-   * El código se compila igual que para renderizar, y eso importa: si no
-   * compila, el editor se entera acá, con el mensaje del compilador, y no
-   * mirando una pantalla en blanco.
+   * El código NO se compila acá, a diferencia del render: va al archivo del
+   * marcador (ver remotion-editables.js) y lo compila Studio, que muestra un
+   * error de compilación con su línea, sobre el archivo que el editor tiene
+   * abierto para arreglarlo. `explicito` = el código lo mandó el editor del
+   * panel, y gana sobre lo que tenga ese archivo.
    *
    * `destino`, `assetsDir` y `alTerminar` son lo que deja que el botón Render
    * de Studio reemplace el clip del marcador en Premiere (ver
@@ -371,7 +373,8 @@ module.exports = registrar({
     const st = instalacion.estado();
     if (!st.instalado) throw new Error('Remotion no está listo: ' + st.motivo);
     return studio.mostrar({
-      codigoJs: compilar(st.dir, o.code),
+      codigo: o.code,
+      explicito: !!o.explicito,
       conFondo: o.format === 'mp4',
       duracionEnCuadros: Math.max(1, Math.round((Number(o.durationSec) || 0) * 30)),
       etiqueta: o.etiqueta || '',

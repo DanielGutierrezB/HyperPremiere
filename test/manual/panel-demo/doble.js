@@ -1132,9 +1132,13 @@
       // tenías»), y el segundo es el que evita que el editor la busque de nuevo.
       const arrancado = !vistaPreviaAbierta;
       vistaPreviaAbierta = true;
+      // Studio corre el archivo del marcador, y «Abrir Remotion» lo abre en el
+      // editor de código: el panel dice cuál es y qué pasó con lo que tenía.
       return luego(ok({
         engine: "remotion", url: "http://localhost:60762/",
         arrancado: arrancado, etiqueta: "Marcador 11 v3",
+        archivo: "/Users/editor/.hyperpremiere/remotion/marcadores/Clase 3 - 3f9a1c/Marcador 11.tsx",
+        accion: "nuevo", respaldo: "", editor: { ok: true },
       }));
     },
     closePreview: function () {

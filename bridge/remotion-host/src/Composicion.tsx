@@ -17,6 +17,10 @@
 // para el porqué (resumen: así un error de compilación se atrapa sin levantar
 // Chrome, y alimenta la escalera de arreglo como cualquier otro problema).
 //
+// Eso vale para el render del panel. En Studio es al revés, y a propósito: el
+// componente es un ARCHIVO de verdad, el que el editor abre y edita (ver
+// RaizStudio.tsx). Lo que comparten las dos es el `Marco`.
+//
 // ── Por qué `new Function` y no `eval` ──────────────────────────────
 //
 // `new Function` compila en el ámbito global: el código del modelo no ve —ni
@@ -43,13 +47,6 @@ export type PropsDeComposicion = {
    * porque `inputProps` es el único canal que hay hacia una composición.
    */
   duracionEnCuadros: number;
-  /**
-   * Solo en Studio: de qué marcador es lo que se está mostrando. La
-   * composición no lo usa; viaja en las props porque Studio guarda con cada
-   * render las props con que arrancó, y así el render dice solo a qué clip de
-   * Premiere reemplazar (ver bridge/render/remotion-studio.js).
-   */
-  destino?: string;
 };
 
 /** El `require` que ve el código del modelo: solo la lista cerrada. */
@@ -94,14 +91,11 @@ function componenteDe(codigoJs: string): React.ComponentType {
   return Componente;
 }
 
-export const Composicion: React.FC<PropsDeComposicion> = ({codigoJs, conFondo}) => {
-  // Un error del código del modelo tiene que llegar al log del render con su
-  // mensaje, no como una pantalla en blanco. Remotion corta el render cuando el
-  // componente tira, que es exactamente lo que queremos: un clip negro de la
-  // duración pedida es el peor resultado posible (no falla, se descubre
-  // mirándolo).
-  const Componente = React.useMemo(() => componenteDe(codigoJs), [codigoJs]);
-
+/**
+ * Lo que rodea a la animación, venga de donde venga: la base cuando el clip
+ * lleva fondo, y la espera de las fuentes.
+ */
+export const Marco: React.FC<{conFondo: boolean; children: React.ReactNode}> = ({conFondo, children}) => {
   // La tipografía puede tardar en estar lista. Sin esto, los primeros cuadros
   // se capturan con la fuente de reemplazo y el texto salta de tipo a mitad del
   // clip — un defecto que solo se ve reproduciendo el video.
@@ -117,7 +111,21 @@ export const Composicion: React.FC<PropsDeComposicion> = ({codigoJs, conFondo}) 
 
   return (
     <AbsoluteFill style={conFondo ? {backgroundColor: '#0B0B0C'} : undefined}>
-      <Componente />
+      {children}
     </AbsoluteFill>
+  );
+};
+
+export const Composicion: React.FC<PropsDeComposicion> = ({codigoJs, conFondo}) => {
+  // Un error del código del modelo tiene que llegar al log del render con su
+  // mensaje, no como una pantalla en blanco. Remotion corta el render cuando el
+  // componente tira, que es exactamente lo que queremos: un clip negro de la
+  // duración pedida es el peor resultado posible (no falla, se descubre
+  // mirándolo).
+  const Componente = React.useMemo(() => componenteDe(codigoJs), [codigoJs]);
+  return (
+    <Marco conFondo={conFondo}>
+      <Componente />
+    </Marco>
   );
 };

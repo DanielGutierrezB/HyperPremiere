@@ -122,6 +122,33 @@
     }
   }
 
+  /**
+   * Qué decirle al editor después de abrir Studio: qué archivo está mirando
+   * —es el que edita—, qué pasó con lo que ese archivo tenía, y que el Render
+   * de Studio reemplaza el clip. `conArchivo` = se pidió abrir el archivo en su
+   * editor, que es lo que hace «Abrir Remotion».
+   */
+  function mensajeDeStudio(r, conArchivo) {
+    var nombre = r.archivo ? String(r.archivo).split(/[\\\/]/).pop() : "";
+    var dicho;
+    if (conArchivo && nombre) {
+      dicho = (r.arrancado ? "Remotion abierto" : "Remotion actualizado") +
+        ((r.editor && r.editor.ok)
+          ? ", y «" + nombre + "» en tu editor: lo que guardes ahí se ve en Studio al momento."
+          : ". No pude abrir «" + nombre + "» con tu editor: está en " + r.archivo +
+            ", y lo que guardes ahí se ve en Studio al momento.");
+    } else {
+      dicho = r.arrancado
+        ? "Remotion abierto en el navegador."
+        : "Remotion actualizado — mirá la pestaña que ya tenías abierta.";
+    }
+    if (r.accion === "conservado") dicho += " Seguís con tus cambios sin renderizar.";
+    if (r.accion === "respaldado" && r.respaldo) {
+      dicho += " Lo que tenías sin renderizar quedó en «" + String(r.respaldo).split(/[\\\/]/).pop() + "».";
+    }
+    return dicho + " «Render» en Studio reemplaza el clip de este marcador en Premiere.";
+  }
+
   // ---------------------------------------------------------------------
   // Contexto (proyecto + secuencia) para HPStore
   // ---------------------------------------------------------------------
@@ -1650,7 +1677,8 @@
     var status = document.createElement("div");
     status.className = "marker-status";
     // «Abrir Remotion»: la animación en Remotion Studio, en el navegador, y su
-    // botón Render reemplazando el clip de este marcador en Premiere (ver
+    // archivo `.tsx` en el editor de código, para editarla como se quiera; el
+    // botón Render de Studio reemplaza el clip de este marcador en Premiere (ver
     // cep/js/studio-renders.js). Estaba, pero escondido: era el "Vista previa"
     // de adentro de "Editar código manualmente", plegado en Avanzado, y el
     // editor que generaba con Remotion no lo encontraba. Solo se muestra cuando
@@ -1659,8 +1687,9 @@
     studioBtn.type = "button";
     studioBtn.className = "btn-secondary";
     studioBtn.textContent = "Abrir Remotion";
-    studioBtn.title = "Abre esta animación en Remotion Studio, en el navegador. Lo que renderices ahí con su " +
-      "botón Render reemplaza el clip de este marcador en Premiere (cada render queda como una versión nueva).";
+    studioBtn.title = "Abre esta animación en Remotion Studio, en el navegador, y su archivo .tsx en tu editor: " +
+      "lo que guardes ahí se ve en Studio al momento. El botón Render de Studio reemplaza el clip de este " +
+      "marcador en Premiere (cada render queda como una versión nueva).";
     studioBtn.style.display = "none";
     var buttons = [genBtn, regenBtn, queueBtn];
 
@@ -2026,9 +2055,11 @@
      * sus renders. Lo usan los dos botones: «Abrir Remotion» de la ficha, con
      * la última versión, y «Vista previa» del editor, con lo que haya escrito.
      *
-     * `o` = { version, code, engine, boton, linea }. `code` vacío = la versión
-     * en disco; con algo, ESO —es lo que el editor está mirando—, y si después
-     * renderiza desde Studio, eso es lo que se guarda como versión.
+     * `o` = { version, code, engine, boton, linea, abrirArchivo }. `code` vacío
+     * = la versión en disco; con algo, ESO —es lo que el editor está mirando—.
+     * Studio lo muestra desde el `.tsx` del marcador, y con `abrirArchivo` ese
+     * archivo se abre además en el editor de código: lo que se renderice desde
+     * Studio es lo que tenga ese archivo.
      */
     function abrirEnStudio(o) {
       o.boton.disabled = true;
@@ -2038,6 +2069,7 @@
         projectPath: currentProjectPath, sequenceName: currentSequenceName,
         markerSlug: markerKey, version: o.version || 0,
         code: o.code || "",
+        abrirArchivo: !!o.abrirArchivo,
         // El motor solo hace falta cuando no hay versión en disco de la que
         // leerlo (código recién pegado).
         engine: o.engine || "",
@@ -2061,12 +2093,12 @@
         }
         HPUtil.abrirEnNavegador(r.url);
         HPStudioRenders.escuchar({ alTerminar: alRenderDeStudio });
-        o.linea.textContent = (r.arrancado
-          ? "Remotion abierto en el navegador."
-          : "Remotion actualizado — mirá la pestaña que ya tenías abierta.") +
-          " Lo que renderices ahí con «Render» reemplaza el clip de este marcador en Premiere.";
+        o.linea.textContent = mensajeDeStudio(r, !!o.abrirArchivo);
         hpLog("Remotion Studio con " + r.etiqueta + " en " + r.url +
-          (r.arrancado ? " (recién levantado)" : " (el que ya estaba)"));
+          (r.arrancado ? " (recién levantado)" : " (el que ya estaba)") +
+          (r.archivo ? " · archivo: " + r.archivo + " (" + r.accion + ")" : "") +
+          (r.respaldo ? " · lo que tenía sin renderizar: " + r.respaldo : "") +
+          (r.editor && !r.editor.ok ? " · no se pudo abrir en el editor: " + r.editor.error : ""));
       }).catch(function (e) {
         o.boton.disabled = false;
         o.linea.className = "marker-status is-error";
@@ -2093,18 +2125,28 @@
     // antes de que lo supiera tiene que ofrecerlo igual—.
     var ultimaRemotion = 0;
     function syncStudioBtn() {
-      hpCall("listMarkerVersions", {
+      return hpCall("listMarkerVersions", {
         projectPath: currentProjectPath, sequenceName: currentSequenceName, markerSlug: markerKey
       }).then(function (r) {
         var vs = (r && r.ok && r.versions) || [];
         var ult = vs[vs.length - 1];
         ultimaRemotion = (ult && ult.engine === "remotion") ? ult.version : 0;
         studioBtn.style.display = ultimaRemotion ? "" : "none";
-      }).catch(function () {});
+        return ultimaRemotion;
+      }).catch(function () { return ultimaRemotion; });
     }
+    // La última versión se pregunta de nuevo al apretar, y no es por las dudas:
+    // abrir una versión que no es aquella de la que salió el archivo de Studio
+    // manda a respaldos lo que el editor escribió ahí. Un render de Studio que
+    // terminó mientras el panel miraba otra secuencia deja el número de acá
+    // atrasado, y con él se abriría la versión anterior.
     studioBtn.addEventListener("click", function () {
-      if (!ultimaRemotion) return;
-      abrirEnStudio({ version: ultimaRemotion, code: "", engine: "remotion", boton: studioBtn, linea: status });
+      syncStudioBtn().then(function (v) {
+        if (!v) return;
+        abrirEnStudio({
+          version: v, code: "", engine: "remotion", boton: studioBtn, linea: status, abrirArchivo: true
+        });
+      });
     });
     syncStudioBtn();
     card._syncStudioBtn = syncStudioBtn;

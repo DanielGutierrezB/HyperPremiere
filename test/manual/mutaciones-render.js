@@ -3357,8 +3357,8 @@ const MUTACIONES = [
     // previa, ve exactamente lo de antes y no entiende por qué.
     nombre: 'la vista previa muestra el disco y no lo que se está editando',
     archivo: 'bridge/versiones.js',
-    de: "    const code = String(body.code || '').trim() || (enDisco ? enDisco.code : '');",
-    a:  "    const code = (enDisco ? enDisco.code : '') || String(body.code || '').trim();",
+    de: "    const code = delEditor || (enDisco ? enDisco.code : '');",
+    a:  "    const code = (enDisco ? enDisco.code : '') || delEditor;",
   },
   {
     // La sesión de Studio cuelga de `process` y no del módulo. Con una variable
@@ -3673,8 +3673,16 @@ const MUTACIONES = [
     // parte de la nada en vez de lo que está en la secuencia.
     nombre: 'la versión de Studio se guarda sin el código que se renderizó',
     archivo: 'bridge/versiones.js',
-    de: "  fs.writeFileSync(outPaths.code, String(destino.code || ''), 'utf8');",
-    a:  "  fs.writeFileSync(outPaths.code, '', 'utf8');",
+    de: "  const codigo = r && typeof r.codigo === 'string' ? r.codigo : String(destino.code || '');",
+    a:  "  const codigo = '';",
+  },
+  {
+    // Se guarda el código con que se ABRIÓ y no el del archivo: lo que el
+    // editor cambió en su editor se ve en el video y no queda en la versión.
+    nombre: 'la versión de Studio ignora lo que tenía el archivo del marcador',
+    archivo: 'bridge/versiones.js',
+    de: "  const codigo = r && typeof r.codigo === 'string' ? r.codigo : String(destino.code || '');",
+    a:  "  const codigo = String(destino.code || '');",
   },
   {
     // Por nombre y no por archivo: cada clase tiene su "Marcador 1 v2", y el
@@ -3715,6 +3723,134 @@ const MUTACIONES = [
     a:  '    if (false) return;',
   },
 
+  // --- En Studio se edita el archivo de Remotion, el de verdad ---
+  //
+  // Lo peor que puede pasar acá es perderle trabajo al editor sin que se
+  // entere: un archivo pisado se ve igual que uno que nunca editó.
+
+  {
+    // Volver a Studio a seguir editando le borra lo que escribió.
+    nombre: 'reabrir la misma versión pisa lo que el editor escribió en el archivo',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: "  else if (!pedido.explicito && anotado && anotado.base === version) accion = 'conservado';",
+    a:  "  else if (false) accion = 'conservado';",
+  },
+  {
+    nombre: 'abrir una versión más nueva tira lo que el editor no renderizó',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: "  const respaldo = accion === 'respaldado' ? respaldar(archivo, actual, ahora) : '';",
+    a:  "  const respaldo = '';",
+  },
+  {
+    // El código que el editor escribió en el panel no llega a Studio.
+    nombre: 'lo que manda el editor del panel no le gana al archivo',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: "  else if (!pedido.explicito && anotado && anotado.base === version) accion = 'conservado';",
+    a:  "  else if (anotado && anotado.base === version) accion = 'conservado';",
+  },
+  {
+    // Sin anotación se da por limpio: un archivo con trabajo de origen
+    // desconocido se pisa.
+    nombre: 'un archivo de marcador sin anotación se pisa sin respaldo',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: "  else if (anotado && firma(actual) === anotado.firma) accion = 'actualizado';",
+    a:  "  else if (!anotado || firma(actual) === anotado.firma) accion = 'actualizado';",
+  },
+  {
+    // Dos cursos con su "Clase 3" comparten archivo: abrir uno muestra —y
+    // respalda— lo que el editor escribió en el del otro.
+    nombre: 'la misma secuencia de dos proyectos comparte el archivo del marcador',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: "  const secuencia = limpio(m.sequenceName, 'secuencia') + ' - ' + h;",
+    a:  "  const secuencia = limpio(m.sequenceName, 'secuencia');",
+  },
+  {
+    // Un `#` en el nombre del marcador corta la ruta del import: Studio no
+    // compila.
+    nombre: 'el nombre del archivo del marcador deja pasar lo que rompe un import',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: "    .replace(/[<>:\"/\\\\|?*#!%\\u0000-\\u001F]/g, '-')",
+    a:  "    .replace(/[<>:\"/\\\\|*\\u0000-\\u001F]/g, '-')",
+  },
+  {
+    // Cada apertura reescribe el puntero aunque sea el mismo: webpack
+    // recompila por nada.
+    nombre: 'abrir el mismo marcador reescribe el puntero de Studio',
+    archivo: 'bridge/render/remotion-editables.js',
+    de: '  if (leer(donde) === texto) return false;',
+    a:  '  if (false) return false;',
+  },
+  {
+    // Se guarda lo que tiene el archivo al TERMINAR: si el editor siguió
+    // escribiendo, la versión no es el código del video.
+    nombre: 'el render de Studio no guarda el código que tenía el archivo al arrancar',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: "      if (t.status === 'running' && !(t.id in s.codigos)) s.codigos[t.id] = codigoDelDestino(s, s.enCurso[t.id]);",
+    a:  '      if (false) s.codigos[t.id] = null;',
+  },
+  {
+    // Después de un render, lo que tenía el archivo sigue contando como "sin
+    // renderizar": la próxima versión lo manda a respaldos por nada, y el
+    // editor que sigue editando pierde la regla de "misma versión, se queda".
+    nombre: 'un render de Studio no deja anotado de qué versión sale el archivo',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: '        editables.alGuardarVersion(s.dir, destino.archivo, r.version, codigo);',
+    a:  '        void 0;',
+  },
+  {
+    // Mirar la versión desde el editor del panel le pisa al archivo de Studio
+    // lo que el editor escribió en su editor de código.
+    nombre: 'el editor del panel cuenta como explícito aunque mande la versión tal cual',
+    archivo: 'bridge/versiones.js',
+    de: "    const explicito = !!delEditor && !(enDisco && delEditor === String(enDisco.code || '').trim());",
+    a:  '    const explicito = !!delEditor;',
+  },
+  {
+    // La vista previa del editor del panel abre además el editor de código.
+    nombre: 'cualquier vista previa abre el archivo en el editor de código',
+    archivo: 'bridge/versiones.js',
+    de: '    const editor = body.abrirArchivo && r && r.archivo ? await abrir.abrirArchivo(r.archivo) : null;',
+    a:  '    const editor = r && r.archivo ? await abrir.abrirArchivo(r.archivo) : null;',
+  },
+  {
+    // En una Mac sin editor de código, el archivo no se abre con nada.
+    nombre: 'en macOS sin editor de código el archivo no se abre',
+    archivo: 'bridge/abrir-archivo.js',
+    de: "        await ejecutar('open', ['-t', archivo]);",
+    a:  "        throw e;",
+  },
+  {
+    // El Explorador sale con 1 aunque haya abierto el archivo: tomarlo como
+    // falla le dice al editor de Windows que no se pudo, siempre.
+    nombre: 'en Windows la salida del Explorador cuenta como falla',
+    archivo: 'bridge/abrir-archivo.js',
+    de: "      await ejecutar('explorer.exe', [archivo], true);",
+    a:  "      await ejecutar('explorer.exe', [archivo]);",
+  },
+  {
+    // React se define DESPUÉS de que carga el archivo del marcador: la primera
+    // etiqueta de un código que no importa React tira en Studio.
+    nombre: 'Studio carga el archivo del marcador antes de dejar React a mano',
+    archivo: 'bridge/remotion-host/src/studio.ts',
+    de: "import './react-global';\nimport {registerRoot} from 'remotion';\nimport {RaizStudio} from './RaizStudio';",
+    a:  "import {registerRoot} from 'remotion';\nimport {RaizStudio} from './RaizStudio';\nimport './react-global';",
+  },
+  {
+    // Studio vuelve a mostrar lo de antes de un marcador que el editor cambió
+    // mientras miraba otro.
+    nombre: 'Studio no vacía su caché de los archivos de marcador',
+    archivo: 'bridge/remotion-host/remotion.config.ts',
+    de: '          if (cache && typeof cache.purge === \'function\') cache.purge(MARCADORES);',
+    a:  '          void cache;',
+  },
+  {
+    // El editor de código pinta de rojo cada etiqueta de JSX.
+    nombre: 'el tsconfig del huésped vuelve a ser estricto',
+    archivo: 'bridge/remotion-host/tsconfig.json',
+    de: '    "strict": false,',
+    a:  '    "strict": true,',
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3736,7 +3872,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
   'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
   'motores-dos', 'remotion-node-del-panel', 'claude-modelos', 'claude-medir', 'selector-claude',
-  'studio-a-premiere'];
+  'studio-a-premiere', 'studio-archivo'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test

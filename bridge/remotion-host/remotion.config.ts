@@ -8,22 +8,17 @@
 // botón "Guardar y renderizar". Ver `remotion-worker.js`.
 //
 // Existe por el botón **Render** que Studio trae en su propia interfaz, abajo a
-// la derecha. No lo podemos sacar, y un editor al que le dijimos "abrí la vista
-// previa" lo va a apretar — es el botón grande y azul de la ventana.
+// la derecha. Desde la 1.9.0 ese botón es parte del circuito: lo que renderiza
+// se guarda como versión nueva del marcador y reemplaza su clip en Premiere
+// (ver bridge/render/remotion-studio.js). Así que tiene que salir en el mismo
+// formato que el render del panel.
 //
 // Con los valores por defecto de Remotion, ese clic daba lo peor posible: se
 // midió abriendo el diálogo, y venía en **H.264** hacia `out/marcador.mp4`. O
 // sea que de un clip pensado para ir como overlay sobre el video salía un mp4
-// OPACO —el alfa aplastado contra negro, sin ningún error de por medio— con un
-// nombre genérico, en una carpeta que el editor no sabe que existe.
-//
-// Acá se cambia lo único que se puede cambiar de ese botón: que si se aprieta,
-// al menos salga el mismo formato que saca el panel. Lo que sigue sin hacer —y
-// no hay config que lo arregle— es versionar el archivo, escribir su ficha,
-// importarlo al proyecto y colocarlo en el segundo del marcador. Eso lo hace el
-// botón del panel, que es el único que sabe de qué marcador de qué secuencia se
-// trata.
+// OPACO —el alfa aplastado contra negro, sin ningún error de por medio—.
 
+import path from 'path';
 import {Config} from '@remotion/cli/config';
 
 // Los CUATRO ajustes del alfa van juntos y ninguno es opcional: con el
@@ -39,6 +34,39 @@ Config.setPixelFormat('yuva444p10le');
 //
 // Lo que NO se pudo: cambiarle el nombre del archivo. `Config.setOutputLocation`
 // no llega al diálogo —Studio lo deriva del id de la composición— así que el
-// archivo sigue saliendo como `out/marcador.mov`, un nombre que no se distingue
-// de un entregable. Se probó y no funciona; queda dicho acá en vez de dejar una
-// línea de config que parece hacer algo.
+// archivo sigue saliendo como `out/marcador.mov`. No importa: el panel lo copia
+// a la carpeta del proyecto con el nombre de su versión. Se probó y no funciona;
+// queda dicho acá en vez de dejar una línea de config que parece hacer algo.
+
+// ── Lo que el editor escribe en un marcador que Studio no está mostrando ──
+//
+// Studio muestra UN archivo de `marcadores/` a la vez (ver
+// bridge/render/remotion-editables.js), y webpack solo vigila los que está
+// mostrando. Si el editor le cambia algo a otro y después lo abre, webpack lo
+// lee de su caché de archivos —que solo se vacía para los que el vigilante vio
+// cambiar— y Studio muestra el contenido de antes. Medido con
+// test/manual/studio-render.js: el archivo decía violeta y Studio, amarillo.
+// Así que en cada recompilación se vacía esa caché para `marcadores/`, que es
+// lo mismo que webpack hace con los archivos que sí ve cambiar.
+const MARCADORES = path.join(process.cwd(), 'marcadores');
+
+type ConCache = {purge?: (que: string) => void};
+type Compilador = {
+  inputFileSystem: unknown;
+  hooks: {watchRun: {tap: (nombre: string, fn: () => void) => void}};
+};
+
+Config.overrideWebpackConfig((config) => ({
+  ...config,
+  plugins: [
+    ...(config.plugins || []),
+    {
+      apply(compiler: Compilador) {
+        compiler.hooks.watchRun.tap('hyperpremiere-marcadores', () => {
+          const cache = compiler.inputFileSystem as ConCache;
+          if (cache && typeof cache.purge === 'function') cache.purge(MARCADORES);
+        });
+      },
+    },
+  ],
+}));
