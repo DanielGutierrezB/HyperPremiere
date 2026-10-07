@@ -63,7 +63,11 @@ function buildHistory(baseDir, markerSlug, version) {
 }
 
 // Lista las versiones ya generadas de un marcador (escaneo del baseDir).
-// Devuelve { ok, versions: [{ version, model }] } ordenado por versión.
+// Devuelve { ok, versions: [{ version, model, engine }] } ordenado por versión.
+//
+// El motor va por versión porque de él depende qué se le ofrece al editor: una
+// ficha cuya última versión es de Remotion muestra «Abrir Remotion». Sale de la
+// ficha de cada versión, como en todo el panel, y no de la extensión.
 function listMarkerVersions(body) {
   try {
     body = body || {};
@@ -73,7 +77,11 @@ function listMarkerVersions(body) {
     // de que ese marcador haya generado nada. Sin carpeta la lista es vacía, que
     // es la misma respuesta que daba con la carpeta recién creada.
     const baseDir = outputDirPath(body.projectPath, body.sequenceName);
-    return { ok: true, versions: listVersions(baseDir, markerSlug, motores.extensiones()) };
+    const versions = listVersions(baseDir, markerSlug, motores.extensiones()).map((v) => {
+      const metaPath = versionFile(baseDir, markerSlug, v.version, '.meta.json');
+      return Object.assign({}, v, { engine: motores.motorDeFicha(metaPath ? readMeta(metaPath) : null).id });
+    });
+    return { ok: true, versions: versions };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e), versions: [] };
   }
@@ -204,21 +212,112 @@ async function previewComposition(body) {
       ? body.background === true
       : ficha.background === true;
 
+    // Qué se está mirando. Dice "editado" cuando el código vino del editor y no
+    // del disco, porque son dos cosas distintas y la ventana es la misma: sin
+    // eso, un editor que probó un cambio y no lo guardó no tiene manera de saber
+    // si está mirando su cambio o la versión de antes.
+    const etiqueta = markerSlug + (version ? ' v' + version : '') +
+      (String(body.code || '').trim() ? ' (editado, sin guardar)' : '');
+    // Dónde iba: lo que mande el panel (el marcador de Premiere hoy) y, si no lo
+    // trae, lo que anotó la ficha. Hace falta para colocar el render de Studio
+    // si el clip ya no está en la secuencia.
+    const marker = Object.assign({}, ficha.marker || {}, body.marker || {});
     const r = await motor.vistaPrevia({
       code: code,
       durationSec: durationSec,
       format: conFondo ? 'mp4' : 'mov',
-      // Qué se está mirando. Dice "editado" cuando el código vino del editor y
-      // no del disco, porque son dos cosas distintas y la ventana es la misma:
-      // sin eso, un editor que probó un cambio y no lo guardó no tiene manera de
-      // saber si está mirando su cambio o la versión de antes.
-      etiqueta: markerSlug + (version ? ' v' + version : '') +
-        (String(body.code || '').trim() ? ' (editado, sin guardar)' : ''),
+      etiqueta: etiqueta,
+      // A qué clip va lo que se renderice desde la vista previa (el botón
+      // Render de Studio): este marcador, con ESTE código —el del editor si vino
+      // de ahí—, que es el que se va a guardar como versión.
+      destino: {
+        projectPath: body.projectPath, sequenceName: body.sequenceName,
+        markerSlug: markerSlug, version: version || 0, etiqueta: etiqueta,
+        marker: {
+          name: marker.name || markerSlug,
+          start: Number(marker.start) || 0,
+          duration: durationSec,
+        },
+        background: conFondo, code: code,
+      },
+      assetsDir: path.join(baseDir, '_assets', markerSlug),
+      alTerminar: guardarRenderDeStudio,
     });
     return Object.assign({ ok: true, engine: motor.id }, r);
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
+}
+
+/**
+ * Un render hecho con el botón Render de Studio, guardado como VERSIÓN NUEVA
+ * del marcador al que pertenece.
+ *
+ * Versión nueva y no pisar la anterior, por tres motivos: en Windows Premiere
+ * tiene abierto el archivo del clip y no deja reescribirlo; la versión de antes
+ * sigue en disco por si el render nuevo salió peor; y la versión nueva guarda
+ * el código que Studio renderizó —si vino del editor, el editado—, así que la
+ * próxima corrección parte de lo que de verdad está en la secuencia.
+ *
+ * Devuelve lo que el panel necesita para reemplazar el clip en Premiere: el
+ * archivo nuevo y los de las versiones anteriores, de la más nueva a la más
+ * vieja (reemplaza la más nueva que encuentre puesta).
+ *
+ * @param {{archivo:string, destino:object}} r — lo que manda remotion-studio.js
+ */
+function guardarRenderDeStudio(r) {
+  const archivo = r && r.archivo;
+  const destino = (r && r.destino) || {};
+  let st = null;
+  try { st = fs.statSync(archivo); } catch (e) { st = null; }
+  if (!st || !st.size) throw new Error('Studio dijo que terminó, pero no encuentro el video en ' + archivo);
+  const ext = path.extname(archivo).slice(1).toLowerCase();
+  if (ext !== 'mov' && ext !== 'mp4') {
+    throw new Error('Studio renderizó un .' + ext + ', y Premiere necesita el clip en ProRes (.mov) o ' +
+      'H.264 (.mp4). Volvé a renderizar dejando el formato que trae por defecto.');
+  }
+
+  const markerSlug = destino.markerSlug;
+  const baseDir = ensureOutputDir(destino.projectPath, destino.sequenceName);
+  const anteriores = listVersions(baseDir, markerSlug, ['.mov', '.mp4'])
+    .reverse()
+    .map((v) => path.join(baseDir, v.name));
+  const version = nextVersion(baseDir, markerSlug);
+  const motor = motores.motor('remotion');
+  const outPaths = paths(baseDir, markerSlug, version, 'studio', ext, motor.lenguaje.ext);
+  fs.copyFileSync(archivo, outPaths.mov);
+  fs.writeFileSync(outPaths.code, String(destino.code || ''), 'utf8');
+  writeVersionMeta(outPaths.meta, {
+    sequenceName: destino.sequenceName, markerSlug: markerSlug, marker: destino.marker,
+    version: version, model: 'studio', provider: 'remotion-studio', mode: 'studio-render',
+    engine: motor.id,
+    instruction: inheritedInstruction(baseDir, markerSlug, version) || '(render de Remotion Studio)',
+    background: !!destino.background, format: ext,
+    createdAt: new Date().toISOString(),
+    // Sin IA de por medio; el render lo pagó Studio, y su tiempo no llega acá.
+    timings: { modelMs: 0, renderMs: 0 },
+    history: buildHistory(baseDir, markerSlug, version),
+  });
+  return {
+    projectPath: destino.projectPath, sequenceName: destino.sequenceName,
+    markerSlug: markerSlug, version: version, desde: destino.version || 0,
+    etiqueta: markerSlug + ' v' + version,
+    archivo: outPaths.mov, anteriores: anteriores,
+    marker: destino.marker, background: !!destino.background,
+  };
+}
+
+/**
+ * Lo que escucha el panel: cada render hecho desde la vista previa, ya guardado
+ * como versión (`prog({ renderDeStudio })`), hasta que la vista previa se
+ * cierre. Hay un solo oyente por vista previa (ver `escuchar` en
+ * remotion-studio.js): suscribirse de nuevo suelta al anterior.
+ */
+function escucharRendersDeStudio(body, prog) {
+  const avisar = typeof prog === 'function' ? prog : function () {};
+  return motores.motor('remotion').escucharVistaPrevia(function (aviso) {
+    avisar({ renderDeStudio: aviso });
+  });
 }
 
 /**
@@ -382,6 +481,9 @@ module.exports = {
   readMarkerHtml,
   previewComposition,
   closePreview,
+  // Y lo que se renderiza DESDE esa vista previa (el botón Render de Studio).
+  escucharRendersDeStudio,
+  guardarRenderDeStudio,
   // Renderizar: lo editado a mano, o de nuevo lo que ya estaba.
   renderManualHtml,
   rerenderLatest,

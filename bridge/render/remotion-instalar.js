@@ -228,23 +228,49 @@ async function bajarNavegador(dir, onPct) {
   });
 }
 
-/** Copia el proyecto huésped (src + tsconfig + config) a la instalación. */
-function copiarHuesped(dir) {
+/**
+ * Deja el proyecto huésped (src + tsconfig + config) de la instalación igual al
+ * que trae ESTA versión del panel, y devuelve cuántos archivos tocó.
+ *
+ * Antes se copiaba solo al instalar, y eso tenía un agujero: el huésped vive en
+ * `~/.hyperpremiere/remotion`, fuera del panel, así que un cambio en
+ * `bridge/remotion-host/` nunca les llegaba a quienes ya lo tenían instalado
+ * —actualizaban el panel y seguían renderizando con el huésped viejo—. Ahora
+ * se sincroniza antes de cada render y de cada vista previa: comparar media
+ * docena de archivos chicos cuesta nada, y lo que no cambió no se toca (Studio
+ * vigila esa carpeta y recargaría por un archivo reescrito igual).
+ *
+ * `remotion.config.ts` es SOLO para el CLI, o sea para Studio: el render del
+ * panel usa la API y le pasa sus ajustes explícitos. Es lo que hace que el
+ * botón Render de la interfaz de Studio salga en ProRes 4444 con alfa y no en
+ * H.264. Ver la cabecera de ese archivo.
+ */
+function sincronizarHuesped(dir) {
   const origen = path.join(__dirname, '..', 'remotion-host');
-  const destinoSrc = path.join(dir, 'src');
-  fs.rmSync(destinoSrc, { recursive: true, force: true });
-  fs.mkdirSync(destinoSrc, { recursive: true });
-  for (const f of fs.readdirSync(path.join(origen, 'src'))) {
-    fs.copyFileSync(path.join(origen, 'src', f), path.join(destinoSrc, f));
+  let tocados = 0;
+  const igualar = (de, a) => {
+    const nuevo = fs.readFileSync(de);
+    let viejo = null;
+    try { viejo = fs.readFileSync(a); } catch (e) { /* no estaba */ }
+    if (viejo && viejo.equals(nuevo)) return;
+    fs.mkdirSync(path.dirname(a), { recursive: true });
+    fs.writeFileSync(a, nuevo);
+    tocados++;
+  };
+  const srcOrigen = path.join(origen, 'src');
+  const srcDestino = path.join(dir, 'src');
+  const quedan = fs.readdirSync(srcOrigen);
+  for (const f of quedan) igualar(path.join(srcOrigen, f), path.join(srcDestino, f));
+  // Lo que una versión anterior del panel dejó y esta ya no trae se saca: un
+  // archivo viejo en `src/` es código que webpack sigue empaquetando.
+  let sobrantes = [];
+  try { sobrantes = fs.readdirSync(srcDestino).filter((f) => quedan.indexOf(f) === -1); } catch (e) { /* no había src */ }
+  for (const f of sobrantes) {
+    fs.rmSync(path.join(srcDestino, f), { recursive: true, force: true });
+    tocados++;
   }
-  // `remotion.config.ts` es SOLO para el CLI, o sea para la vista previa: el
-  // render del panel usa la API y le pasa sus ajustes explícitos. Lo que hace es
-  // que el botón Render que Studio trae en su interfaz —que no podemos sacar y
-  // que alguien va a apretar— no salga en H.264 aplastando el alfa. Ver la
-  // cabecera de ese archivo.
-  for (const f of ['tsconfig.json', 'remotion.config.ts']) {
-    fs.copyFileSync(path.join(origen, f), path.join(dir, f));
-  }
+  for (const f of ['tsconfig.json', 'remotion.config.ts']) igualar(path.join(origen, f), path.join(dir, f));
+  return tocados;
 }
 
 /**
@@ -293,7 +319,7 @@ async function instalar(onProgress) {
   });
 
   report({ pct: 60, msg: 'Preparando el proyecto base…' });
-  copiarHuesped(dir);
+  sincronizarHuesped(dir);
 
   report({ pct: 70, msg: 'Bajando el navegador del render…' });
   try {
@@ -331,7 +357,7 @@ async function instalar(onProgress) {
 }
 
 module.exports = {
-  dirDeInstalacion, estado, instalar, packageJson, VERSION_REMOTION,
+  dirDeInstalacion, estado, instalar, packageJson, VERSION_REMOTION, sincronizarHuesped,
   // Para los tests: la verificación del navegador y la lectura del layout son
   // las dos decisiones que tienen consecuencias silenciosas.
   ejecutableDeChrome, zipsSinExtraer,

@@ -9,13 +9,25 @@
 // equivocarse en un dato que no escribe.
 
 import React from 'react';
-import {Composition} from 'remotion';
+import {Composition, getInputProps} from 'remotion';
 import {Composicion, PropsDeComposicion} from './Composicion';
 
 // Todo el pipeline del panel es 1080p30, igual que en HyperFrames.
 const ANCHO = 1920;
 const ALTO = 1080;
 const FPS = 30;
+
+const VACIO: PropsDeComposicion = {codigoJs: '', conFondo: false, duracionEnCuadros: FPS * 8};
+
+// Los defaults SON las props que llegan de afuera, y no es un adorno: el botón
+// Render de Studio no renderiza lo que muestra (las `--props` del archivo que
+// escribe el panel) sino los `defaultProps` de la composición. Con los vacíos
+// de antes, Studio mostraba la animación y su Render fallaba con "la
+// composición no exporta un componente" — medido apretando el botón. En el
+// render del panel no cambia nada: ahí `getInputProps()` devuelve las mismas
+// props que ya recibe por `inputProps`.
+const desdeAfuera = (): PropsDeComposicion =>
+  Object.assign({}, VACIO, getInputProps()) as PropsDeComposicion;
 
 export const Root: React.FC = () => {
   return (
@@ -29,7 +41,7 @@ export const Root: React.FC = () => {
       // El valor de acá solo existe para que la composición sea válida si
       // alguien abre el Studio a mano para depurar.
       durationInFrames={FPS * 8}
-      defaultProps={{codigoJs: '', conFondo: false, duracionEnCuadros: FPS * 8} as PropsDeComposicion}
+      defaultProps={desdeAfuera()}
       calculateMetadata={({props}) => {
         const cuadros = Math.round(Number(props.duracionEnCuadros) || 0);
         // Sin duración válida se deja la del default en vez de renderizar cero

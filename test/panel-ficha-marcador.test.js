@@ -115,7 +115,7 @@ test('los tres lugares donde se le pide algo al modelo usan el MISMO cuerpo', fu
 test('los bloques de estilo NO tienen pie de acciones, y el marcador sí', function () {
   // "Sin los botones de generar, que no les corresponden": un Estilo del curso no
   // genera nada, así que un pie vacío ahí sería una fila que promete un clic.
-  has(MAIN, 'acciones: { izquierda: [regenBtn], derecha: [queueBtn, genBtn] }');
+  has(MAIN, 'acciones: { izquierda: [regenBtn], derecha: [studioBtn, queueBtn, genBtn] }');
   const opciones = VISTA.slice(VISTA.indexOf('HPPromptCard.montar({'));
   ok(opciones.slice(0, opciones.indexOf('});')).indexOf('acciones:') === -1,
     'los de estilo no le pasan ninguna acción');
@@ -378,7 +378,10 @@ test('lo que se aprieta va a la derecha y lo destructivo a la izquierda', functi
   // Eran tres botones en fila, en el orden en que se escribieron, así que el que
   // TIRA el trabajo anterior quedaba pegado al que lo continúa.
   has(MAIN, 'izquierda: [regenBtn]', 'Regenerar desde cero, solo, a la izquierda');
-  has(MAIN, 'derecha: [queueBtn, genBtn]', 'y Generar en el vértice, con Enviar a la cola a su izquierda');
+  // «Abrir Remotion» (que solo aparece con versiones de Remotion) no destruye
+  // nada: va del lado de lo que se aprieta, y lo más lejos posible de Generar.
+  has(MAIN, 'derecha: [studioBtn, queueBtn, genBtn]',
+    'y Generar en el vértice, con Enviar a la cola a su izquierda');
   const d = declaraciones('.hp-acciones');
   eq(d['justify-content'], 'space-between');
   eq(d['flex-wrap'], 'wrap-reverse',

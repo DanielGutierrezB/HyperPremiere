@@ -2877,6 +2877,9 @@ module.exports = {
   // panel. Solo la ofrecen los motores que pueden (ver previewComposition).
   previewComposition: versiones.previewComposition,
   closePreview: versiones.closePreview,
+  // Y escuchar lo que se renderiza desde ahí (el botón Render de Studio): cada
+  // render vuelve como versión nueva del marcador, y el panel reemplaza el clip.
+  escucharRendersDeStudio: versiones.escucharRendersDeStudio,
   getConfig,
   setConfig: saveConfig,
   // La config SIN enmascarar. No la usa el panel (que recibe `getConfig`, con la

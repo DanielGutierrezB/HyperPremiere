@@ -1095,7 +1095,10 @@
       var out = [];
       D.marcadores.forEach(function (m) {
         if ("Marcador " + m.numero !== (body && body.markerSlug)) return;
-        m.versiones.forEach(function (v) { out.push({ version: v, model: m.modelo }); });
+        // Con ?e=remotion las versiones son de Remotion: es lo que hace aparecer
+        // «Abrir Remotion» en la ficha.
+        var engine = D.config.renderEngine === "remotion" ? "remotion" : "hyperframes";
+        m.versiones.forEach(function (v) { out.push({ version: v, model: m.modelo, engine: engine }); });
       });
       return luego(ok({ versions: out }));
     },
@@ -1138,6 +1141,12 @@
       const andaba = vistaPreviaAbierta;
       vistaPreviaAbierta = false;
       return luego(ok({ apagados: andaba ? ["remotion"] : [] }));
+    },
+    // El panel se queda escuchando los renders de Studio mientras está abierto.
+    // En la maqueta no hay Studio que renderice: la suscripción queda abierta
+    // y no avisa nada.
+    escucharRendersDeStudio: function () {
+      return new Promise(function () {});
     },
     findRenderedVideo: function (body) {
       return luego(ok({ movPath: movDe(body.sequenceName, body.markerSlug, body.version || 1, "claude-opus-5", true) }));

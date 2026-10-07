@@ -106,6 +106,22 @@
       Math.min(OUTPUT_MAX_MS, OUTPUT_MIN_MS + txt.length * OUTPUT_POR_CARACTER_MS));
   }
 
+  /**
+   * Un render hecho con el botón Render de Remotion Studio, ya aplicado en
+   * Premiere (ver cep/js/studio-renders.js). Se dice en la línea de estado
+   * —la ficha del marcador puede estar plegada, y el editor está mirando el
+   * navegador— y en la ficha de ese marcador, si es de la secuencia que se ve.
+   */
+  function alRenderDeStudio(res) {
+    var a = (res && res.aviso) || {};
+    setOutput(res.texto, res.ok ? "" : true);
+    if (a.sequenceName && a.sequenceName !== currentSequenceName) return;
+    var cards = markersContainer.querySelectorAll("details.marker-card");
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i]._markerKey === a.markerSlug && cards[i]._alRenderDeStudio) cards[i]._alRenderDeStudio(res);
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Contexto (proyecto + secuencia) para HPStore
   // ---------------------------------------------------------------------
@@ -1633,6 +1649,19 @@
     HPIconos.enBoton(queueBtn, "encolar");
     var status = document.createElement("div");
     status.className = "marker-status";
+    // «Abrir Remotion»: la animación en Remotion Studio, en el navegador, y su
+    // botón Render reemplazando el clip de este marcador en Premiere (ver
+    // cep/js/studio-renders.js). Estaba, pero escondido: era el "Vista previa"
+    // de adentro de "Editar código manualmente", plegado en Avanzado, y el
+    // editor que generaba con Remotion no lo encontraba. Solo se muestra cuando
+    // la última versión ES de Remotion — HyperFrames no tiene Studio.
+    var studioBtn = document.createElement("button");
+    studioBtn.type = "button";
+    studioBtn.className = "btn-secondary";
+    studioBtn.textContent = "Abrir Remotion";
+    studioBtn.title = "Abre esta animación en Remotion Studio, en el navegador. Lo que renderices ahí con su " +
+      "botón Render reemplaza el clip de este marcador en Premiere (cada render queda como una versión nueva).";
+    studioBtn.style.display = "none";
     var buttons = [genBtn, regenBtn, queueBtn];
 
     // Lo que tardó la última versión de este marcador. Sale del store y no de
@@ -1826,6 +1855,8 @@
         // que es lo que `estadoDe` distingue. Así que se repinta después.
         syncUI();
         marcarEstado(est.clase, est.palabra, est.titulo);
+        // Una versión nueva puede ser de otro motor que la anterior.
+        syncStudioBtn();
       } else if (job.status === "waiting") {
         // Sin tokens / límite alcanzado: se reactiva desde la pestaña Cola.
         setButtonsDisabled(buttons, false);
@@ -1990,6 +2021,59 @@
       }).catch(function (e) { eStatus.className = "marker-status is-error"; eStatus.textContent = "Error: " + ((e && e.message) || ""); });
     });
 
+    /**
+     * Abre (o actualiza) Remotion Studio con este marcador, y deja escuchando
+     * sus renders. Lo usan los dos botones: «Abrir Remotion» de la ficha, con
+     * la última versión, y «Vista previa» del editor, con lo que haya escrito.
+     *
+     * `o` = { version, code, engine, boton, linea }. `code` vacío = la versión
+     * en disco; con algo, ESO —es lo que el editor está mirando—, y si después
+     * renderiza desde Studio, eso es lo que se guarda como versión.
+     */
+    function abrirEnStudio(o) {
+      o.boton.disabled = true;
+      o.linea.className = "marker-status";
+      o.linea.textContent = "Abriendo Remotion…";
+      hpCall("previewComposition", {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName,
+        markerSlug: markerKey, version: o.version || 0,
+        code: o.code || "",
+        // El motor solo hace falta cuando no hay versión en disco de la que
+        // leerlo (código recién pegado).
+        engine: o.engine || "",
+        // Con el segundo de entrada: si el clip ya no está en la secuencia, el
+        // render de Studio entra ahí, como una generación.
+        marker: { name: marker.name || markerKey, start: marker.start, duration: marker.duration },
+        // Con fondo se ve opaco y sin fondo con el damero de transparencia, tal
+        // como saldría el render: mirar un clip con alfa sobre negro esconde
+        // justo los problemas de contraste que el alfa vuelve a traer.
+        background: !!bgCheck.checked
+      }).then(function (r) {
+        o.boton.disabled = false;
+        if (!r || !r.ok) {
+          // El motivo lo escribe el motor y se muestra COMPLETO: cuando dice que
+          // no puede, explica por qué, y eso es lo único que evita que parezca
+          // que algo está roto.
+          o.linea.className = "marker-status is-error";
+          o.linea.textContent = (r && r.error) || "no se pudo abrir Remotion";
+          hpLog("Abrir Remotion: " + ((r && r.error) || "sin motivo"), "WARN");
+          return;
+        }
+        HPUtil.abrirEnNavegador(r.url);
+        HPStudioRenders.escuchar({ alTerminar: alRenderDeStudio });
+        o.linea.textContent = (r.arrancado
+          ? "Remotion abierto en el navegador."
+          : "Remotion actualizado — mirá la pestaña que ya tenías abierta.") +
+          " Lo que renderices ahí con «Render» reemplaza el clip de este marcador en Premiere.";
+        hpLog("Remotion Studio con " + r.etiqueta + " en " + r.url +
+          (r.arrancado ? " (recién levantado)" : " (el que ya estaba)"));
+      }).catch(function (e) {
+        o.boton.disabled = false;
+        o.linea.className = "marker-status is-error";
+        o.linea.textContent = "Error: " + ((e && e.message) || "");
+      });
+    }
+
     prevBtn.addEventListener("click", function () {
       var v = parseInt(verSel.value, 10);
       var enElEditor = codeEd.getValue().trim();
@@ -1998,46 +2082,44 @@
         eStatus.textContent = "Generá una versión primero, o pegá código en el editor.";
         return;
       }
-      prevBtn.disabled = true;
-      eStatus.className = "marker-status";
-      eStatus.textContent = "Armando la vista previa…";
-      hpCall("previewComposition", {
-        projectPath: currentProjectPath, sequenceName: currentSequenceName,
-        markerSlug: markerKey, version: v || 0,
-        // Lo que hay en el editor gana sobre el disco: es lo que el editor está
-        // mirando y lo que quiere ver moverse.
-        code: enElEditor,
-        // El motor solo hace falta cuando no hay versión en disco de la que
-        // leerlo (código recién pegado).
-        engine: motorAbierto,
-        marker: { name: marker.name || markerKey, duration: marker.duration },
-        // Con fondo se ve opaco y sin fondo con el damero de transparencia, tal
-        // como saldría el render: mirar un clip con alfa sobre negro esconde
-        // justo los problemas de contraste que el alfa vuelve a traer.
-        background: !!bgCheck.checked
-      }).then(function (r) {
-        prevBtn.disabled = false;
-        if (!r || !r.ok) {
-          // El motivo lo escribe el motor y se muestra COMPLETO: cuando dice que
-          // no puede, explica por qué, y eso es lo único que evita que parezca
-          // que algo está roto.
-          eStatus.className = "marker-status is-error";
-          eStatus.textContent = (r && r.error) || "no se pudo armar la vista previa";
-          hpLog("Vista previa: " + ((r && r.error) || "sin motivo"), "WARN");
-          return;
-        }
-        HPUtil.abrirEnNavegador(r.url);
-        eStatus.textContent = r.arrancado
-          ? "Vista previa abierta en el navegador."
-          : "Vista previa actualizada — mirá la ventana que ya tenías abierta.";
-        hpLog("Vista previa de " + r.etiqueta + " en " + r.url +
-          (r.arrancado ? " (recién levantada)" : " (la que ya estaba)"));
-      }).catch(function (e) {
-        prevBtn.disabled = false;
-        eStatus.className = "marker-status is-error";
-        eStatus.textContent = "Error: " + ((e && e.message) || "");
-      });
+      // Lo que hay en el editor gana sobre el disco: es lo que el editor está
+      // mirando y lo que quiere ver moverse.
+      abrirEnStudio({ version: v || 0, code: enElEditor, engine: motorAbierto, boton: prevBtn, linea: eStatus });
     });
+
+    // La versión más nueva, si es de Remotion (0 si no): decide si se ve el
+    // botón, y es la que abre. Se le pregunta al disco y no al store, porque el
+    // store no sabe con qué motor se hizo cada versión —y un marcador generado
+    // antes de que lo supiera tiene que ofrecerlo igual—.
+    var ultimaRemotion = 0;
+    function syncStudioBtn() {
+      hpCall("listMarkerVersions", {
+        projectPath: currentProjectPath, sequenceName: currentSequenceName, markerSlug: markerKey
+      }).then(function (r) {
+        var vs = (r && r.ok && r.versions) || [];
+        var ult = vs[vs.length - 1];
+        ultimaRemotion = (ult && ult.engine === "remotion") ? ult.version : 0;
+        studioBtn.style.display = ultimaRemotion ? "" : "none";
+      }).catch(function () {});
+    }
+    studioBtn.addEventListener("click", function () {
+      if (!ultimaRemotion) return;
+      abrirEnStudio({ version: ultimaRemotion, code: "", engine: "remotion", boton: studioBtn, linea: status });
+    });
+    syncStudioBtn();
+    card._syncStudioBtn = syncStudioBtn;
+
+    // Lo que hace un render de Studio en esta ficha (ver alRenderDeStudio).
+    card._alRenderDeStudio = function (res) {
+      status.className = "marker-status " + (res.ok ? "is-ok" : "is-error");
+      status.textContent = res.texto || "";
+      if (res.ok) {
+        HPStore.setMarkerGenerated(markerKey, true);
+        syncUI();
+      }
+      syncStudioBtn();
+      if (editor.open) refreshVersions();
+    };
 
     renderBtn.addEventListener("click", function () {
       var html = codeEd.getValue().trim();
@@ -2091,7 +2173,10 @@
       tira: dibujarTira,
       controles: [bgRow],
       avanzado: [tDetails && { el: tDetails }, { el: editor }].filter(Boolean),
-      acciones: { izquierda: [regenBtn], derecha: [queueBtn, genBtn] },
+      // Regenerar SOLO a la izquierda (es el que tira el trabajo anterior) y
+      // Generar en la punta. «Abrir Remotion» no destruye nada: va con los que
+      // se aprietan, lo más lejos posible de Generar.
+      acciones: { izquierda: [regenBtn], derecha: [studioBtn, queueBtn, genBtn] },
       pie: [status]
     });
     instruction = ficha.campo;

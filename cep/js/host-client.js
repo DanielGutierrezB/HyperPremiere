@@ -116,6 +116,17 @@
      */
     purgeClipsByPath: function (paths, cb) {
       callMutating("hp_purgeClipsByPath(" + JSON.stringify((paths || []).join("\n")) + ")", cb);
+    },
+    /**
+     * Reemplaza el archivo del clip que ya está puesto, sin moverlo (lo usa el
+     * render de Remotion Studio). `oldPaths` = los archivos de las versiones
+     * anteriores, de la más nueva a la más vieja. Devuelve "ok|<n>|<archivo que
+     * estaba>", "nada" si no hay ninguno en el proyecto, o "error: …".
+     * Serializada: toca ítems del proyecto, igual que colocar.
+     */
+    relinkMedia: function (oldPaths, newPath, cb) {
+      callMutating("hp_relinkMedia(" + JSON.stringify((oldPaths || []).join("\n")) + ", " +
+        JSON.stringify(newPath) + ")", cb);
     }
   };
 })(typeof window !== "undefined" ? window : this);

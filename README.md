@@ -572,21 +572,66 @@ por sesión del panel y cambiar de marcador es reescribir ese archivo. La sesió
 `process` y no de una variable de módulo, por lo mismo que el micrófono del dictado (ver
 `bridge/vivos.js`): con el ⟳ del panel, "hay un solo Studio" tiene que valer por proceso.
 
-**Lo que la vista previa NO hace es renderizar ni colocar nada.** El botón que hace entrar
-un clip a la secuencia sigue siendo **Guardar y renderizar**, que es el único que sabe de
-qué marcador de qué secuencia se trata, en qué segundo va, qué número de versión le toca y
-qué escribir en su ficha.
+**Y lo que se renderiza ahí entra a Premiere.** Studio trae su propio botón **Render**,
+abajo a la derecha de su ventana. Hasta la 1.8.0 ese botón dejaba un archivo suelto que no
+llegaba a la secuencia; desde la 1.9.0 **reemplaza el clip del marcador**, cada vez que se
+aprieta (la sección que sigue). Con los valores por defecto de Remotion ese clic daba lo peor
+posible —se midió abriendo el diálogo: **H.264** hacia `out/marcador.mp4`, o sea un clip
+pensado para overlay saliendo **opaco, con el alfa aplastado contra negro y sin ningún
+error**—, así que el proyecto huésped lleva un `remotion.config.ts` que lo deja en ProRes 4444
+con alfa, igual que el render del panel.
 
-Esa división tiene un borde filoso que conviene conocer: **Studio trae su propio botón
-Render**, abajo a la derecha de su ventana, y no se puede sacar. Con los valores por defecto
-de Remotion ese clic daba lo peor posible —se midió abriendo el diálogo: **H.264** hacia
-`out/marcador.mp4`, o sea un clip pensado para overlay saliendo **opaco, con el alfa
-aplastado contra negro y sin ningún error**—. El proyecto huésped lleva un
-`remotion.config.ts` que arregla lo único que se puede arreglar de ese botón: ahora sale
-ProRes 4444 con alfa, igual que el render del panel. Lo que **sigue** sin hacer, y no hay
-config que lo arregle, es versionar el archivo, escribir su ficha, importarlo al proyecto y
-colocarlo en el marcador. Un archivo que aparece en `~/.hyperpremiere/remotion/out/` es un
-descarte, no un entregable.
+### «Abrir Remotion»: el Render de Studio reemplaza el clip
+
+La ficha de un marcador cuya última versión es de Remotion muestra **Abrir Remotion** en la
+fila de acciones, al lado de *Enviar a la cola*. Abre Studio con esa versión —lo mismo que
+*Vista previa* desde el editor—. Hasta la 1.8.0 esa era la única puerta, y estaba plegada
+adentro de *Avanzado → Editar código manualmente*: generabas con Remotion y no veías cómo
+abrirlo.
+
+Lo que se renderiza con el **Render** de Studio entra solo a Premiere:
+
+- **Es una versión nueva del marcador**, no un archivo suelto: `Marcador 3 v4 [studio].mov`,
+  con su código y su ficha (motor Remotion, modelo «studio», la instrucción de la versión que
+  se abrió). Aparece en la lista de versiones como cualquier otra.
+- **Premiere cambia el archivo del clip que ya estaba puesto** y lo deja donde estaba: misma
+  pista, mismo segundo, mismos puntos de entrada y salida, con el nombre de la versión nueva.
+  Si el marcador no tenía clip en la secuencia (lo habían sacado), lo coloca como una
+  generación, en el segundo del marcador.
+- **No pisa el archivo anterior**, por tres motivos: la versión de antes queda por si la nueva
+  salió peor, en Windows Premiere tiene el `.mov` abierto y no se deja reescribir, y el código
+  guardado es siempre el del video que está en la secuencia —si venía del editor, el editado—.
+
+Cómo sabe de qué marcador es cada render, aunque en el medio se haya abierto otro: las props
+que el panel le pasa a Studio llevan un `destino`, y Studio guarda en cada trabajo de render
+las props con que arrancó. El panel escucha la cola por `/events` —el mismo canal que usa la
+interfaz de Studio para enterarse— y cada trabajo terminado se guarda **una sola vez**. Está
+medido con la interfaz de verdad: `node test/manual/studio-render.js` hace clic en Render con
+un Chrome headless, y el marcador verde salió verde y el azul, abierto después en la misma
+pestaña, azul, cada uno como versión nueva de su marcador. El reemplazo en Premiere usa
+`changeMediaPath` y está probado contra un Premiere de mentira (`studio-a-premiere.test.js`),
+no con Premiere automatizado.
+
+Los bordes:
+
+- **El panel tiene que estar abierto**: es el que habla con Premiere. En la práctica viene
+  solo, porque Studio se apaga cuando se cierra el panel.
+- **No se cambia de marcador mientras Studio renderiza.** Las imágenes que incrusta una
+  composición viven en una carpeta compartida por todos los marcadores; cambiarlas a mitad de
+  un render le pondría al clip las de otro. El panel lo dice y pide esperar.
+- **El formato**: si en el diálogo de Studio se elige H.264, el `.mp4` entra igual —opaco,
+  que es lo que se pidió—. Un WebM o un GIF no entran, y el aviso dice por qué.
+- **Lo que no abrió el panel no va a Premiere**: un render de otra composición, o con props
+  escritas a mano, no tiene a qué marcador ir. Las fotos sueltas (*Render still*) tampoco.
+
+### Las imágenes incrustadas, que Remotion no mostraba
+
+Hasta la 1.8.0, una imagen marcada **✓ usar** no aparecía en ningún render de Remotion: el
+clip salía con el hueco donde iba el logo, y nada fallaba. `staticFile('assets/…')` la pide
+bajo `/public`, y el render la copiaba a la raíz del proyecto. Ahora el render y Studio la
+copian al mismo lugar, `public/assets/`, con una sola función (`remotion-imagenes.js`), y la
+prueba mira el píxel: el centro del cuadro es el rojo de la imagen, no el transparente que
+salía antes.
 
 **HyperFrames no tiene vista previa, y no es una omisión.** Su contrato pide que la timeline
 quede **pausada** y registrada en `window.__timelines` para que el capturador la posicione
@@ -3226,13 +3271,17 @@ que "anda" con dos llamadas por marcador cuesta el doble y no falla nunca), tama
 **cuadros leídos** y el **alpha preguntado a `ffprobe`**, que es el modo de falla más
 callado de los dos motores — un `.mov` sin canal alfa se abre, se ve bien solo, y en
 Premiere tapa el video con un rectángulo negro. No puntúa el diseño: deja los `.mov` y el
-código de cada corrida para mirarlos.
+código de cada corrida para mirarlos. Y `node test/manual/studio-render.js` levanta Remotion
+Studio de verdad con dos marcadores, hace clic en su botón **Render** con un Chrome headless y
+mira lo que vuelve al panel: la versión `[studio]` de cada uno, su ficha, qué clip reemplazaría
+y el píxel del centro del video —el rojo de la imagen incrustada, que es lo que prueba que
+Studio también la encuentra—.
 
 Y `node test/manual/mutaciones-render.js` mete a propósito cada regresión que estos tests
 dicen cubrir y avisa si alguna pasa igual — un test que no falla cuando rompés el código no
 está probando nada. Acepta un filtro por nombre
 (`node test/manual/mutaciones-render.js sesión`) para cuando se tocó una sola parte, y hace
-falta: son **380** y la corrida entera son casi tres horas.
+falta: son **423** y la corrida entera son más de tres horas.
 
 Y al lado, `node test/manual/mutaciones-verificar.js`, que no corre ninguna: para cada
 mutación comprueba que el texto ORIGINAL siga en su archivo. Contesta dos preguntas en un

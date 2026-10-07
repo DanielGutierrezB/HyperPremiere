@@ -678,7 +678,7 @@ test('la ronda de la Cola y la fila de Corrections son el mismo cuerpo con otras
   // Lo que cambia entre las cuatro fichas es el pie, y nada más. Acá está escrito
   // cuál es el de cada una: si alguna vuelve a armarse un layout propio, este test
   // deja de encontrar su `acciones`.
-  has(MAIN, 'acciones: { izquierda: [regenBtn], derecha: [queueBtn, genBtn] }');
+  has(MAIN, 'acciones: { izquierda: [regenBtn], derecha: [studioBtn, queueBtn, genBtn] }');
   has(COLA, 'acciones: { izquierda: [fresh], derecha: [go] }');
   has(CORR, 'acciones: { izquierda: [], derecha: [stageBtn, fixBtn] }');
   // Y el parámetro del pedido —sobre qué versión se rediseña— va en la BARRA DE

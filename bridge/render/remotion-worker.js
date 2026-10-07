@@ -25,6 +25,8 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
+const { copiarImagenes } = require('./remotion-imagenes');
+
 /** Una línea de JSON a stdout. El padre la lee y la traduce al panel. */
 function decir(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -114,13 +116,9 @@ async function main() {
   const serveDir = path.join(trabajo, 'serve');
   copiarDir(bundleDir, serveDir);
 
-  if (pedido.assetsDir && fs.existsSync(pedido.assetsDir)) {
-    const destino = path.join(serveDir, 'assets');
-    fs.mkdirSync(destino, { recursive: true });
-    for (const f of fs.readdirSync(pedido.assetsDir)) {
-      try { fs.copyFileSync(path.join(pedido.assetsDir, f), path.join(destino, f)); } catch (e) {}
-    }
-  }
+  // Debajo de `public/`, que es donde las busca `staticFile` (ver
+  // remotion-imagenes.js: hasta la 1.8.0 se copiaban a la raíz y no salían).
+  copiarImagenes(pedido.assetsDir, serveDir);
 
   const inputProps = {
     codigoJs: pedido.codigoJs,

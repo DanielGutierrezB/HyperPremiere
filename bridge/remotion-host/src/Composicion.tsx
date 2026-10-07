@@ -43,6 +43,13 @@ export type PropsDeComposicion = {
    * porque `inputProps` es el único canal que hay hacia una composición.
    */
   duracionEnCuadros: number;
+  /**
+   * Solo en Studio: de qué marcador es lo que se está mostrando. La
+   * composición no lo usa; viaja en las props porque Studio guarda con cada
+   * render las props con que arrancó, y así el render dice solo a qué clip de
+   * Premiere reemplazar (ver bridge/render/remotion-studio.js).
+   */
+  destino?: string;
 };
 
 /** El `require` que ve el código del modelo: solo la lista cerrada. */

@@ -3269,8 +3269,8 @@ const MUTACIONES = [
     // de ver la mitad de las versiones y `nextVersion` empieza a pisar archivos.
     nombre: 'las versiones de los dos motores se cuentan como cadenas separadas',
     archivo: 'bridge/versiones.js',
-    de: "    return { ok: true, versions: listVersions(baseDir, markerSlug, motores.extensiones()) };",
-    a:  "    return { ok: true, versions: listVersions(baseDir, markerSlug, '.html') };",
+    de: "    const versions = listVersions(baseDir, markerSlug, motores.extensiones()).map((v) => {",
+    a:  "    const versions = listVersions(baseDir, markerSlug, '.html').map((v) => {",
   },
   {
     // Cada motor valida SU lenguaje. Con el validador del otro, un componente de
@@ -3599,6 +3599,122 @@ const MUTACIONES = [
     a:  '    if (false) {',
   },
 
+  // --- El botón Render de Remotion Studio reemplaza el clip en Premiere ---
+  //
+  // Casi todo lo de abajo falla en silencio: un clip que no se reemplaza se ve
+  // igual que antes, y uno que se reemplaza con el render de OTRO marcador se
+  // ve como una animación cualquiera hasta que alguien la mira de cerca.
+
+  {
+    // LA regresión que se encontró de paso: las imágenes incrustadas no salían
+    // en ningún render de Remotion, porque `staticFile` las busca bajo /public.
+    nombre: 'las imágenes de Remotion vuelven a la raíz, donde staticFile no las busca',
+    archivo: 'bridge/render/remotion-imagenes.js',
+    de: "  return path.join(raiz, 'public', 'assets');",
+    a:  "  return path.join(raiz, 'assets');",
+  },
+  {
+    // En Studio la carpeta es una para todos los marcadores y todos llaman a su
+    // imagen asset-01.png: sin vaciarla, B se renderiza con el logo de A.
+    nombre: 'las imágenes del marcador anterior quedan en la carpeta de Studio',
+    archivo: 'bridge/render/remotion-imagenes.js',
+    de: '  fs.rmSync(destino, { recursive: true, force: true });\n  fs.mkdirSync(destino, { recursive: true });',
+    a:  '  fs.mkdirSync(destino, { recursive: true });',
+  },
+  {
+    // Sin comparar, cada render reescribe el huésped y Studio recarga por nada.
+    nombre: 'el huésped se reescribe entero aunque no haya cambiado nada',
+    archivo: 'bridge/render/remotion-instalar.js',
+    de: '    if (viejo && viejo.equals(nuevo)) return;',
+    a:  '    if (false) return;',
+  },
+  {
+    // Studio manda la cola entera en cada cambio: un render terminado se
+    // guardaría como versión cada vez que empieza o termina otro.
+    nombre: 'un render de Studio se procesa cada vez que Studio lo repite',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: "    if ((t.status === 'done' || t.status === 'failed') && !s.vistos[t.id]) {",
+    a:  "    if ((t.status === 'done' || t.status === 'failed')) {",
+  },
+  {
+    // Un render de algo que no abrió el panel (las props por defecto, una
+    // composición elegida a mano) se guarda y va a Premiere: sin destino, a
+    // cualquier lado.
+    nombre: 'un render de Studio sin marcador conocido va igual a Premiere',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: "    if (!destino || typeof s.alTerminar !== 'function') {",
+    a:  '    if (false) {',
+  },
+  {
+    // Dos oyentes son dos reemplazos por render en Premiere.
+    nombre: 'suscribirse otra vez a los renders de Studio no suelta al anterior',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: '  s.escucha = fn;',
+    a:  '  if (!s.escucha) s.escucha = fn;',
+  },
+  {
+    // Abrir otro marcador a mitad de un render cambia las imágenes debajo del
+    // render en curso, y ese clip entra a Premiere con las del otro.
+    nombre: 'se puede cambiar de marcador mientras Studio renderiza otro',
+    archivo: 'bridge/render/remotion-studio.js',
+    de: '    if (d && !mismoMarcador(d, destino)) return d;',
+    a:  '    if (false) return d;',
+  },
+  {
+    // Premiere busca primero la versión más VIEJA: el segundo render de Studio
+    // encuentra la v1 (si sigue en el proyecto) en vez del clip que ya era v2.
+    nombre: 'las versiones a reemplazar se buscan de la más vieja a la más nueva',
+    archivo: 'bridge/versiones.js',
+    de: "  const anteriores = listVersions(baseDir, markerSlug, ['.mov', '.mp4'])\n    .reverse()\n",
+    a:  "  const anteriores = listVersions(baseDir, markerSlug, ['.mov', '.mp4'])\n",
+  },
+  {
+    // La versión de Studio se guarda sin su código: la próxima corrección
+    // parte de la nada en vez de lo que está en la secuencia.
+    nombre: 'la versión de Studio se guarda sin el código que se renderizó',
+    archivo: 'bridge/versiones.js',
+    de: "  fs.writeFileSync(outPaths.code, String(destino.code || ''), 'utf8');",
+    a:  "  fs.writeFileSync(outPaths.code, '', 'utf8');",
+  },
+  {
+    // Por nombre y no por archivo: cada clase tiene su "Marcador 1 v2", y el
+    // render de esta reemplaza el clip de otra.
+    nombre: 'el reemplazo en Premiere busca el clip por nombre',
+    archivo: 'cep/jsx/host.jsx',
+    de: '                if (hp_mediaPathIs(items[k], viejoFs)) hits.push(items[k]);',
+    a:  '                if (hp_mediaPathIs(items[k], viejoFs) || String(items[k].name).indexOf("Marcador") === 0) hits.push(items[k]);',
+  },
+  {
+    // El clip sigue diciendo "v2" mostrando la v3.
+    nombre: 'después de reemplazar, el clip sigue con el nombre de la versión vieja',
+    archivo: 'cep/jsx/host.jsx',
+    de: '            hp_renombrarClipsDe(nuevoFs, nombre);\n            return "ok|"',
+    a:  '            return "ok|"',
+  },
+  {
+    // Sin clip puesto (lo sacaron), el render de Studio queda en disco y no
+    // entra nunca a la secuencia.
+    nombre: 'un render de Studio sin clip que reemplazar no se coloca',
+    archivo: 'cep/js/studio-renders.js',
+    de: '      if (res === "nada") return colocar(aviso);',
+    a:  '      if (false) return colocar(aviso);',
+  },
+  {
+    // Dos renders seguidos se aplican a la vez: el segundo busca el clip antes
+    // de que el primero lo haya cambiado.
+    nombre: 'los renders de Studio se aplican en Premiere todos a la vez',
+    archivo: 'cep/js/studio-renders.js',
+    de: '      cadena = cadena.then(function () { return aplicar(aviso); }).catch(function () {});',
+    a:  '      aplicar(aviso);',
+  },
+  {
+    // Cada «Abrir Remotion» suscribe otra vez: dos reemplazos por render.
+    nombre: 'el panel se suscribe a los renders de Studio cada vez que lo abre',
+    archivo: 'cep/js/studio-renders.js',
+    de: '    if (escuchando) return;',
+    a:  '    if (false) return;',
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3619,7 +3735,8 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'dictado-motor', 'dictado-refinar', 'dictado-panel',
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
   'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
-  'motores-dos', 'remotion-node-del-panel', 'claude-modelos', 'claude-medir', 'selector-claude'];
+  'motores-dos', 'remotion-node-del-panel', 'claude-modelos', 'claude-medir', 'selector-claude',
+  'studio-a-premiere'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test

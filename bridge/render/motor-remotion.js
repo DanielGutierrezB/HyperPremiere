@@ -250,6 +250,9 @@ module.exports = registrar({
   async renderizar(o) {
     const st = instalacion.estado();
     if (!st.instalado) throw new Error('Remotion no está listo: ' + st.motivo);
+    // El huésped de la instalación, al día con esta versión del panel (ver
+    // sincronizarHuesped: si no, una actualización del panel no le llegaba).
+    instalacion.sincronizarHuesped(st.dir);
 
     // Con QUÉ node, que no es `process.execPath`: adentro de Premiere eso es un
     // binario de Adobe y el render moría sin decir nada. Ver node-bin.js.
@@ -358,6 +361,11 @@ module.exports = registrar({
    * El código se compila igual que para renderizar, y eso importa: si no
    * compila, el editor se entera acá, con el mensaje del compilador, y no
    * mirando una pantalla en blanco.
+   *
+   * `destino`, `assetsDir` y `alTerminar` son lo que deja que el botón Render
+   * de Studio reemplace el clip del marcador en Premiere (ver
+   * remotion-studio.js): a qué marcador pertenece lo que se muestra, sus
+   * imágenes, y quién guarda el render como versión.
    */
   vistaPrevia(o) {
     const st = instalacion.estado();
@@ -367,7 +375,14 @@ module.exports = registrar({
       conFondo: o.format === 'mp4',
       duracionEnCuadros: Math.max(1, Math.round((Number(o.durationSec) || 0) * 30)),
       etiqueta: o.etiqueta || '',
+      destino: o.destino || null,
+      assetsDir: o.assetsDir || '',
+      alTerminar: o.alTerminar || null,
     });
+  },
+
+  escucharVistaPrevia(fn) {
+    return studio.escuchar(fn);
   },
 
   cerrarVistaPrevia() {

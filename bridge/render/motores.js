@@ -69,14 +69,18 @@
 //   estado()   → { instalado: boolean, motivo: string }  (¿se puede usar acá?)
 //   instalar(onProgress) → Promise<{ ok, mensaje }>      (opcional)
 //
-//   vistaPrevia({ code, durationSec, format, etiqueta })  (OPCIONAL)
-//       → Promise<{ ok, url, arrancado }>. Reproducir la composición en vivo,
-//       sin renderizar. Es opcional porque no todo motor puede: HyperFrames pide
-//       su timeline PAUSADA para capturarla cuadro por cuadro, así que abrir ese
-//       HTML muestra el primer cuadro y nada más. Quien la ofrezca pregunta si
-//       existe en vez de suponerlo.
+//   vistaPrevia({ code, durationSec, format, etiqueta, destino?, assetsDir?, alTerminar? })
+//       (OPCIONAL) → Promise<{ ok, url, arrancado }>. Reproducir la composición
+//       en vivo, sin renderizar. Es opcional porque no todo motor puede:
+//       HyperFrames pide su timeline PAUSADA para capturarla cuadro por cuadro,
+//       así que abrir ese HTML muestra el primer cuadro y nada más. Quien la
+//       ofrezca pregunta si existe en vez de suponerlo. Con `destino` y
+//       `alTerminar`, lo que se renderice DESDE la vista previa vuelve como
+//       versión de ese marcador (ver remotion-studio.js).
+//   escucharVistaPrevia(fn)  → Promise<{ ok, terminado }>: `fn(aviso)` por cada
+//       render hecho desde la vista previa, hasta que se cierre.
 //   cerrarVistaPrevia()      → { ok, andaba }
-//   estadoDeVistaPrevia()    → { andando, url, etiqueta }
+//   estadoDeVistaPrevia()    → { andando, url, etiqueta, renderizando }
 //
 // ── La regla que no se puede romper ──────────────────────────────────
 //
@@ -126,6 +130,9 @@ const PORDEFECTO = {
   vistaPrevia: null,
   motivoSinVistaPrevia: '',
   cerrarVistaPrevia: () => ({ ok: true, andaba: false }),
+  // Los renders hechos DESDE la vista previa (el botón Render de Studio). Sin
+  // vista previa no hay de dónde salgan: se contesta que no hay nada que escuchar.
+  escucharVistaPrevia: () => Promise.resolve({ ok: true, terminado: 'este motor no tiene vista previa' }),
   // Cuántos segundos dice durar el código. Cero = no lo dice, que en Remotion es
   // la verdad y no una falta.
   duracionDeclarada: () => 0,

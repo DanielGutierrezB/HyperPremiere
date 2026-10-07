@@ -779,6 +779,99 @@ function hp_placeClipInSequence(movPath, seqName, atSeconds, durationSec, colorL
     }
 }
 
+// Le pone a los clips de un ítem el nombre de su archivo nuevo. Cosmético pero
+// no menor: el clip de la línea de tiempo guarda el nombre con que entró, y
+// después de reemplazar el archivo seguiría diciendo "v2" mostrando la v3.
+function hp_renombrarClipsDe(rutaFs, nombre) {
+    var n = 0;
+    try {
+        var seqs = app.project.sequences;
+        for (var s = 0; s < seqs.numSequences; s++) {
+            var vt = seqs[s].videoTracks;
+            for (var t = 0; t < vt.numTracks; t++) {
+                var clips = vt[t].clips;
+                for (var c = 0; c < clips.numItems; c++) {
+                    var clip = clips[c];
+                    if (clip && hp_mediaPathIs(clip.projectItem, rutaFs)) {
+                        try { clip.name = nombre; n++; } catch (eN) {}
+                    }
+                }
+            }
+        }
+    } catch (e) {}
+    return n;
+}
+
+// Reemplaza el ARCHIVO de un clip que ya está en la secuencia, sin moverlo: es
+// lo que hace el botón Render de Remotion Studio con el marcador que se abrió
+// desde el panel (ver bridge/render/remotion-studio.js).
+//
+// No se coloca un clip nuevo arriba —que es lo que hace una generación—, porque
+// el pedido fue otro: que el render de Studio REEMPLACE lo que el editor ya
+// tiene puesto, cada vez. `changeMediaPath` sobre el ítem del proyecto hace
+// exactamente eso: todos los clips que usan ese ítem pasan a mostrar el archivo
+// nuevo en su mismo lugar, su misma pista, con sus recortes y su etiqueta.
+//
+// `oldPathsJoined` son los archivos de las versiones ANTERIORES del marcador, de
+// la más nueva a la más vieja, unidos por "\n" (ExtendScript no trae JSON). Se
+// reemplaza la más nueva que esté en el proyecto: después del primer render de
+// Studio el clip ya apunta a esa versión, y el siguiente tiene que encontrarla.
+//
+// Devuelve "ok|<ítems>|<archivo que estaba>", "nada" si ninguna versión está
+// en el proyecto (el panel lo coloca como una generación), o "error: …".
+function hp_relinkMedia(oldPathsJoined, newPath) {
+    try {
+        var nuevo = new File(newPath);
+        if (!nuevo.exists) return "error: no existe el archivo nuevo: " + newPath;
+        var nuevoFs = String(nuevo.fsName);
+        var nombre = String(nuevo.name).replace(/\.[^\.]+$/, "");
+        var viejos = String(oldPathsJoined || "").split("\n");
+
+        var items = [];
+        function walk(bin) {
+            if (!bin || !bin.children) return;
+            for (var i = 0; i < bin.children.numItems; i++) {
+                var ch = bin.children[i];
+                if (!ch) continue;
+                if (ch.type === 2) { walk(ch); continue; } // bin → recursar
+                items.push(ch);
+            }
+        }
+        walk(app.project.rootItem);
+
+        for (var v = 0; v < viejos.length; v++) {
+            if (!viejos[v]) continue;
+            var viejoFs = String(new File(viejos[v]).fsName);
+            var hits = [];
+            for (var k = 0; k < items.length; k++) {
+                if (hp_mediaPathIs(items[k], viejoFs)) hits.push(items[k]);
+            }
+            if (!hits.length) continue;
+            var cambiados = 0;
+            for (var h = 0; h < hits.length; h++) {
+                var it = hits[h];
+                try {
+                    if (it.canChangeMediaPath && !it.canChangeMediaPath()) continue;
+                    // `true`: que no se niegue porque el archivo nuevo dura distinto
+                    // (un render de Studio con un tramo marcado, por ejemplo).
+                    it.changeMediaPath(nuevoFs, true);
+                    // Lo que devuelve changeMediaPath cambió entre versiones de
+                    // Premiere; lo que no cambia es adónde apunta el ítem después.
+                    if (!hp_mediaPathIs(it, nuevoFs)) continue;
+                    cambiados++;
+                    try { it.name = nombre; } catch (eN) {}
+                } catch (eC) {}
+            }
+            if (!cambiados) return "error: Premiere no dejó cambiarle el archivo al clip de " + viejoFs;
+            hp_renombrarClipsDe(nuevoFs, nombre);
+            return "ok|" + cambiados + "|" + viejoFs;
+        }
+        return "nada";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
 // Saca de Premiere las versiones viejas ANTES de borrar sus archivos: (1) quita
 // sus clips de todas las secuencias, (2) elimina sus ítems del proyecto (bin) con
 // el truco mover-a-bin-temporal + deleteBin. `pathsJoined` = rutas de archivo
