@@ -19,6 +19,8 @@ import * as TransitionSlide from '@remotion/transitions/slide';
 import * as Shapes from '@remotion/shapes';
 import * as Paths from '@remotion/paths';
 import * as Noise from '@remotion/noise';
+// La tipografía de antes (ver HEREDADOS en permitidos.js): las versiones hechas
+// con ella la siguen importando. La de ahora no se importa (ver fuentes.js).
 import * as DMSans from '@remotion/google-fonts/DMSans';
 
 export const MODULOS: Record<string, unknown> = {

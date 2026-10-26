@@ -3929,6 +3929,66 @@ const MUTACIONES = [
     a:  '  void 0;',
   },
 
+  // --- La tipografía: Bricolage Grotesque y Plus Jakarta Sans ---
+  //
+  // Una fuente que no llega no hace fallar el render: sale con otra, y se
+  // descubre mirando el video.
+
+  {
+    nombre: 'el sistema de diseño cambia de lugar las dos familias',
+    archivo: 'bridge/prompt/system-comun.md',
+    de: '  - **Bricolage Grotesque** para titulares y frases destacadas:',
+    a:  '  - **Plus Jakarta Sans** para titulares y frases destacadas:',
+  },
+  {
+    // Sin el eje de tamaño óptico, el titular sale con el corte de texto.
+    nombre: 'el pedido de fuentes pierde el corte de titular de Bricolage',
+    archivo: 'bridge/remotion-host/src/fuentes.js',
+    de: "  'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800' +",
+    a:  "  'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@200..800' +",
+  },
+  {
+    // Los dos motores piden fuentes distintas con el mismo nombre.
+    nombre: 'la plantilla de HyperFrames pide otra cosa que el proyecto de Remotion',
+    archivo: 'bridge/prompt/system-hyperframes.md',
+    de: 'family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap" rel="stylesheet">',
+    a:  'family=Plus+Jakarta+Sans:wght@400;700&display=swap" rel="stylesheet">',
+  },
+  {
+    nombre: 'el proyecto de Remotion no pide las fuentes',
+    archivo: 'bridge/remotion-host/src/Composicion.tsx',
+    de: '      link.href = CSS_FUENTES;',
+    a:  "      link.href = '';",
+  },
+  {
+    // El primer cuadro sale antes de que lleguen: el texto salta de fuente.
+    nombre: 'el proyecto de Remotion no espera las fuentes antes del primer cuadro',
+    archivo: 'bridge/remotion-host/src/Composicion.tsx',
+    de: '    cargarFuentes()\n      .then(',
+    a:  '    Promise.resolve()\n      .then(',
+  },
+  {
+    // Lo que no dice qué fuente usar sale en la del navegador.
+    nombre: 'en Remotion el texto ya no hereda Plus Jakarta Sans',
+    archivo: 'bridge/remotion-host/src/Composicion.tsx',
+    de: "    <AbsoluteFill style={conFondo ? {backgroundColor: '#0B0B0C', fontFamily: TEXTO} : {fontFamily: TEXTO}}>",
+    a:  "    <AbsoluteFill style={conFondo ? {backgroundColor: '#0B0B0C'} : undefined}>",
+  },
+  {
+    // Otra Bricolage, sin su corte de titular, con el mismo nombre de familia.
+    nombre: 'Remotion vuelve a ofrecer fuentes de @remotion/google-fonts',
+    archivo: 'bridge/remotion-host/src/permitidos.js',
+    de: "  '@remotion/noise',\n];",
+    a:  "  '@remotion/noise',\n  '@remotion/google-fonts/BricolageGrotesque',\n];",
+  },
+  {
+    // Las versiones hechas con DM Sans ya no se pueden re-renderizar.
+    nombre: 'lo hecho con DM Sans deja de aceptarse',
+    archivo: 'bridge/remotion-host/src/permitidos.js',
+    de: "const HEREDADOS = [\n  '@remotion/google-fonts/DMSans',\n];",
+    a:  'const HEREDADOS = [\n];',
+  },
+
 ];
 
 // Solo los tests de esta parte: si corriera la suite entera, cualquier falla
@@ -3950,7 +4010,7 @@ const SUITES = ['render-no-imposible', 'render-perfil-medido', 'composicion-raiz
   'dictado-microfono', 'dictado-microfono-panel', 'dictado-recarga',
   'carpeta-solo-cuando-se-usa', 'editor-html-buscar', 'referencias-tira-visible',
   'motores-dos', 'remotion-node-del-panel', 'claude-modelos', 'claude-medir', 'selector-claude',
-  'studio-a-premiere', 'studio-archivo', 'abrir-remotion-panel'];
+  'studio-a-premiere', 'studio-archivo', 'abrir-remotion-panel', 'tipografia'];
 
 // OJO: esta lista es aparte de la de `test/run.js` a propósito (arriba está el
 // motivo), y eso tiene un costo que hay que pagar a mano: un archivo de test

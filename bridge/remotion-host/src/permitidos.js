@@ -26,14 +26,15 @@
 //  - Cualquier cosa que baje algo en tiempo de render que no sea la tipografía.
 //    Un render que depende de la red es un render que falla distinto cada vez.
 //
-// `@remotion/google-fonts/DMSans` SÍ está, y es la excepción consciente: baja la
-// tipografía al renderizar. No es una dependencia nueva del panel —el motor de
-// HyperFrames ya carga DM Sans desde Google Fonts con un `<link>` en cada
-// composición—, así que el día que se quiera cortar la red en el render hay que
-// resolverlo para los dos motores, no para éste.
+// La tipografía no se importa: la carga el proyecto (ver fuentes.js y `Marco`
+// en Composicion.tsx), con el mismo pedido a Google Fonts que la plantilla de
+// HyperFrames, y la composición la usa por su nombre. Es lo único que baja algo
+// en tiempo de render, y es a conciencia: el día que se quiera cortar la red en
+// el render hay que resolverlo para los dos motores, no para éste.
 
 'use strict';
 
+// Lo que se le ofrece al modelo (ver `reglas` en motor-remotion.js).
 const PERMITIDOS = [
   'react',
   'remotion',
@@ -44,12 +45,20 @@ const PERMITIDOS = [
   '@remotion/shapes',
   '@remotion/paths',
   '@remotion/noise',
+];
+
+// Lo que ya no se le ofrece pero se sigue aceptando: DM Sans fue la tipografía
+// del sistema de diseño hasta la 1.9.2, y las versiones hechas con ella la
+// importan. Sacarla de acá dejaría sin poder re-renderizarlas, corregirlas ni
+// abrirlas en Studio.
+const HEREDADOS = [
   '@remotion/google-fonts/DMSans',
 ];
 
 /** ¿Este especificador de import está disponible en el bundle? */
 function permitido(nombre) {
-  return PERMITIDOS.indexOf(String(nombre || '').trim()) !== -1;
+  const n = String(nombre || '').trim();
+  return PERMITIDOS.indexOf(n) !== -1 || HEREDADOS.indexOf(n) !== -1;
 }
 
-module.exports = { PERMITIDOS, permitido };
+module.exports = { PERMITIDOS, HEREDADOS, permitido };

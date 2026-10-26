@@ -53,12 +53,13 @@ y el registro en `window.__timelines`. Si falta cualquiera de esos, el render FA
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{width:1920px;height:1080px;overflow:hidden;background:transparent}
-  body{font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased}
+  body{font-family:'Plus Jakarta Sans',sans-serif;-webkit-font-smoothing:antialiased}
+  .titular{font-family:'Bricolage Grotesque',sans-serif}
   #stage{position:relative;width:1920px;height:1080px;overflow:hidden;background:transparent}
   /* … tu CSS acá … */
 </style>
@@ -92,4 +93,5 @@ beats: …
 
 - `data-duration` DEBE ser un número > 0 igual a la duración objetivo del marcador.
 - La timeline DEBE tener contenido con tiempos absolutos que llenen esa duración.
+- Tipografía: los titulares y las frases destacadas llevan la clase `titular` (Bricolage Grotesque); todo lo demás hereda Plus Jakarta Sans del `body`. Las dos vienen del `<link>` de la plantilla: no lo saques ni lo cambies por otra fuente.
 - Antes de devolver, VERIFICÁ mentalmente: ¿está `data-composition-id`? ¿`data-width/height/duration/fps`? ¿`window.__timelines[COMP_ID]=tl`? Si no, corregilo.

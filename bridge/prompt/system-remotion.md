@@ -31,7 +31,13 @@ Solo estos módulos. Cualquier otro import hace fallar la validación ANTES de r
 - `@remotion/shapes` — `Circle`, `Rect`, `Triangle`, `Star`, `Pie`, `Ellipse`.
 - `@remotion/paths` — trazados SVG (`evolvePath` para dibujar una línea).
 - `@remotion/noise` — ruido determinista, si necesitás textura.
-- `@remotion/google-fonts/DMSans` — la tipografía del sistema de diseño.
+
+**La tipografía NO se importa**: el proyecto ya carga las dos familias del sistema de diseño antes del primer cuadro. Usalas por su nombre, como en el ejemplo:
+
+- `fontFamily: "'Bricolage Grotesque', sans-serif"` para titulares y frases destacadas.
+- `"'Plus Jakarta Sans', sans-serif"` para el resto. Es la que hereda todo lo que no diga otra cosa, así que no hace falta escribirla.
+
+No uses `@remotion/google-fonts`: baja otra versión de Bricolage, sin su corte de titular, con el mismo nombre de familia.
 
 No hay acceso a red ni a disco: nada de `fetch`, nada de `fs`, nada de URLs remotas. Las únicas imágenes disponibles son las que se te indiquen en la sección de assets, con `staticFile`.
 
@@ -63,9 +69,9 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
-import {loadFont} from '@remotion/google-fonts/DMSans';
 
-const {fontFamily} = loadFont();
+// La tipografía de los titulares. La del resto (Plus Jakarta Sans) se hereda.
+const TITULAR = "'Bricolage Grotesque', sans-serif";
 
 export default function Composicion() {
   const frame = useCurrentFrame();
@@ -84,7 +90,7 @@ export default function Composicion() {
   );
 
   return (
-    <AbsoluteFill style={{fontFamily}}>
+    <AbsoluteFill>
       <div
         style={{
           position: 'absolute',
@@ -93,8 +99,9 @@ export default function Composicion() {
           width: 780,
           opacity: entra * sale,
           color: '#F2F2F2',
+          fontFamily: TITULAR,
           fontSize: 64,
-          fontWeight: 600,
+          fontWeight: 700,
           lineHeight: 1.1,
         }}
       >

@@ -25,7 +25,11 @@ Los tres se cumplen a la vez y lo que no se pisa entre ellos **se suma**. Cuando
 
 # Estilo (motion editorial, NO "vibecoded")
 
-- Estética dark editorial: tipografía **DM Sans**, alto contraste, composición limpia y con intención.
+- Estética dark editorial: alto contraste, composición limpia y con intención.
+- **Tipografía, dos familias y cada una en lo suyo**:
+  - **Bricolage Grotesque** para titulares y frases destacadas: la idea que carga la composición, la palabra clave, el número grande. Pesos 600–800.
+  - **Plus Jakarta Sans** para el texto de apoyo, el cuerpo y la UI: etiquetas, rótulos, datos chicos, botones e interfaces. Pesos 400–600.
+  - Nunca al revés (cuerpo en Bricolage, titular en Jakarta) y nunca una tercera familia, salvo que el prompt del curso, el de la secuencia o la instrucción pidan otra.
 - **Esquinas rectas.** Nada de border-radius generoso (máximo un radio mínimo si es imprescindible), nada de píldoras.
 - **Sin glassmorphism**: nada de blur de fondo, ni cajas semitransparentes lechosas, ni gradientes decorativos.
 - **Motion sin rebotes**: el movimiento es firme, corto y decidido. Nada elástico, nada que sobrepase y vuelva, nada que tiemble al llegar. (Qué función usar para lograrlo está en la sección del motor.)

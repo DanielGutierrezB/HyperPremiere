@@ -31,6 +31,7 @@
 
 import React from 'react';
 import {AbsoluteFill, continueRender, delayRender} from 'remotion';
+import {CSS_FUENTES, FAMILIAS, TEXTO} from './fuentes';
 import {MODULOS} from './modulos';
 
 export type PropsDeComposicion = {
@@ -91,26 +92,56 @@ function componenteDe(codigoJs: string): React.ComponentType {
   return Componente;
 }
 
+let fuentes: Promise<void> | null = null;
+
+/**
+ * Las dos familias del sistema de diseño, con el mismo pedido que la plantilla
+ * de HyperFrames (ver fuentes.js), cargadas UNA vez por página.
+ *
+ * Sin red, el clip sale con la fuente de reemplazo, igual que en HyperFrames:
+ * es preferible a un render que no termina.
+ */
+function cargarFuentes(): Promise<void> {
+  if (!fuentes) {
+    fuentes = new Promise<void>((listo) => {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = CSS_FUENTES;
+      link.onerror = () => listo();
+      link.onload = () => {
+        Promise.all(FAMILIAS.map((familia: string) => document.fonts.load('400 100px "' + familia + '"'))).then(
+          () => listo(),
+          () => listo(),
+        );
+      };
+      document.head.appendChild(link);
+    });
+  }
+  return fuentes;
+}
+
 /**
  * Lo que rodea a la animación, venga de donde venga: la base cuando el clip
- * lleva fondo, y la espera de las fuentes.
+ * lleva fondo, la tipografía del sistema de diseño y la espera de las fuentes.
  */
 export const Marco: React.FC<{conFondo: boolean; children: React.ReactNode}> = ({conFondo, children}) => {
   // La tipografía puede tardar en estar lista. Sin esto, los primeros cuadros
   // se capturan con la fuente de reemplazo y el texto salta de tipo a mitad del
-  // clip — un defecto que solo se ve reproduciendo el video.
+  // clip — un defecto que solo se ve reproduciendo el video. Primero las del
+  // sistema de diseño, que el código no carga, y después las que haya pedido
+  // él (las de antes importaban DM Sans).
   const [espera] = React.useState(() => delayRender('Esperando las fuentes'));
   React.useEffect(() => {
     const listo = () => continueRender(espera);
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(listo, listo);
-    } else {
-      listo();
-    }
+    cargarFuentes()
+      .then(() => (document.fonts && document.fonts.ready ? document.fonts.ready : undefined))
+      .then(listo, listo);
   }, [espera]);
 
+  // Plus Jakarta Sans para todo lo que no diga otra cosa, como el `body` de la
+  // plantilla de HyperFrames: los titulares la cambian por Bricolage Grotesque.
   return (
-    <AbsoluteFill style={conFondo ? {backgroundColor: '#0B0B0C'} : undefined}>
+    <AbsoluteFill style={conFondo ? {backgroundColor: '#0B0B0C', fontFamily: TEXTO} : {fontFamily: TEXTO}}>
       {children}
     </AbsoluteFill>
   );

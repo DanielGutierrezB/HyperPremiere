@@ -539,11 +539,32 @@ del proveedor no se cuelen en el número:
   **compilar el TSX en Node antes de renderizar**, así un error del compilador alimenta la
   escalera de arreglos en vez de aparecer con Chrome ya levantado.
 - **Los imports son una lista cerrada** (`react`, `remotion`, `@remotion/transitions`,
-  `shapes`, `paths`, `noise`, `google-fonts/DMSans`). Uno de fuera se corta **antes** de
-  empaquetar, diciendo cuál sobra.
+  `shapes`, `paths`, `noise`). Uno de fuera se corta **antes** de empaquetar, diciendo cuál
+  sobra. La tipografía no se importa: la carga el proyecto (ver «La tipografía», más
+  abajo). `google-fonts/DMSans`, la fuente de antes, se sigue aceptando sin ofrecerse: las
+  versiones hechas con ella la importan.
 - **Cuesta espacio y una instalación**: ~400 MB en `~/.hyperpremiere/remotion/` (React,
   webpack y su propio Chrome). Fuera del panel a propósito: quien sigue en HyperFrames no
   baja un byte, y la instalación sobrevive a actualizar el ZXP.
+
+### La tipografía
+
+Desde la 1.9.3, las animaciones usan las dos familias de la guía de marca:
+**Bricolage Grotesque** para titulares y frases destacadas, y **Plus Jakarta Sans** para el
+texto de apoyo, el cuerpo y la UI. Lo dice el sistema de diseño que recibe el modelo, con la
+regla de no intercambiarlas. Si el prompt del curso, el de la secuencia o la instrucción
+piden otra, mandan ellos, como con todo el sistema de diseño. Hasta la 1.9.2 era DM Sans.
+
+No viajan con el panel ni hace falta tenerlas instaladas: se bajan de Google Fonts al
+renderizar, con **el mismo pedido en los dos motores** (`bridge/remotion-host/src/fuentes.js`).
+HyperFrames lo trae en el `<link>` de su plantilla, y Remotion lo carga antes del primer
+cuadro, así que el modelo usa las familias por su nombre y no importa nada. Que sea el mismo
+pedido no es prolijidad: Bricolage tiene un eje de tamaño óptico que cierra las letras en
+tamaños grandes —su corte de titular—, y `@remotion/google-fonts` baja el archivo sin ese
+eje. Con él, el mismo titular salía más ancho en Remotion que en HyperFrames.
+`node test/manual/tipografia-render.js` renderiza con los dos motores y compara cada renglón
+contra la fuente de reemplazo, porque una fuente que no llega no hace fallar el render: sale
+con otra, y se descubre mirando el video.
 
 ### La licencia de Remotion
 

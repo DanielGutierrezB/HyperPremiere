@@ -187,7 +187,8 @@ test('el recordatorio es el andamiaje y nada más (no una copia del system promp
   has(rec, '__timelines', 'repite el registro de la timeline');
   // Lo que NO tiene que repetir: el diseño.
   eq(rec.indexOf('glassmorphism'), -1, 'no repite reglas de estilo');
-  eq(rec.indexOf('DM Sans'), -1, 'no repite la tipografía');
+  eq(rec.indexOf('Bricolage'), -1, 'no repite la tipografía');
+  eq(rec.indexOf('Jakarta'), -1, 'ninguna de las dos');
   eq(rec.indexOf('AUDITORÍA'), -1, 'no repite el protocolo de auditoría');
 });
 
